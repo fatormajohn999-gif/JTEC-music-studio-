@@ -1,0 +1,6 @@
+{
+  "name": "JTEC MUSIC",
+  "description": "Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
