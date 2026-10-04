@@ -18,10 +18,12 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
         {/* Brand & Subtitle */}
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-400 via-purple-500 to-pink-500 p-[1.5px] shadow-lg shadow-cyan-500/20">
-            <div className="w-full h-full bg-[#080b18] rounded-[10px] flex items-center justify-center">
-              <Disc3 className="w-5 h-5 text-cyan-300 animate-spin-slow" />
-            </div>
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-400 via-purple-500 to-pink-500 p-[1.5px] shadow-lg shadow-cyan-500/20 overflow-hidden">
+            <img
+              src="./logo.png"
+              alt="JTEC MUSIC"
+              className="w-full h-full rounded-[10px] object-cover"
+            />
           </div>
 
           <div>

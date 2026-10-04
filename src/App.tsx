@@ -20,6 +20,7 @@ import { ImportModal } from './components/ImportModal';
 import { PlaylistModal } from './components/PlaylistModal';
 import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
+import { StartupScreen } from './components/StartupScreen';
 
 // Screens
 import { HomeScreen } from './screens/HomeScreen';
@@ -32,6 +33,7 @@ export default function App() {
   // Navigation & Screen state
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
   const [isSettingsView, setIsSettingsView] = useState(false);
+  const [showStartup, setShowStartup] = useState(true);
 
   // Music & Library State
   const [songs, setSongs] = useState<Song[]>([]);
@@ -765,6 +767,9 @@ export default function App() {
         onViewDetails={(song) => setDetailsSong(song)}
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
       />
+
+      {/* STARTUP / SPLASH SCREEN */}
+      {showStartup && <StartupScreen onComplete={() => setShowStartup(false)} />}
     </div>
   );
 }

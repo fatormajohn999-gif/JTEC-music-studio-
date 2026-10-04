@@ -34,7 +34,24 @@ export interface Playlist {
   updatedAt: number;
 }
 
-export type CinematicScene = 'aurora' | 'galaxy' | 'neon_city' | 'dream' | 'energy' | 'auto' | 'off';
+export type CinematicScene = 
+  | 'auto' 
+  | 'aurora' 
+  | 'galaxy' 
+  | 'neon_city' 
+  | 'dream' 
+  | 'energy' 
+  | 'inferno' 
+  | 'ocean' 
+  | 'deep_space' 
+  | 'crystal' 
+  | 'vortex' 
+  | 'prism' 
+  | 'meteor_shower' 
+  | 'nature' 
+  | 'neural_network' 
+  | 'black_hole' 
+  | 'off';
 export type VisualizerMode = CinematicScene;
 
 export type PerformanceMode = 'battery' | 'balanced' | 'high';

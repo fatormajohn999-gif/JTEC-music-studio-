@@ -41,6 +41,16 @@ const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
   { id: 'neon_city', label: 'Neon City', icon: '🏙️' },
   { id: 'dream', label: 'Dream', icon: '🫧' },
   { id: 'energy', label: 'Energy', icon: '⚡' },
+  { id: 'inferno', label: 'Inferno', icon: '🔥' },
+  { id: 'ocean', label: 'Ocean', icon: '🌊' },
+  { id: 'deep_space', label: 'Deep Space', icon: '🌌' },
+  { id: 'crystal', label: 'Crystal', icon: '💎' },
+  { id: 'vortex', label: 'Vortex', icon: '🌀' },
+  { id: 'prism', label: 'Prism', icon: '🌈' },
+  { id: 'meteor_shower', label: 'Meteor Shower', icon: '🌠' },
+  { id: 'nature', label: 'Nature', icon: '🌿' },
+  { id: 'neural_network', label: 'Neural Network', icon: '🧬' },
+  { id: 'black_hole', label: 'Black Hole', icon: '🕳️' },
 ];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
@@ -127,7 +137,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
           {/* Dropdown for Cinematic Scenes */}
           {showSceneSelector && (
-            <div className="absolute top-10 left-1/2 -translate-x-1/2 w-48 rounded-2xl bg-[#090d20]/95 backdrop-blur-xl border border-cyan-500/30 p-2 shadow-2xl z-30 space-y-1">
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 w-52 max-h-72 overflow-y-auto rounded-2xl bg-[#090d20]/95 backdrop-blur-xl border border-cyan-500/30 p-2 shadow-2xl z-30 space-y-1">
               {SCENE_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
@@ -189,21 +199,6 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
       {/* 4. BOTTOM PLAYBACK CONTROLS */}
       <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-4">
-        {/* Track Metadata */}
-        <div className="text-center sm:text-left flex flex-col sm:flex-row items-center justify-between gap-1">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl sm:text-2xl font-black text-white truncate tracking-tight">
-              {currentSong.title}
-            </h1>
-            <p className="text-sm font-medium text-cyan-300 truncate mt-0.5">
-              {currentSong.artist}
-            </p>
-          </div>
-          <span className="text-[11px] font-mono text-slate-400 shrink-0">
-            {currentSong.format.toUpperCase()}
-          </span>
-        </div>
-
         {/* Scrubber Progress Bar */}
         <div className="space-y-1.5">
           <div className="relative flex items-center">
