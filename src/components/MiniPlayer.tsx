@@ -44,17 +44,17 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           />
         </div>
 
-        {/* Thumbnail with pulsing neon border when playing */}
+        {/* Circular Artwork Profile */}
         <div className="relative shrink-0">
           <img
-            src={currentSong.artworkUrl || '/pwa-192x192.png'}
+            src={currentSong.artworkUrl || './pwa-192x192.png'}
             alt={currentSong.title}
-            className={`w-11 h-11 rounded-xl object-cover border transition-all duration-300 ${
+            className={`w-11 h-11 rounded-full object-cover border transition-all duration-300 ${
               isPlaying ? 'border-cyan-400 shadow-md shadow-cyan-500/30' : 'border-white/15'
             }`}
           />
           {isPlaying && (
-            <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-900 flex items-center justify-center">
+            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-900 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
             </div>
           )}

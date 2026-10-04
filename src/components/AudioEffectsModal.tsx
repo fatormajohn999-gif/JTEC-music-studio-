@@ -17,12 +17,26 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     bassGain: 0,
     trebleGain: 0,
   },
+  'Slow': {
+    playbackRate: 0.85,
+    reverbWet: 0.0,
+    echoWet: 0.0,
+    bassGain: 5,
+    trebleGain: 0,
+  },
   'Slow + Reverb': {
     playbackRate: 0.85,
     reverbWet: 0.65,
     echoWet: 0.15,
     bassGain: 15,
     trebleGain: -8,
+  },
+  'Dreamy': {
+    playbackRate: 0.88,
+    reverbWet: 0.85,
+    echoWet: 0.35,
+    bassGain: 10,
+    trebleGain: 20,
   },
   'Night': {
     playbackRate: 0.78,
@@ -38,19 +52,12 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     bassGain: 40,
     trebleGain: 10,
   },
-  'Dreamy': {
-    playbackRate: 0.88,
-    reverbWet: 0.85,
-    echoWet: 0.4,
-    bassGain: 10,
-    trebleGain: 25,
-  },
-  'Chill': {
-    playbackRate: 0.92,
-    reverbWet: 0.45,
-    echoWet: 0.1,
-    bassGain: 12,
-    trebleGain: 5,
+  'Cinematic': {
+    playbackRate: 0.90,
+    reverbWet: 0.90,
+    echoWet: 0.30,
+    bassGain: 25,
+    trebleGain: 15,
   },
   'Custom': {},
 };
@@ -141,11 +148,12 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
             <div className="grid grid-cols-3 gap-2">
               {[
                 { name: 'Normal', icon: Disc, label: 'Normal' },
-                { name: 'Slow + Reverb', icon: Waves, label: 'Slow+Reverb' },
+                { name: 'Slow', icon: Waves, label: 'Slow (0.85x)' },
+                { name: 'Slow + Reverb', icon: Sparkles, label: 'Slow+Reverb' },
+                { name: 'Dreamy', icon: Wind, label: 'Dreamy' },
                 { name: 'Night', icon: Moon, label: 'Night Drive' },
                 { name: 'Bass', icon: Zap, label: 'Bass Boost' },
-                { name: 'Dreamy', icon: Wind, label: 'Dreamy' },
-                { name: 'Chill', icon: Music2, label: 'Chill Lo-Fi' },
+                { name: 'Cinematic', icon: Sparkles, label: 'Cinematic' },
               ].map((p) => {
                 const Icon = p.icon;
                 const isSelected = effects.presetName === p.name;

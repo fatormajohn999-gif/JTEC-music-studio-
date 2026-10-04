@@ -145,7 +145,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
                       className="relative w-11 h-11 rounded-xl overflow-hidden cursor-pointer shrink-0"
                     >
                       <img
-                        src={song.artworkUrl || '/pwa-192x192.png'}
+                        src={song.artworkUrl || './pwa-192x192.png'}
                         alt={song.title}
                         className="w-full h-full object-cover"
                       />

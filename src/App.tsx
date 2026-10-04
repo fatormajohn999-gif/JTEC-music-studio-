@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Song, Playlist, AudioEffectsConfig, VisualizerMode, PerformanceMode, RepeatMode, AppSettings 
+  Song, Playlist, AudioEffectsConfig, VisualizerMode, PerformanceMode, RepeatMode, AppSettings, 
+  ArtworkPalette, CinematicScene 
 } from './types/music';
 import { StorageService } from './services/storage';
 import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
 import { generateDemoTrack1, generateDemoTrack2 } from './services/demoTracks';
+import { extractPaletteFromImage } from './services/colorExtractor';
 
 // UI Components
 import { Header } from './components/Header';
@@ -46,6 +48,15 @@ export default function App() {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
   const [isShuffle, setIsShuffle] = useState(false);
 
+  // Dynamic Cinematic Artwork Palette
+  const [currentPalette, setCurrentPalette] = useState<ArtworkPalette>({
+    primary: '#00f0ff',
+    secondary: '#a855f7',
+    accent: '#ec4899',
+    glow: 'rgba(0, 240, 255, 0.45)',
+    darkBg: '#070b18',
+  });
+
   // Audio Effects State
   const [effects, setEffects] = useState<AudioEffectsConfig>({
     playbackRate: 1.0,
@@ -60,7 +71,7 @@ export default function App() {
   // App Settings & Performance
   const [settings, setSettings] = useState<AppSettings>({
     performanceMode: 'balanced',
-    visualizerMode: 'circular',
+    visualizerMode: 'auto',
     autoplayNext: true,
     rememberLastSong: true,
     neonGlow: true,
@@ -155,7 +166,10 @@ export default function App() {
 
         if (storedSongs.length > 0 && storedSettings.rememberLastSong) {
           setCurrentSong(storedSongs[0]);
+          extractPaletteFromImage(storedSongs[0].artworkUrl).then(setCurrentPalette);
         }
+
+        StorageService.requestPersistentStorage();
 
         const stats = await StorageService.getStorageStats();
         setStorageStats(stats);
@@ -242,6 +256,7 @@ export default function App() {
     try {
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
+      extractPaletteFromImage(song.artworkUrl).then((pal) => setCurrentPalette(pal));
 
       // If song not in queue, insert it
       setQueue((prev) => {
@@ -671,6 +686,7 @@ export default function App() {
         performanceMode={settings.performanceMode}
         repeatMode={repeatMode}
         isShuffle={isShuffle}
+        palette={currentPalette}
         onTogglePlay={handleTogglePlay}
         onPrevious={handlePreviousTrack}
         onNext={handleNextTrack}
@@ -680,13 +696,10 @@ export default function App() {
         onCycleRepeat={() =>
           setRepeatMode((prev) => (prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off'))
         }
-        onCycleVisualizer={() => {
-          const modes: VisualizerMode[] = ['circular', 'spectrum', 'waveform', 'particles', 'off'];
-          const nextIdx = (modes.indexOf(settings.visualizerMode) + 1) % modes.length;
-          handleUpdateSettings({ ...settings, visualizerMode: modes[nextIdx] });
-        }}
+        onSelectScene={(scene) => handleUpdateSettings({ ...settings, visualizerMode: scene })}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
         onOpenQueue={() => setIsQueueOpen(true)}
+        onOpenSongOptions={(song) => setOptionsMenuSong(song)}
       />
 
       {/* SLOW + REVERB AUDIO EFFECTS MODAL */}

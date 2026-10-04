@@ -9,10 +9,19 @@ export interface Song {
   size: number; // bytes
   dateAdded: number; // timestamp
   isFavorite?: boolean;
-  blobKey?: string; // key in audio_blobs store
+  blobKey?: string;
   hasStoredBlob: boolean;
   isDemo?: boolean;
   year?: string;
+  palette?: ArtworkPalette;
+}
+
+export interface ArtworkPalette {
+  primary: string;    // dominant color e.g. '#00f0ff'
+  secondary: string;  // supporting harmonic e.g. '#a855f7'
+  accent: string;     // high-energy accent e.g. '#ec4899'
+  glow: string;       // ambient rgba string
+  darkBg: string;     // deep ambient background hex
 }
 
 export interface Playlist {
@@ -25,7 +34,8 @@ export interface Playlist {
   updatedAt: number;
 }
 
-export type VisualizerMode = 'circular' | 'spectrum' | 'waveform' | 'particles' | 'off';
+export type CinematicScene = 'aurora' | 'galaxy' | 'neon_city' | 'dream' | 'energy' | 'auto' | 'off';
+export type VisualizerMode = CinematicScene;
 
 export type PerformanceMode = 'battery' | 'balanced' | 'high';
 
@@ -36,7 +46,7 @@ export interface AudioEffectsConfig {
   bassGain: number;     // -50 to +50 dB (scaled)
   trebleGain: number;   // -50 to +50 dB (scaled)
   volume: number;       // 0.0 to 1.0 (0% to 100%)
-  presetName: 'Normal' | 'Slow + Reverb' | 'Night' | 'Bass' | 'Dreamy' | 'Chill' | 'Custom';
+  presetName: 'Normal' | 'Slow' | 'Slow + Reverb' | 'Dreamy' | 'Night' | 'Bass' | 'Cinematic' | 'Custom';
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -48,4 +58,14 @@ export interface AppSettings {
   rememberLastSong: boolean;
   neonGlow: boolean;
   reducedMotion: boolean;
+}
+
+export interface AudioBands {
+  bass: number;        // 0 to 1 (20-160Hz)
+  low: number;         // 0 to 1 (160-500Hz)
+  mid: number;         // 0 to 1 (500-2000Hz)
+  high: number;        // 0 to 1 (2000-16000Hz)
+  volume: number;      // 0 to 1 (RMS energy)
+  rawFrequency: Uint8Array;
+  rawTimeDomain: Uint8Array;
 }

@@ -193,7 +193,7 @@ export const StorageService = {
   async getSettings(): Promise<AppSettings> {
     const defaultSettings: AppSettings = {
       performanceMode: 'balanced',
-      visualizerMode: 'circular',
+      visualizerMode: 'auto',
       autoplayNext: true,
       rememberLastSong: true,
       neonGlow: true,
@@ -222,6 +222,21 @@ export const StorageService = {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
+  },
+
+  async requestPersistentStorage(): Promise<boolean> {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+      try {
+        const isPersisted = await navigator.storage.persisted();
+        if (!isPersisted) {
+          return await navigator.storage.persist();
+        }
+        return isPersisted;
+      } catch {
+        return false;
+      }
+    }
+    return false;
   },
 
   // STORAGE USAGE

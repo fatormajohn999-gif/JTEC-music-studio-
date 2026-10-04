@@ -41,7 +41,7 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
         {/* Track preview */}
         <div className="flex items-center gap-3 pb-3 border-b border-white/10">
           <img
-            src={song.artworkUrl || '/pwa-192x192.png'}
+            src={song.artworkUrl || './pwa-192x192.png'}
             alt={song.title}
             className="w-12 h-12 rounded-xl object-cover border border-cyan-500/30"
           />

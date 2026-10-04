@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { 
   ChevronDown, Heart, Shuffle, Repeat, Repeat1, SkipBack, SkipForward, 
-  Play, Pause, Sliders, ListMusic, Eye, Volume2, Sparkles, Disc 
+  Play, Pause, Sliders, ListMusic, Sparkles, Wand2, Eye, Compass, MoreVertical 
 } from 'lucide-react';
-import { Song, AudioEffectsConfig, VisualizerMode, RepeatMode, PerformanceMode } from '../types/music';
-import { VisualizerCanvas } from './VisualizerCanvas';
+import { 
+  Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette 
+} from '../types/music';
+import { CinematicVisualizer } from './CinematicVisualizer';
 
 interface FullPlayerProps {
   isOpen: boolean;
@@ -14,10 +16,11 @@ interface FullPlayerProps {
   currentTime: number;
   duration: number;
   effects: AudioEffectsConfig;
-  visualizerMode: VisualizerMode;
+  visualizerMode: CinematicScene;
   performanceMode: PerformanceMode;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  palette: ArtworkPalette;
   onTogglePlay: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -25,10 +28,20 @@ interface FullPlayerProps {
   onToggleFavorite: (song: Song) => void;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
-  onCycleVisualizer: () => void;
+  onSelectScene: (scene: CinematicScene) => void;
   onOpenEffects: () => void;
   onOpenQueue: () => void;
+  onOpenSongOptions: (song: Song) => void;
 }
+
+const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
+  { id: 'auto', label: 'Auto Vibe', icon: '✨' },
+  { id: 'aurora', label: 'Aurora', icon: '🌌' },
+  { id: 'galaxy', label: 'Galaxy', icon: '🪐' },
+  { id: 'neon_city', label: 'Neon City', icon: '🏙️' },
+  { id: 'dream', label: 'Dream', icon: '🫧' },
+  { id: 'energy', label: 'Energy', icon: '⚡' },
+];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
   isOpen,
@@ -42,6 +55,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   performanceMode,
   repeatMode,
   isShuffle,
+  palette,
   onTogglePlay,
   onPrevious,
   onNext,
@@ -49,12 +63,15 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onToggleFavorite,
   onToggleShuffle,
   onCycleRepeat,
-  onCycleVisualizer,
+  onSelectScene,
   onOpenEffects,
   onOpenQueue,
+  onOpenSongOptions,
 }) => {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);
+  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('aurora');
+  const [showSceneSelector, setShowSceneSelector] = useState(false);
 
   if (!isOpen || !currentSong) return null;
 
@@ -68,144 +85,123 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSeekValue(parseFloat(e.target.value));
-  };
-
-  const handleSeekMouseDown = () => {
-    setIsSeeking(true);
-    setSeekValue(currentTime);
-  };
-
-  const handleSeekMouseUp = () => {
-    setIsSeeking(false);
-    onSeek(seekValue);
-  };
-
-  const handleTouchEnd = () => {
-    setIsSeeking(false);
-    onSeek(seekValue);
-  };
-
   const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#060812] flex flex-col justify-between overflow-hidden animate-in slide-in-from-bottom duration-300">
-      {/* Background Ambient Glow & Visualizer Layer */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {/* Ambient colored blobs */}
-        <div className="absolute top-1/4 -left-20 w-80 h-80 bg-cyan-600/15 rounded-full blur-[100px]" />
-        <div className="absolute top-1/3 -right-20 w-80 h-80 bg-purple-600/15 rounded-full blur-[100px]" />
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-96 h-96 bg-pink-600/10 rounded-full blur-[120px]" />
-
-        {/* Real-time Web Audio Visualizer */}
+    <div className="fixed inset-0 z-40 bg-[#04060d] flex flex-col justify-between overflow-hidden animate-in slide-in-from-bottom duration-300">
+      {/* 1. CINEMATIC AUDIO-REACTIVE ENVIRONMENT (Canvas Layer Behind) */}
+      <div className="absolute inset-0 pointer-events-none">
         {visualizerMode !== 'off' && (
-          <VisualizerCanvas
-            mode={visualizerMode}
+          <CinematicVisualizer
+            scene={visualizerMode}
             performanceMode={performanceMode}
+            palette={palette}
             isActive={isPlaying}
-            className="absolute inset-0 opacity-80"
+            className="w-full h-full"
+            onAutoSceneDetermined={(scene) => setDetectedAutoScene(scene)}
           />
         )}
       </div>
 
-      {/* Top Header Controls */}
-      <div className="relative z-10 flex items-center justify-between px-6 pt-5 pb-2">
+      {/* 2. TOP CONTROLS & SCENE SELECTOR */}
+      <div className="relative z-20 flex items-center justify-between px-6 pt-5 pb-2">
         <button
           onClick={onClose}
-          className="p-2.5 rounded-full bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white active:scale-95 transition"
+          className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white active:scale-95 transition"
           title="Minimize player"
         >
-          <ChevronDown className="w-6 h-6" />
+          <ChevronDown className="w-5 h-5" />
         </button>
 
-        <div className="text-center">
-          <span className="text-[11px] font-bold tracking-widest text-cyan-400 uppercase">
-            JTEC MUSIC
-          </span>
-          <div className="flex items-center justify-center gap-1 mt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-xs text-slate-400 font-medium">Offline Playback</span>
-          </div>
+        {/* Scene Pill Selector */}
+        <div className="relative">
+          <button
+            onClick={() => setShowSceneSelector(!showSceneSelector)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-cyan-500/30 text-xs font-semibold text-cyan-300 shadow-lg shadow-cyan-500/10 hover:border-cyan-400 transition"
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span className="capitalize">
+              {visualizerMode === 'auto' ? `Auto: ${detectedAutoScene}` : visualizerMode.replace('_', ' ')}
+            </span>
+          </button>
+
+          {/* Dropdown for Cinematic Scenes */}
+          {showSceneSelector && (
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 w-48 rounded-2xl bg-[#090d20]/95 backdrop-blur-xl border border-cyan-500/30 p-2 shadow-2xl z-30 space-y-1">
+              {SCENE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => {
+                    onSelectScene(opt.id);
+                    setShowSceneSelector(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition ${
+                    visualizerMode === opt.id
+                      ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border border-cyan-400/40'
+                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>{opt.icon}</span>
+                    <span>{opt.label}</span>
+                  </span>
+                  {visualizerMode === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        <button
-          onClick={onCycleVisualizer}
-          title={`Visualizer: ${visualizerMode}`}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold transition ${
-            visualizerMode !== 'off'
-              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-500/20'
-              : 'bg-slate-900/60 border-white/10 text-slate-400'
-          }`}
-        >
-          <Eye className="w-3.5 h-3.5" />
-          <span className="capitalize">{visualizerMode}</span>
-        </button>
-      </div>
-
-      {/* Center Artwork / Visualizer Stage */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 py-2 min-h-0">
-        <div className="relative w-full max-w-[320px] aspect-square flex items-center justify-center">
-          {/* Animated Glow Halo */}
-          <div
-            className={`absolute inset-0 rounded-3xl transition-all duration-700 blur-2xl opacity-60 ${
-              isPlaying ? 'bg-gradient-to-tr from-cyan-500 via-purple-600 to-pink-500 scale-105' : 'bg-transparent'
-            }`}
-          />
-
-          {/* Album Artwork Card */}
-          <div className="relative w-full h-full rounded-3xl overflow-hidden border border-white/15 shadow-2xl bg-slate-950 group">
-            <img
-              src={currentSong.artworkUrl || '/pwa-192x192.png'}
-              alt={currentSong.title}
-              className={`w-full h-full object-cover transition-transform duration-700 ${
-                isPlaying ? 'scale-100' : 'scale-95 opacity-90'
-              }`}
-            />
-
-            {/* Subtle Vinyl Grooves overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
-
-            {/* Quick preset badge */}
-            {isEffectsActive && (
-              <div className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/80 backdrop-blur-md border border-purple-500/40 text-purple-300 text-xs font-semibold shadow-lg">
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                <span>{effects.presetName} ({effects.playbackRate}x)</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Control Section */}
-      <div className="relative z-10 px-6 pb-8 pt-2 max-w-md mx-auto w-full space-y-4">
-        {/* Song Info & Favorite */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white truncate tracking-tight">
-              {currentSong.title}
-            </h1>
-            <p className="text-sm sm:text-base text-cyan-300 font-medium truncate mt-0.5">
-              {currentSong.artist}
-            </p>
-            <p className="text-xs text-slate-500 truncate mt-0.5">
-              {currentSong.album}
-            </p>
-          </div>
-
+        <div className="flex items-center gap-2">
           <button
             onClick={() => onToggleFavorite(currentSong)}
-            className="p-3 rounded-full bg-slate-900/70 border border-white/10 hover:border-pink-500/40 text-slate-400 active:scale-90 transition shrink-0"
+            className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 hover:border-pink-500/40 text-slate-300 active:scale-95 transition"
             title={currentSong.isFavorite ? 'Remove Favorite' : 'Add Favorite'}
           >
             <Heart
-              className={`w-6 h-6 transition ${
+              className={`w-5 h-5 transition ${
                 currentSong.isFavorite
-                  ? 'fill-pink-500 text-pink-500 scale-110 drop-shadow-[0_0_8px_rgba(236,72,153,0.7)]'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'fill-pink-500 text-pink-500 drop-shadow-[0_0_8px_rgba(236,72,153,0.7)]'
+                  : 'text-slate-300 hover:text-white'
               }`}
             />
           </button>
+
+          <button
+            onClick={() => onOpenSongOptions(currentSong)}
+            className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white"
+          >
+            <MoreVertical className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* 3. CENTER: UNOBSTRUCTED CINEMATIC ANIMATION SPACE */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 py-2 min-h-0 pointer-events-none">
+        {/* DSP Effects Badge Pill */}
+        {isEffectsActive && (
+          <div className="pointer-events-auto flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md border border-purple-500/40 text-purple-300 text-xs font-semibold shadow-lg animate-in fade-in">
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>{effects.presetName} ({effects.playbackRate.toFixed(2)}x)</span>
+          </div>
+        )}
+      </div>
+
+      {/* 4. BOTTOM PLAYBACK CONTROLS */}
+      <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-4">
+        {/* Track Metadata */}
+        <div className="text-center sm:text-left flex flex-col sm:flex-row items-center justify-between gap-1">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl sm:text-2xl font-black text-white truncate tracking-tight">
+              {currentSong.title}
+            </h1>
+            <p className="text-sm font-medium text-cyan-300 truncate mt-0.5">
+              {currentSong.artist}
+            </p>
+          </div>
+          <span className="text-[11px] font-mono text-slate-400 shrink-0">
+            {currentSong.format.toUpperCase()}
+          </span>
         </div>
 
         {/* Scrubber Progress Bar */}
@@ -217,12 +213,24 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
               max={duration || 100}
               step="0.5"
               value={activeTime}
-              onChange={handleSeekChange}
-              onMouseDown={handleSeekMouseDown}
-              onMouseUp={handleSeekMouseUp}
-              onTouchStart={handleSeekMouseDown}
-              onTouchEnd={handleTouchEnd}
-              className="w-full"
+              onChange={(e) => setSeekValue(parseFloat(e.target.value))}
+              onMouseDown={() => {
+                setIsSeeking(true);
+                setSeekValue(currentTime);
+              }}
+              onMouseUp={() => {
+                setIsSeeking(false);
+                onSeek(seekValue);
+              }}
+              onTouchStart={() => {
+                setIsSeeking(true);
+                setSeekValue(currentTime);
+              }}
+              onTouchEnd={() => {
+                setIsSeeking(false);
+                onSeek(seekValue);
+              }}
+              className="w-full cursor-pointer"
             />
           </div>
 
@@ -232,15 +240,15 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           </div>
         </div>
 
-        {/* Main Controls */}
+        {/* Main Controls Bar */}
         <div className="flex items-center justify-between pt-1">
           {/* Shuffle */}
           <button
             onClick={onToggleShuffle}
             title={`Shuffle: ${isShuffle ? 'On' : 'Off'}`}
-            className={`p-3 rounded-xl transition ${
+            className={`p-3 rounded-2xl transition active:scale-90 ${
               isShuffle
-                ? 'text-cyan-400 bg-cyan-500/20'
+                ? 'text-cyan-300 bg-cyan-500/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -256,10 +264,14 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             <SkipBack className="w-7 h-7 fill-current" />
           </button>
 
-          {/* Big Play / Pause with Neon Glow */}
+          {/* Center Play / Pause with Neon Glow */}
           <button
             onClick={onTogglePlay}
-            className="w-18 h-18 rounded-full bg-gradient-to-tr from-cyan-400 via-purple-500 to-pink-500 flex items-center justify-center text-white shadow-2xl shadow-cyan-500/40 hover:shadow-cyan-400/60 active:scale-95 transition-all duration-200"
+            className="w-18 h-18 rounded-full flex items-center justify-center text-white shadow-2xl transition-all duration-200 active:scale-95 hover:scale-105"
+            style={{
+              background: `linear-gradient(135deg, ${palette.primary} 0%, ${palette.secondary} 50%, ${palette.accent} 100%)`,
+              boxShadow: `0 0 28px ${palette.glow}`,
+            }}
             title={isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? (
@@ -282,9 +294,9 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           <button
             onClick={onCycleRepeat}
             title={`Repeat: ${repeatMode}`}
-            className={`p-3 rounded-xl transition ${
+            className={`p-3 rounded-2xl transition active:scale-90 ${
               repeatMode !== 'off'
-                ? 'text-purple-400 bg-purple-500/20'
+                ? 'text-purple-300 bg-purple-500/20'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -296,13 +308,13 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           </button>
         </div>
 
-        {/* Bottom Utility Bar: Audio Effects & Queue Buttons */}
+        {/* Secondary Buttons: Effects & Queue */}
         <div className="flex items-center justify-between pt-2 border-t border-white/5">
           <button
             onClick={onOpenEffects}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
               isEffectsActive
-                ? 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
+                ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200'
                 : 'bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white'
             }`}
           >
@@ -312,7 +324,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
           <button
             onClick={onOpenQueue}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900/60 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
           >
             <ListMusic className="w-4 h-4 text-pink-400" />
             <span>Queue</span>

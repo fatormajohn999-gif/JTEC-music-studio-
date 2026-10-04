@@ -1,4 +1,4 @@
-import { AudioEffectsConfig } from '../types/music';
+import { AudioEffectsConfig, AudioBands } from '../types/music';
 
 class AudioEngine {
   private audioCtx: AudioContext | null = null;
@@ -329,6 +329,57 @@ class AudioEngine {
     if (!this.analyserNode || !this.timeDataBuffer) return null;
     this.analyserNode.getByteTimeDomainData(this.timeDataBuffer as unknown as Uint8Array<ArrayBuffer>);
     return this.timeDataBuffer;
+  }
+
+  public getAudioBands(): AudioBands | null {
+    if (!this.analyserNode || !this.freqDataBuffer || !this.timeDataBuffer) return null;
+    this.analyserNode.getByteFrequencyData(this.freqDataBuffer as unknown as Uint8Array<ArrayBuffer>);
+    this.analyserNode.getByteTimeDomainData(this.timeDataBuffer as unknown as Uint8Array<ArrayBuffer>);
+
+    const freq = this.freqDataBuffer;
+    const time = this.timeDataBuffer;
+    const len = freq.length;
+
+    // Bass: bin 1 to ~8 (20Hz - ~160Hz)
+    let bassSum = 0;
+    const bassEnd = Math.min(8, len);
+    for (let i = 1; i < bassEnd; i++) bassSum += freq[i];
+    const bass = bassSum / (Math.max(1, bassEnd - 1) * 255);
+
+    // Low: bin 8 to ~24 (160Hz - ~500Hz)
+    let lowSum = 0;
+    const lowEnd = Math.min(24, len);
+    for (let i = bassEnd; i < lowEnd; i++) lowSum += freq[i];
+    const low = lowSum / (Math.max(1, lowEnd - bassEnd) * 255);
+
+    // Mid: bin 24 to ~64 (500Hz - ~2000Hz)
+    let midSum = 0;
+    const midEnd = Math.min(64, len);
+    for (let i = lowEnd; i < midEnd; i++) midSum += freq[i];
+    const mid = midSum / (Math.max(1, midEnd - lowEnd) * 255);
+
+    // High: bin 64 to len (2000Hz - 16000Hz)
+    let highSum = 0;
+    for (let i = midEnd; i < len; i++) highSum += freq[i];
+    const high = highSum / (Math.max(1, len - midEnd) * 255);
+
+    // RMS volume
+    let sumSquares = 0;
+    for (let i = 0; i < time.length; i++) {
+      const norm = (time[i] - 128) / 128;
+      sumSquares += norm * norm;
+    }
+    const volume = Math.min(1, Math.sqrt(sumSquares / time.length) * 1.8);
+
+    return {
+      bass,
+      low,
+      mid,
+      high,
+      volume,
+      rawFrequency: freq,
+      rawTimeDomain: time,
+    };
   }
 
   // Event Subscription

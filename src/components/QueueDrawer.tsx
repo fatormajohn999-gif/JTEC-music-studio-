@@ -68,7 +68,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
             </span>
             <div className="flex items-center gap-3 mt-1.5">
               <img
-                src={currentSong.artworkUrl || '/pwa-192x192.png'}
+                src={currentSong.artworkUrl || './pwa-192x192.png'}
                 alt={currentSong.title}
                 className="w-12 h-12 rounded-xl object-cover border border-cyan-500/30"
               />
@@ -128,7 +128,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                     className="relative cursor-pointer shrink-0"
                   >
                     <img
-                      src={song.artworkUrl || '/pwa-192x192.png'}
+                      src={song.artworkUrl || './pwa-192x192.png'}
                       alt={song.title}
                       className="w-10 h-10 rounded-lg object-cover"
                     />

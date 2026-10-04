@@ -43,7 +43,7 @@ export const SongDetailsModal: React.FC<SongDetailsModalProps> = ({
         {/* Artwork Header */}
         <div className="flex flex-col items-center text-center mb-5">
           <img
-            src={song.artworkUrl || '/pwa-192x192.png'}
+            src={song.artworkUrl || './pwa-192x192.png'}
             alt={song.title}
             className="w-24 h-24 rounded-2xl object-cover border-2 border-cyan-500/40 shadow-xl shadow-cyan-500/20 mb-3"
           />

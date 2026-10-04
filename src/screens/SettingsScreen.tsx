@@ -112,12 +112,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           Render real-time frequency data synced to Web Audio API analyser.
         </p>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
           {[
-            { id: 'circular' as VisualizerMode, label: 'Circular Ring' },
-            { id: 'spectrum' as VisualizerMode, label: 'EQ Spectrum' },
-            { id: 'waveform' as VisualizerMode, label: 'Oscilloscope' },
-            { id: 'particles' as VisualizerMode, label: 'Neon Particles' },
+            { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
+            { id: 'aurora' as VisualizerMode, label: '🌌 Aurora' },
+            { id: 'galaxy' as VisualizerMode, label: '🪐 Galaxy' },
+            { id: 'neon_city' as VisualizerMode, label: '🏙️ Neon City' },
+            { id: 'dream' as VisualizerMode, label: '🫧 Dream' },
+            { id: 'energy' as VisualizerMode, label: '⚡ Energy' },
           ].map((v) => {
             const isSelected = settings.visualizerMode === v.id;
             return (
