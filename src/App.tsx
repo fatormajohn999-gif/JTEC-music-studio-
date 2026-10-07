@@ -7,7 +7,6 @@ import { StorageService } from './services/storage';
 import { SupabaseService } from './services/supabase';
 import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
-import { generateDemoTrack1, generateDemoTrack2 } from './services/demoTracks';
 import { extractPaletteFromImage } from './services/colorExtractor';
 
 // UI Components
@@ -123,23 +122,49 @@ export default function App() {
         let storedPlaylists = await StorageService.getAllPlaylists();
         const storedRecents = await StorageService.getRecentlyPlayed();
 
-        // Seed initial rich demo tracks and default playlists if database is brand new
-        if (storedSongs.length === 0) {
-          const t1 = await generateDemoTrack1();
-          const t2 = await generateDemoTrack2();
+        // Purge any old demo/placeholder songs if present in database
+        const hasDemoTracks = storedSongs.some(
+          (s) => s.id.startsWith('demo-') || s.isDemo || s.artist === 'JTEC Sound Lab' || s.title?.includes('Neon Skyline')
+        );
+        if (hasDemoTracks) {
+          for (const s of storedSongs) {
+            if (s.id.startsWith('demo-') || s.isDemo || s.artist === 'JTEC Sound Lab' || s.title?.includes('Neon Skyline')) {
+              await StorageService.deleteSong(s.id);
+            }
+          }
+          storedSongs = await StorageService.getAllSongs();
+        }
 
-          await StorageService.saveSong(t1.song, t1.blob);
-          await StorageService.saveSong(t2.song, t2.blob);
+        // Clean any demo track IDs out of playlists
+        let playlistsNeedUpdate = false;
+        storedPlaylists = storedPlaylists.map((pl) => {
+          const cleanIds = pl.songIds.filter((id) => !id.startsWith('demo-'));
+          if (cleanIds.length !== pl.songIds.length) {
+            playlistsNeedUpdate = true;
+            return { ...pl, songIds: cleanIds };
+          }
+          return pl;
+        });
+        if (playlistsNeedUpdate) {
+          for (const pl of storedPlaylists) {
+            await StorageService.savePlaylist(pl);
+          }
+        }
 
-          storedSongs = [t1.song, t2.song];
+        // Clean demo IDs from recently played
+        const cleanRecents = storedRecents.filter((id) => !id.startsWith('demo-'));
+        if (cleanRecents.length !== storedRecents.length) {
+          await StorageService.saveRecentlyPlayed(cleanRecents);
+        }
 
-          // Create default starter playlists
+        // If no playlists exist yet, create default starter playlists (empty, ready for real user music)
+        if (storedPlaylists.length === 0) {
           const starterPlaylists: Playlist[] = [
             {
               id: 'pl-favorites',
               name: 'Favorite Songs',
               description: 'Your starred and loved tracks',
-              songIds: [t1.song.id],
+              songIds: [],
               coverGradient: 'from-pink-500 to-rose-600',
               createdAt: Date.now(),
               updatedAt: Date.now(),
@@ -148,7 +173,7 @@ export default function App() {
               id: 'pl-slow-reverb',
               name: 'Slow + Reverb Mix',
               description: 'Spaced out aesthetic vibing',
-              songIds: [t1.song.id, t2.song.id],
+              songIds: [],
               coverGradient: 'from-purple-500 to-indigo-600',
               createdAt: Date.now(),
               updatedAt: Date.now(),
@@ -157,7 +182,7 @@ export default function App() {
               id: 'pl-chill',
               name: 'Chill Beats',
               description: 'Relaxing sounds for night walks',
-              songIds: [t2.song.id],
+              songIds: [],
               coverGradient: 'from-cyan-500 to-blue-600',
               createdAt: Date.now(),
               updatedAt: Date.now(),
@@ -289,7 +314,21 @@ export default function App() {
       });
 
       // Fetch blob from IndexedDB (or stream from cloud audioUrl)
-      const blob = await StorageService.getSongBlob(song.id);
+      let blob = await StorageService.getSongBlob(song.id);
+      if (!blob && song.cloudId) {
+        blob = await StorageService.getSongBlob(`cloud_${song.cloudId}`);
+        if (!blob) {
+          blob = await StorageService.getSongBlob(song.cloudId);
+        }
+      }
+      if (!blob && song.fileHash) {
+        const allSongs = await StorageService.getAllSongs();
+        const offlineMatch = allSongs.find((s) => s.hasStoredBlob && s.fileHash === song.fileHash);
+        if (offlineMatch) {
+          blob = await StorageService.getSongBlob(offlineMatch.id);
+        }
+      }
+
       if (blob) {
         await audioEngine.loadAudio(blob);
       } else if (song.audioUrl) {
@@ -307,8 +346,11 @@ export default function App() {
       await StorageService.addRecentlyPlayed(song.id);
       const updatedRecents = await StorageService.getRecentlyPlayed();
       setRecentlyPlayedIds(updatedRecents);
-    } catch (err) {
-      console.error('Failed to play song:', err);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      console.warn('Failed to play song:', err);
       setGlobalError("JTEC MUSIC couldn't play this file. The format may not be supported by your browser.");
       setTimeout(() => setGlobalError(null), 5000);
     }
@@ -669,8 +711,12 @@ export default function App() {
     setStorageStats(stats);
   };
 
-  const handleUploadSuccess = (newSongs: CloudSong[]) => {
+  const handleUploadSuccess = async (newSongs: CloudSong[]) => {
     setCloudSongs((prev) => [...newSongs, ...prev]);
+    const allSongs = await StorageService.getAllSongs();
+    setSongs(allSongs);
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
     setIsCloudUploadOpen(false);
   };
 

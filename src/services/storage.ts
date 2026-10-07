@@ -250,6 +250,17 @@ export const StorageService = {
     });
   },
 
+  async saveRecentlyPlayed(ids: string[]): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('kv_store', 'readwrite');
+      const store = tx.objectStore('kv_store');
+      store.put(ids.slice(0, 30), 'recently_played');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  },
+
   // SETTINGS
   async getSettings(): Promise<AppSettings> {
     const defaultSettings: AppSettings = {

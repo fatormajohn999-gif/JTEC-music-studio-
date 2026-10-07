@@ -115,11 +115,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
           {[
             { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
-            { id: 'aurora' as VisualizerMode, label: '🌌 Aurora' },
-            { id: 'galaxy' as VisualizerMode, label: '🪐 Galaxy' },
-            { id: 'neon_city' as VisualizerMode, label: '🏙️ Neon City' },
-            { id: 'dream' as VisualizerMode, label: '🫧 Dream' },
-            { id: 'energy' as VisualizerMode, label: '⚡ Energy' },
+            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
+            { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
+            { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
+            { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
+            { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
+            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
+            { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
+            { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
+            { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
+            { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
           ].map((v) => {
             const isSelected = settings.visualizerMode === v.id;
             return (

@@ -73,8 +73,18 @@ export interface Playlist {
 
 export type CinematicScene = 
   | 'auto' 
+  | 'dark_spectrum'
+  | 'cyber_city'
+  | 'galaxy'
+  | 'fire_energy'
+  | 'rainy_night'
+  | 'anime_ninja'
+  | 'samurai'
+  | 'deep_ocean'
+  | 'music_tunnel'
+  | 'minimal_pro'
+  // Legacy aliases
   | 'aurora' 
-  | 'galaxy' 
   | 'neon_city' 
   | 'dream' 
   | 'energy' 

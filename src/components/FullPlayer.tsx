@@ -36,21 +36,16 @@ interface FullPlayerProps {
 
 const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
   { id: 'auto', label: 'Auto Vibe', icon: '✨' },
-  { id: 'aurora', label: 'Aurora', icon: '🌌' },
-  { id: 'galaxy', label: 'Galaxy', icon: '🪐' },
-  { id: 'neon_city', label: 'Neon City', icon: '🏙️' },
-  { id: 'dream', label: 'Dream', icon: '🫧' },
-  { id: 'energy', label: 'Energy', icon: '⚡' },
-  { id: 'inferno', label: 'Inferno', icon: '🔥' },
-  { id: 'ocean', label: 'Ocean', icon: '🌊' },
-  { id: 'deep_space', label: 'Deep Space', icon: '🌌' },
-  { id: 'crystal', label: 'Crystal', icon: '💎' },
-  { id: 'vortex', label: 'Vortex', icon: '🌀' },
-  { id: 'prism', label: 'Prism', icon: '🌈' },
-  { id: 'meteor_shower', label: 'Meteor Shower', icon: '🌠' },
-  { id: 'nature', label: 'Nature', icon: '🌿' },
-  { id: 'neural_network', label: 'Neural Network', icon: '🧬' },
-  { id: 'black_hole', label: 'Black Hole', icon: '🕳️' },
+  { id: 'dark_spectrum', label: 'Dark Spectrum', icon: '📊' },
+  { id: 'cyber_city', label: 'Cyber City', icon: '🏙️' },
+  { id: 'galaxy', label: 'Galaxy', icon: '🌌' },
+  { id: 'fire_energy', label: 'Fire Energy', icon: '🔥' },
+  { id: 'rainy_night', label: 'Rainy Night', icon: '🌧️' },
+  { id: 'anime_ninja', label: 'Anime Ninja', icon: '🥷' },
+  { id: 'samurai', label: 'Samurai', icon: '⚔️' },
+  { id: 'deep_ocean', label: 'Deep Ocean', icon: '🌊' },
+  { id: 'music_tunnel', label: 'Music Tunnel', icon: '🌀' },
+  { id: 'minimal_pro', label: 'Minimal Pro', icon: '⚡' },
 ];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
@@ -80,7 +75,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 }) => {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);
-  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('aurora');
+  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('dark_spectrum');
   const [showSceneSelector, setShowSceneSelector] = useState(false);
 
   if (!isOpen || !currentSong) return null;

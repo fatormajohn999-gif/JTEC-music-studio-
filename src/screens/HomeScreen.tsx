@@ -244,64 +244,80 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         <div className="space-y-2">
-          {recentlyAdded.map((song) => {
-            const isThisPlaying = currentSong?.id === song.id && isPlaying;
-            return (
-              <div
-                key={song.id}
-                className={`flex items-center gap-3 p-2.5 rounded-2xl border transition group ${
-                  isThisPlaying
-                    ? 'bg-cyan-500/15 border-cyan-400/50'
-                    : 'bg-slate-900/40 border-white/5 hover:border-white/15'
-                }`}
-              >
-                <div
-                  onClick={() => onPlaySong(song)}
-                  className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0"
-                >
-                  <img
-                    src={song.artworkUrl || './pwa-192x192.png'}
-                    alt={song.title}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                    <Play className="w-4 h-4 text-white" />
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => onPlaySong(song)}
-                  className="flex-1 min-w-0 cursor-pointer"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">
-                      {song.title}
-                    </h4>
-                    {song.isDemo && (
-                      <span className="shrink-0 text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold">
-                        DEMO
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-400 truncate mt-0.5">{song.artist}</p>
-                </div>
-
-                <button
-                  onClick={() => onToggleFavorite(song)}
-                  className="p-2 text-slate-400 hover:text-pink-500 transition"
-                >
-                  <Heart className={`w-4 h-4 ${song.isFavorite ? 'fill-pink-500 text-pink-500' : ''}`} />
-                </button>
-
-                <button
-                  onClick={() => onOpenSongOptions(song)}
-                  className="p-2 text-slate-400 hover:text-white"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
+          {recentlyAdded.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-slate-900/30 border border-white/5 text-center space-y-3">
+              <div className="w-12 h-12 mx-auto rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
+                <Music2 className="w-6 h-6" />
               </div>
-            );
-          })}
+              <div>
+                <h4 className="text-sm font-bold text-white">Your Library is Empty</h4>
+                <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                  Import your music files or upload to JTEC CLOUD to play your music offline.
+                </p>
+              </div>
+              <button
+                onClick={onOpenImport}
+                className="px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold text-xs hover:bg-cyan-500/30 transition inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>+ Import Music</span>
+              </button>
+            </div>
+          ) : (
+            recentlyAdded.map((song) => {
+              const isThisPlaying = currentSong?.id === song.id && isPlaying;
+              return (
+                <div
+                  key={song.id}
+                  className={`flex items-center gap-3 p-2.5 rounded-2xl border transition group ${
+                    isThisPlaying
+                      ? 'bg-cyan-500/15 border-cyan-400/50'
+                      : 'bg-slate-900/40 border-white/5 hover:border-white/15'
+                  }`}
+                >
+                  <div
+                    onClick={() => onPlaySong(song)}
+                    className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0"
+                  >
+                    <img
+                      src={song.artworkUrl || './pwa-192x192.png'}
+                      alt={song.title}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                      <Play className="w-4 h-4 text-white" />
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => onPlaySong(song)}
+                    className="flex-1 min-w-0 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">
+                        {song.title}
+                      </h4>
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">{song.artist}</p>
+                  </div>
+
+                  <button
+                    onClick={() => onToggleFavorite(song)}
+                    className="p-2 text-slate-400 hover:text-pink-500 transition"
+                  >
+                    <Heart className={`w-4 h-4 ${song.isFavorite ? 'fill-pink-500 text-pink-500' : ''}`} />
+                  </button>
+
+                  <button
+                    onClick={() => onOpenSongOptions(song)}
+                    className="p-2 text-slate-400 hover:text-white"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

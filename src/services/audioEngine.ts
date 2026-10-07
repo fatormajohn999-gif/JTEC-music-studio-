@@ -64,13 +64,18 @@ class AudioEngine {
     this.audioElement.preload = 'auto';
 
     // Hook audio element events once
-    this.audioElement.addEventListener('timeupdate', () => {
+    const notifyTimeAndDuration = () => {
       if (this.audioElement) {
-        this.currentTime = this.audioElement.currentTime;
-        this.duration = this.audioElement.duration || 0;
+        this.currentTime = this.audioElement.currentTime || 0;
+        const dur = this.audioElement.duration;
+        this.duration = isFinite(dur) && dur > 0 ? dur : 0;
         this.timeUpdateCallbacks.forEach((cb) => cb(this.currentTime, this.duration));
       }
-    });
+    };
+
+    this.audioElement.addEventListener('timeupdate', notifyTimeAndDuration);
+    this.audioElement.addEventListener('loadedmetadata', notifyTimeAndDuration);
+    this.audioElement.addEventListener('durationchange', notifyTimeAndDuration);
 
     this.audioElement.addEventListener('play', () => {
       this.isPlaying = true;
@@ -260,7 +265,7 @@ class AudioEngine {
   }
 
   public async resumeContext() {
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+    if (this.audioCtx && (this.audioCtx.state === 'suspended' || (this.audioCtx.state as string) === 'interrupted')) {
       try {
         await this.audioCtx.resume();
       } catch (err) {
@@ -288,6 +293,7 @@ class AudioEngine {
     if (blobOrUrl instanceof Blob) {
       this.currentObjectUrl = URL.createObjectURL(blobOrUrl);
       // Local blobs should NOT have crossOrigin attribute set
+      this.audioElement.crossOrigin = null;
       this.audioElement.removeAttribute('crossorigin');
       this.audioElement.src = this.currentObjectUrl;
     } else {
@@ -295,6 +301,7 @@ class AudioEngine {
       if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('http') && !blobOrUrl.startsWith(window.location.origin)) {
         this.audioElement.crossOrigin = 'anonymous';
       } else {
+        this.audioElement.crossOrigin = null;
         this.audioElement.removeAttribute('crossorigin');
       }
       this.audioElement.src = blobOrUrl;
@@ -314,8 +321,12 @@ class AudioEngine {
       try {
         await this.audioElement.play();
         this.isPlaying = true;
-      } catch (e) {
-        console.error('Play prevented or failed', e);
+      } catch (e: unknown) {
+        // If play request was interrupted by quick skip or pause, ignore gracefully
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          return;
+        }
+        console.warn('Play prevented or failed', e);
         this.isPlaying = false;
         throw e;
       }
@@ -331,7 +342,10 @@ class AudioEngine {
 
   public seek(seconds: number): void {
     if (this.audioElement && isFinite(seconds)) {
-      this.audioElement.currentTime = Math.max(0, Math.min(seconds, this.audioElement.duration || seconds));
+      const dur = isFinite(this.audioElement.duration) && this.audioElement.duration > 0
+        ? this.audioElement.duration
+        : seconds;
+      this.audioElement.currentTime = Math.max(0, Math.min(seconds, dur));
     }
   }
 

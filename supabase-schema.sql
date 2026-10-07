@@ -59,14 +59,27 @@ create policy "Allow public delete on songs"
   on public.songs for delete
   using (true);
 
--- ==============================================================================
--- STORAGE BUCKETS CONFIGURATION INSTRUCTIONS:
--- ==============================================================================
--- 1. In your Supabase Dashboard, navigate to 'Storage' in the left menu.
--- 2. Click 'New bucket'.
--- 3. Name the bucket: music
--- 4. Toggle 'Public bucket' to ON (so audio streams can be read by HTMLAudioElement / Web Audio API).
--- 5. Click 'Save bucket'.
--- 6. (Optional) Repeat the process to create another public bucket named: artwork
--- 7. Ensure storage policies permit Select and Insert for anon users on these buckets.
--- ==============================================================================
+-- 5. Storage Buckets (creates public buckets)
+insert into storage.buckets (id, name, public)
+values ('music', 'music', true)
+on conflict (id) do nothing;
+
+insert into storage.buckets (id, name, public)
+values ('artwork', 'artwork', true)
+on conflict (id) do nothing;
+
+-- 6. Storage Access Policies
+drop policy if exists "Public Access music" on storage.objects;
+create policy "Public Access music" on storage.objects for select using (bucket_id = 'music');
+
+drop policy if exists "Public Upload music" on storage.objects;
+create policy "Public Upload music" on storage.objects for insert with check (bucket_id = 'music');
+
+drop policy if exists "Public Delete music" on storage.objects;
+create policy "Public Delete music" on storage.objects for delete using (bucket_id = 'music');
+
+drop policy if exists "Public Access artwork" on storage.objects;
+create policy "Public Access artwork" on storage.objects for select using (bucket_id = 'artwork');
+
+drop policy if exists "Public Upload artwork" on storage.objects;
+create policy "Public Upload artwork" on storage.objects for insert with check (bucket_id = 'artwork');

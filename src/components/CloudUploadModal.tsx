@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import { extractAudioMetadata } from '../services/id3Parser';
 import { SupabaseService, computeFileHash, formatBytes } from '../services/supabase';
-import { CloudSong } from '../types/music';
+import { CloudSong, Song } from '../types/music';
+import { StorageService } from '../services/storage';
 
 interface CloudUploadModalProps {
   isOpen: boolean;
@@ -193,6 +194,30 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
 
         completedSongs.push(uploadedSong);
 
+        // Cache locally in IndexedDB so the device immediately has the offline audio
+        try {
+          const localSong: Song = {
+            id: `cloud_${uploadedSong.id}`,
+            title: uploadedSong.title,
+            artist: uploadedSong.artist,
+            album: uploadedSong.album,
+            duration: uploadedSong.duration,
+            genre: uploadedSong.genre,
+            artworkUrl: uploadedSong.cover_url,
+            format: (uploadedSong.file_name.split('.').pop() || 'mp3').toLowerCase(),
+            size: uploadedSong.file_size,
+            dateAdded: Date.now(),
+            hasStoredBlob: true,
+            cloudId: uploadedSong.id,
+            isCloud: true,
+            audioUrl: uploadedSong.audio_url,
+            fileHash: uploadedSong.file_hash,
+          };
+          await StorageService.saveSong(localSong, item.file);
+        } catch (storageErr) {
+          console.warn('Could not cache uploaded song locally in IndexedDB', storageErr);
+        }
+
         setItems((prev) =>
           prev.map((it) =>
             it.id === item.id
@@ -247,6 +272,30 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
           );
         }
       );
+
+      // Cache locally in IndexedDB
+      try {
+        const localSong: Song = {
+          id: `cloud_${uploadedSong.id}`,
+          title: uploadedSong.title,
+          artist: uploadedSong.artist,
+          album: uploadedSong.album,
+          duration: uploadedSong.duration,
+          genre: uploadedSong.genre,
+          artworkUrl: uploadedSong.cover_url,
+          format: (uploadedSong.file_name.split('.').pop() || 'mp3').toLowerCase(),
+          size: uploadedSong.file_size,
+          dateAdded: Date.now(),
+          hasStoredBlob: true,
+          cloudId: uploadedSong.id,
+          isCloud: true,
+          audioUrl: uploadedSong.audio_url,
+          fileHash: uploadedSong.file_hash,
+        };
+        await StorageService.saveSong(localSong, item.file);
+      } catch (storageErr) {
+        console.warn('Could not cache uploaded song locally in IndexedDB', storageErr);
+      }
 
       setItems((prev) =>
         prev.map((it) =>
