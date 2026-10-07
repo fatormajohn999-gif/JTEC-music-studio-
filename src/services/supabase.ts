@@ -12,6 +12,28 @@ const LS_KEY_URL = 'jtec_supabase_url';
 const LS_KEY_KEY = 'jtec_supabase_anon_key';
 const LS_KEY_CLOUD_STORE = 'jtec_cloud_local_store';
 
+const LS_KEY_SETTINGS = 'jtec_cloud_settings';
+
+export interface CloudSettings {
+  cloudSync: boolean;
+  autoDownloadFavorites: boolean;
+  wifiOnly: boolean;
+  autoSyncPlaylists: boolean;
+  storageWarnings: boolean;
+  warningThreshold: 75 | 90;
+  maxCloudQuotaBytes: number;
+}
+
+export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
+  cloudSync: true,
+  autoDownloadFavorites: false,
+  wifiOnly: false,
+  autoSyncPlaylists: true,
+  storageWarnings: true,
+  warningThreshold: 75,
+  maxCloudQuotaBytes: DEFAULT_MAX_CLOUD_BYTES,
+};
+
 let cachedClient: SupabaseClient | null = null;
 let currentClientConfig = { url: '', anonKey: '' };
 
@@ -57,6 +79,38 @@ export const SupabaseService = {
       localStorage.removeItem(LS_KEY_KEY);
     }
     cachedClient = null;
+  },
+
+  /**
+   * Reads Cloud preferences from local storage.
+   */
+  getCloudSettings(): CloudSettings {
+    if (typeof localStorage === 'undefined') return DEFAULT_CLOUD_SETTINGS;
+    try {
+      const stored = localStorage.getItem(LS_KEY_SETTINGS);
+      if (stored) {
+        return { ...DEFAULT_CLOUD_SETTINGS, ...JSON.parse(stored) };
+      }
+    } catch {
+      // fallback
+    }
+    return DEFAULT_CLOUD_SETTINGS;
+  },
+
+  /**
+   * Saves Cloud preferences to local storage.
+   */
+  saveCloudSettings(settings: Partial<CloudSettings>): CloudSettings {
+    const current = this.getCloudSettings();
+    const updated = { ...current, ...settings };
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(LS_KEY_SETTINGS, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+    }
+    return updated;
   },
 
   /**
@@ -159,12 +213,12 @@ export const SupabaseService = {
 
   /**
    * Fetches all cloud music tracks from the Supabase "songs" table.
-   * If not configured, gracefully loads from local cloud simulation cache.
+   * Real data only: returns empty array if credentials not set or no tracks uploaded.
    */
   async fetchCloudSongs(): Promise<CloudSong[]> {
     const client = this.getClient();
     if (!client) {
-      return this.getLocalMockCloudSongs();
+      return [];
     }
 
     try {
@@ -174,8 +228,8 @@ export const SupabaseService = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.warn('Error fetching cloud songs from Supabase, using local cache:', error.message);
-        return this.getLocalMockCloudSongs();
+        console.warn('Error fetching cloud songs from Supabase:', error.message);
+        return [];
       }
 
       const songs: CloudSong[] = (data || []).map((row) => ({
@@ -195,20 +249,22 @@ export const SupabaseService = {
         updated_at: row.updated_at,
       }));
 
-      // Cache a snapshot for instant offline display
-      this.saveLocalMockCloudSongs(songs);
       return songs;
     } catch (err) {
       console.warn('Network exception fetching cloud songs:', err);
-      return this.getLocalMockCloudSongs();
+      return [];
     }
   },
 
   /**
    * Checks whether a song with the same hash or matching metadata already exists in the cloud.
    */
+  /**
+   * Checks whether a song with the same hash or matching metadata already exists in the cloud.
+   */
   async checkDuplicate(
     fileHash: string,
+    fileName: string,
     title: string,
     artist: string,
     size: number
@@ -223,18 +279,29 @@ export const SupabaseService = {
       if (exactHashMatch) return exactHashMatch;
     }
 
-    // 2. Exact file size + clean title match
+    // 2. Exact filename + file size match
+    if (fileName && size > 0) {
+      const nameMatch = cloudSongs.find(
+        (s) => s.file_name.toLowerCase() === fileName.toLowerCase() && s.file_size === size
+      );
+      if (nameMatch) return nameMatch;
+    }
+
+    // 3. Exact clean title + artist match
     const cleanTitle = title.trim().toLowerCase();
     const cleanArtist = artist.trim().toLowerCase();
 
-    const metadataMatch = cloudSongs.find((s) => {
-      const sameTitle = s.title.trim().toLowerCase() === cleanTitle;
-      const sameArtist = s.artist.trim().toLowerCase() === cleanArtist;
-      const sameSize = Math.abs(s.file_size - size) < 1024; // within 1KB
-      return sameTitle && (sameArtist || sameSize);
-    });
+    if (cleanTitle && cleanTitle !== 'untitled') {
+      const metadataMatch = cloudSongs.find((s) => {
+        const sameTitle = s.title.trim().toLowerCase() === cleanTitle;
+        const sameArtist = !cleanArtist || cleanArtist === 'unknown artist' || s.artist.trim().toLowerCase() === cleanArtist;
+        const sameSize = Math.abs(s.file_size - size) < 4096; // within 4KB
+        return sameTitle && (sameArtist || sameSize);
+      });
+      if (metadataMatch) return metadataMatch;
+    }
 
-    return metadataMatch || null;
+    return null;
   },
 
   /**
@@ -258,118 +325,76 @@ export const SupabaseService = {
     onProgress?: (percent: number) => void
   ): Promise<CloudSong> {
     const client = this.getClient();
+    if (!client) {
+      throw new Error(
+        'Supabase is not configured. Please open Cloud Settings and enter your Supabase URL and public Anon Key.'
+      );
+    }
+
     const cleanExt = file.name.split('.').pop()?.toLowerCase() || 'mp3';
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const uniqueId = `song_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const storagePath = `${uniqueId}.${cleanExt}`;
+    // Organized storage path: tracks/{songId}/{filename}
+    const storagePath = `tracks/${uniqueId}/${sanitizedFileName}`;
 
     let audioUrl = '';
     let coverUrl = metadata.artworkUrl || '';
 
-    // If client is configured, upload to real Supabase Storage & Database
-    if (client) {
-      if (onProgress) onProgress(15);
+    if (onProgress) onProgress(15);
 
-      // 1. Upload Audio File to "music" bucket
-      const { error: uploadError } = await client.storage
-        .from(BUCKET_MUSIC)
-        .upload(storagePath, file, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: file.type || 'audio/mpeg',
-        });
+    // 1. Upload Audio File to "music" bucket
+    const { error: uploadError } = await client.storage
+      .from(BUCKET_MUSIC)
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: file.type || 'audio/mpeg',
+      });
 
-      if (uploadError) {
-        throw new Error(`Cloud storage upload failed: ${uploadError.message}`);
+    if (uploadError) {
+      if (uploadError.message?.toLowerCase().includes('bucket not found')) {
+        throw new Error(
+          'Bucket "music" was not found in your Supabase project. Please create a public bucket named "music" in Supabase Storage.'
+        );
       }
-
-      if (onProgress) onProgress(65);
-
-      // Obtain public audio URL
-      const { data: publicUrlData } = client.storage
-        .from(BUCKET_MUSIC)
-        .getPublicUrl(storagePath);
-      audioUrl = publicUrlData.publicUrl;
-
-      // 2. Upload Artwork (if a custom binary blob exists)
-      if (metadata.artworkBlob && !metadata.artworkUrl?.startsWith('data:')) {
-        try {
-          const artworkPath = `cover_${uniqueId}.jpg`;
-          const { error: artError } = await client.storage
-            .from(BUCKET_ARTWORK)
-            .upload(artworkPath, metadata.artworkBlob, {
-              cacheControl: '3600',
-              upsert: true,
-              contentType: 'image/jpeg',
-            });
-
-          if (!artError) {
-            const { data: artPublicUrl } = client.storage
-              .from(BUCKET_ARTWORK)
-              .getPublicUrl(artworkPath);
-            coverUrl = artPublicUrl.publicUrl;
-          }
-        } catch (err) {
-          console.warn('Artwork upload skipped:', err);
-        }
-      }
-
-      if (onProgress) onProgress(85);
-
-      // 3. Insert into Supabase "songs" table
-      const songPayload = {
-        title: metadata.title.trim() || file.name,
-        artist: metadata.artist.trim() || 'Unknown Artist',
-        album: metadata.album.trim() || 'Single',
-        genre: metadata.genre.trim() || 'Music',
-        duration: Math.round(metadata.duration) || 0,
-        file_name: file.name,
-        file_path: storagePath,
-        file_size: file.size, // Real byte count
-        audio_url: audioUrl,
-        cover_url: coverUrl,
-        file_hash: metadata.fileHash,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data: insertedData, error: dbError } = await client
-        .from('songs')
-        .insert(songPayload)
-        .select()
-        .single();
-
-      if (dbError) {
-        throw new Error(`Database record creation failed: ${dbError.message}`);
-      }
-
-      if (onProgress) onProgress(100);
-
-      const createdSong: CloudSong = {
-        id: insertedData.id,
-        title: insertedData.title,
-        artist: insertedData.artist,
-        album: insertedData.album,
-        genre: insertedData.genre,
-        duration: Number(insertedData.duration),
-        file_name: insertedData.file_name,
-        file_path: insertedData.file_path,
-        file_size: Number(insertedData.file_size),
-        audio_url: insertedData.audio_url,
-        cover_url: insertedData.cover_url,
-        file_hash: insertedData.file_hash,
-        created_at: insertedData.created_at,
-      };
-
-      return createdSong;
+      throw new Error(`Cloud storage upload failed: ${uploadError.message}`);
     }
 
-    // Fallback: Local Cloud Simulation Mode (when Supabase credentials not yet provided)
-    if (onProgress) onProgress(40);
-    const mockAudioUrl = URL.createObjectURL(file);
+    if (onProgress) onProgress(65);
+
+    // Obtain public audio URL
+    const { data: publicUrlData } = client.storage
+      .from(BUCKET_MUSIC)
+      .getPublicUrl(storagePath);
+    audioUrl = publicUrlData.publicUrl;
+
+    // 2. Upload Artwork (if a custom binary blob exists)
+    if (metadata.artworkBlob && !metadata.artworkUrl?.startsWith('data:')) {
+      try {
+        const artworkPath = `covers/${uniqueId}.jpg`;
+        const { error: artError } = await client.storage
+          .from(BUCKET_ARTWORK)
+          .upload(artworkPath, metadata.artworkBlob, {
+            cacheControl: '3600',
+            upsert: true,
+            contentType: 'image/jpeg',
+          });
+
+        if (!artError) {
+          const { data: artPublicUrl } = client.storage
+            .from(BUCKET_ARTWORK)
+            .getPublicUrl(artworkPath);
+          coverUrl = artPublicUrl.publicUrl;
+        }
+      } catch (err) {
+        console.warn('Artwork upload skipped:', err);
+      }
+    }
+
     if (onProgress) onProgress(85);
 
-    const mockSong: CloudSong = {
-      id: uniqueId,
+    // 3. Insert into Supabase "songs" table
+    const songPayload = {
       title: metadata.title.trim() || file.name,
       artist: metadata.artist.trim() || 'Unknown Artist',
       album: metadata.album.trim() || 'Single',
@@ -377,18 +402,43 @@ export const SupabaseService = {
       duration: Math.round(metadata.duration) || 0,
       file_name: file.name,
       file_path: storagePath,
-      file_size: file.size,
-      audio_url: mockAudioUrl,
+      file_size: file.size, // Real byte count
+      audio_url: audioUrl,
       cover_url: coverUrl,
       file_hash: metadata.fileHash,
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
-    const existing = this.getLocalMockCloudSongs();
-    this.saveLocalMockCloudSongs([mockSong, ...existing]);
+    const { data: insertedData, error: dbError } = await client
+      .from('songs')
+      .insert(songPayload)
+      .select()
+      .single();
+
+    if (dbError) {
+      throw new Error(`Database record creation failed: ${dbError.message}`);
+    }
 
     if (onProgress) onProgress(100);
-    return mockSong;
+
+    const createdSong: CloudSong = {
+      id: insertedData.id,
+      title: insertedData.title,
+      artist: insertedData.artist,
+      album: insertedData.album,
+      genre: insertedData.genre,
+      duration: Number(insertedData.duration),
+      file_name: insertedData.file_name,
+      file_path: insertedData.file_path,
+      file_size: Number(insertedData.file_size),
+      audio_url: insertedData.audio_url,
+      cover_url: insertedData.cover_url,
+      file_hash: insertedData.file_hash,
+      created_at: insertedData.created_at,
+    };
+
+    return createdSong;
   },
 
   /**
@@ -396,26 +446,24 @@ export const SupabaseService = {
    */
   async deleteSongFromCloud(song: CloudSong): Promise<void> {
     const client = this.getClient();
-    if (client) {
-      // 1. Delete storage file if path exists
-      if (song.file_path) {
-        try {
-          await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
-        } catch (e) {
-          console.warn('Could not remove file from bucket:', e);
-        }
-      }
+    if (!client) {
+      throw new Error('Supabase is not configured.');
+    }
 
-      // 2. Delete database record
-      const { error } = await client.from('songs').delete().eq('id', song.id);
-      if (error) {
-        throw new Error(`Failed to delete cloud track: ${error.message}`);
+    // 1. Delete storage file if path exists
+    if (song.file_path) {
+      try {
+        await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
+      } catch (e) {
+        console.warn('Could not remove file from bucket:', e);
       }
     }
 
-    // Always keep local cache synced
-    const local = this.getLocalMockCloudSongs();
-    this.saveLocalMockCloudSongs(local.filter((s) => s.id !== song.id));
+    // 2. Delete database record
+    const { error } = await client.from('songs').delete().eq('id', song.id);
+    if (error) {
+      throw new Error(`Failed to delete cloud track: ${error.message}`);
+    }
   },
 
   /**
@@ -439,7 +487,7 @@ export const SupabaseService = {
     if (onProgress) onProgress(90);
 
     const localSong: Song = {
-      id: `local_${cloudSong.id}`,
+      id: `cloud_${cloudSong.id}`,
       title: cloudSong.title,
       artist: cloudSong.artist,
       album: cloudSong.album,
@@ -467,8 +515,8 @@ export const SupabaseService = {
     cloudSongs: CloudSong[],
     offlineSongsCount: number,
     offlineBytes: number,
-    playlistCount: number,
-    favoriteCount: number,
+    playlistCount = 0,
+    favoriteCount = 0,
     customMaxBytes: number = DEFAULT_MAX_CLOUD_BYTES
   ): CloudStorageStats {
     let totalCloudBytes = 0;
@@ -491,28 +539,6 @@ export const SupabaseService = {
       playlistCount,
       favoriteCount,
     };
-  },
-
-  /**
-   * Local storage mock helpers for seamless offline simulation.
-   */
-  getLocalMockCloudSongs(): CloudSong[] {
-    if (typeof localStorage === 'undefined') return [];
-    try {
-      const data = localStorage.getItem(LS_KEY_CLOUD_STORE);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
-  },
-
-  saveLocalMockCloudSongs(songs: CloudSong[]) {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.setItem(LS_KEY_CLOUD_STORE, JSON.stringify(songs));
-    } catch {
-      // quota or storage error
-    }
   },
 };
 

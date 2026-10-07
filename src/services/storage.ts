@@ -147,6 +147,33 @@ export const StorageService = {
     });
   },
 
+  /**
+   * Clears all downloaded audio blobs from local device storage (IndexedDB),
+   * marking cloud songs as not stored locally while keeping them in the cloud.
+   */
+  async clearOfflineDownloadsOnly(): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['songs', 'audio_blobs'], 'readwrite');
+      tx.objectStore('audio_blobs').clear();
+      const songStore = tx.objectStore('songs');
+      const req = songStore.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          const song: Song = cursor.value;
+          if (song.isCloud || song.cloudId) {
+            song.hasStoredBlob = false;
+            cursor.update(song);
+          }
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
   async toggleFavorite(songId: string, isFavorite: boolean): Promise<void> {
     const db = await getDB();
     return new Promise((resolve, reject) => {

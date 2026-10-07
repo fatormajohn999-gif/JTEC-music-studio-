@@ -2,10 +2,11 @@ import React, { useState, useMemo } from 'react';
 import { 
   Cloud, HardDrive, Download, CheckCircle2, Upload, Database, RefreshCw, 
   Trash2, Play, MoreVertical, Heart, Plus, Search, Sparkles, Filter, 
-  Check, ArrowUpDown, Disc, Music, AlertCircle, FileCheck
+  Check, ArrowUpDown, Disc, Music, AlertCircle, AlertTriangle, Settings2,
+  ExternalLink, ArrowDownUp
 } from 'lucide-react';
 import { CloudSong, Song, Playlist, CloudStorageStats } from '../types/music';
-import { SupabaseService, formatBytes } from '../services/supabase';
+import { SupabaseService, formatBytes, CloudSettings } from '../services/supabase';
 
 interface CloudScreenProps {
   cloudSongs: CloudSong[];
@@ -17,10 +18,10 @@ interface CloudScreenProps {
   onPlayCloudSong: (cloudSong: CloudSong) => void;
   onDownloadSong: (cloudSong: CloudSong) => Promise<void>;
   onRemoveOfflineSong: (songId: string) => Promise<void>;
-  onDeleteCloudSong: (cloudSong: CloudSong) => Promise<void>;
+  onDeleteCloudSong: (cloudSong: CloudSong, deleteOfflineCopy?: boolean) => Promise<void>;
   onToggleFavorite: (song: Song) => void;
   onOpenUpload: () => void;
-  onOpenConnect: () => void;
+  onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
   onAddToPlaylist: (song: Song) => void;
   onAddToQueue: (song: Song) => void;
@@ -28,6 +29,7 @@ interface CloudScreenProps {
 }
 
 type CloudTab = 'all' | 'offline' | 'cloud_only' | 'storage';
+type SortOption = 'largest' | 'smallest' | 'newest' | 'oldest' | 'artist' | 'title';
 
 export const CloudScreen: React.FC<CloudScreenProps> = ({
   cloudSongs,
@@ -42,7 +44,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   onDeleteCloudSong,
   onToggleFavorite,
   onOpenUpload,
-  onOpenConnect,
+  onOpenSettings,
   onRefresh,
   onAddToPlaylist,
   onAddToQueue,
@@ -50,16 +52,20 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<CloudTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortOption, setSortOption] = useState<SortOption>('largest');
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
-  const [confirmRemoveOfflineId, setConfirmRemoveOfflineId] = useState<string | null>(null);
-  const [confirmDeleteCloudSong, setConfirmDeleteCloudSong] = useState<CloudSong | null>(null);
-  const [activeMenuSongId, setActiveMenuSongId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const supabaseConfig = SupabaseService.getConfig();
+  // Deletion modals state
+  const [deleteModalSong, setDeleteModalSong] = useState<CloudSong | null>(null);
+  const [removeOfflineModalSong, setRemoveOfflineModalSong] = useState<CloudSong | null>(null);
+  const [activeMenuSongId, setActiveMenuSongId] = useState<string | null>(null);
 
-  // Create quick lookup set of downloaded song cloudIds / fileHashes / titles
-  const offlineCloudIdMap = useMemo(() => {
+  const supabaseConfig = SupabaseService.getConfig();
+  const cloudSettings = SupabaseService.getCloudSettings();
+
+  // Map offline songs by cloudId, fileHash, or lowercased title+artist
+  const offlineMap = useMemo(() => {
     const map = new Map<string, Song>();
     for (const song of offlineSongs) {
       if (song.cloudId) map.set(song.cloudId, song);
@@ -71,57 +77,89 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // Real Storage Statistics
   const stats: CloudStorageStats = useMemo(() => {
-    const offlineBytes = offlineSongs.reduce((acc, s) => acc + (s.size || 0), 0);
-    const favoriteCount = offlineSongs.filter((s) => s.isFavorite).length;
+    const offlineBytes = offlineSongs.reduce((sum, s) => sum + (s.size || 0), 0);
     return SupabaseService.calculateStorageStats(
       cloudSongs,
       offlineSongs.length,
       offlineBytes,
       playlists.length,
-      favoriteCount
+      0,
+      cloudSettings.maxCloudQuotaBytes
     );
-  }, [cloudSongs, offlineSongs, playlists]);
+  }, [cloudSongs, offlineSongs, playlists, cloudSettings.maxCloudQuotaBytes]);
 
-  // Filtered tracks
+  // Distinct Albums and Artists count from real cloud songs
+  const totalAlbumsCount = useMemo(() => {
+    const set = new Set(cloudSongs.map((s) => (s.album || 'Single').trim().toLowerCase()));
+    return set.size;
+  }, [cloudSongs]);
+
+  const totalArtistsCount = useMemo(() => {
+    const set = new Set(cloudSongs.map((s) => (s.artist || 'Unknown Artist').trim().toLowerCase()));
+    return set.size;
+  }, [cloudSongs]);
+
+  // Determine offline match for a cloud song
+  const getOfflineMatch = (cs: CloudSong): Song | undefined => {
+    return (
+      offlineMap.get(cs.id) ||
+      (cs.file_hash ? offlineMap.get(cs.file_hash) : undefined) ||
+      offlineMap.get(`${cs.title.toLowerCase()}_${cs.artist.toLowerCase()}`)
+    );
+  };
+
+  const isSongDownloaded = (cs: CloudSong): boolean => {
+    const match = getOfflineMatch(cs);
+    return Boolean(match && match.hasStoredBlob);
+  };
+
+  // Filtered tracks based on tab and search
   const filteredTracks = useMemo(() => {
-    let list = cloudSongs;
+    let list = [...cloudSongs];
 
     if (activeTab === 'offline') {
-      list = list.filter((cs) => {
-        return (
-          offlineCloudIdMap.has(cs.id) ||
-          (cs.file_hash && offlineCloudIdMap.has(cs.file_hash)) ||
-          offlineCloudIdMap.has(`${cs.title.toLowerCase()}_${cs.artist.toLowerCase()}`)
-        );
-      });
+      list = list.filter((cs) => isSongDownloaded(cs));
     } else if (activeTab === 'cloud_only') {
-      list = list.filter((cs) => {
-        const isOffline =
-          offlineCloudIdMap.has(cs.id) ||
-          (cs.file_hash && offlineCloudIdMap.has(cs.file_hash)) ||
-          offlineCloudIdMap.has(`${cs.title.toLowerCase()}_${cs.artist.toLowerCase()}`);
-        return !isOffline;
-      });
+      list = list.filter((cs) => !isSongDownloaded(cs));
     }
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+      const q = searchQuery.toLowerCase().trim();
       list = list.filter(
         (cs) =>
           cs.title.toLowerCase().includes(q) ||
           cs.artist.toLowerCase().includes(q) ||
-          cs.album.toLowerCase().includes(q)
+          cs.album.toLowerCase().includes(q) ||
+          (cs.genre && cs.genre.toLowerCase().includes(q))
       );
     }
 
+    // Sort order
+    if (activeTab === 'storage' || sortOption !== 'newest') {
+      list.sort((a, b) => {
+        switch (sortOption) {
+          case 'largest':
+            return (b.file_size || 0) - (a.file_size || 0);
+          case 'smallest':
+            return (a.file_size || 0) - (b.file_size || 0);
+          case 'newest':
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          case 'oldest':
+            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          case 'artist':
+            return a.artist.localeCompare(b.artist);
+          case 'title':
+            return a.title.localeCompare(b.title);
+          default:
+            return 0;
+        }
+      });
+    }
+
     return list;
-  }, [cloudSongs, activeTab, searchQuery, offlineCloudIdMap]);
+  }, [cloudSongs, activeTab, searchQuery, sortOption, offlineMap]);
 
-  // Tracks sorted by size descending for Storage Analytics
-  const largestSongs = useMemo(() => {
-    return [...cloudSongs].sort((a, b) => b.file_size - a.file_size).slice(0, 10);
-  }, [cloudSongs]);
-
+  // Handle Download
   const handleDownload = async (cs: CloudSong) => {
     if (downloadingIds.has(cs.id)) return;
     setDownloadingIds((prev) => new Set(prev).add(cs.id));
@@ -136,6 +174,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     }
   };
 
+  // Handle Refresh
   const handleRefreshClick = async () => {
     setIsRefreshing(true);
     try {
@@ -145,29 +184,20 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     }
   };
 
-  const getOfflineMatch = (cs: CloudSong): Song | undefined => {
-    return (
-      offlineCloudIdMap.get(cs.id) ||
-      (cs.file_hash ? offlineCloudIdMap.get(cs.file_hash) : undefined) ||
-      offlineCloudIdMap.get(`${cs.title.toLowerCase()}_${cs.artist.toLowerCase()}`)
-    );
-  };
-
-  const formatSeconds = (sec: number) => {
-    const mins = Math.floor(sec / 60);
-    const secs = Math.floor(sec % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
+  // Storage warning status
+  const isStorageCritical = stats.usagePercentage >= 90;
+  const isStorageWarning = stats.usagePercentage >= 75 && !isStorageCritical;
+  const isStorageFull = stats.usagePercentage >= 100;
 
   return (
-    <div className="pb-36 pt-4 px-4 max-w-4xl mx-auto space-y-6">
-      {/* 1. CLOUD DASHBOARD HEADER */}
+    <div className="pb-36 pt-4 px-4 max-w-4xl mx-auto space-y-6 animate-in fade-in">
+      {/* 1. JTEC CLOUD HEADER & ACTION BUTTONS */}
       <div className="relative rounded-3xl p-6 bg-gradient-to-br from-[#0c1024] via-[#090d20] to-[#070b18] border border-cyan-500/30 shadow-2xl overflow-hidden space-y-5">
         {/* Ambient neon backdrop glow */}
         <div className="absolute top-0 right-0 w-80 h-80 rounded-full bg-cyan-500/10 blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-80 h-80 rounded-full bg-purple-600/10 blur-3xl pointer-events-none" />
 
-        {/* Top Header Bar */}
+        {/* Top Header Row */}
         <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-400 to-purple-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
@@ -176,7 +206,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                  JTEC <span className="text-gradient-cyan-purple">CLOUD</span>
+                  ☁ JTEC <span className="text-gradient-cyan-purple">CLOUD</span>
                 </h1>
                 <span
                   className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
@@ -185,33 +215,33 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                       : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                   }`}
                 >
-                  {supabaseConfig.isConfigured ? 'Supabase Live' : 'Local Cloud Mode'}
+                  {supabaseConfig.isConfigured ? 'Supabase Connected' : 'Not Connected'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Storage Manager & Offline Synchronizer
+              <p className="text-xs text-slate-400 mt-0.5 font-medium">
+                Cloud Music Storage
               </p>
             </div>
           </div>
 
-          {/* Quick Action Buttons */}
+          {/* Header Action Buttons */}
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefreshClick}
               disabled={isRefreshing}
-              title="Refresh and sync cloud tracks"
+              title="Refresh cloud library"
               className="p-2.5 rounded-xl bg-slate-900/80 border border-white/10 text-slate-300 hover:text-white hover:border-cyan-500/30 transition disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
             </button>
 
             <button
-              onClick={onOpenConnect}
-              title="Configure Supabase Database & Storage credentials"
+              onClick={onOpenSettings}
+              title="Open Cloud Settings & Storage Quota"
               className="px-3 py-2.5 rounded-xl bg-slate-900/80 border border-white/10 text-slate-300 hover:text-cyan-300 hover:border-cyan-500/30 transition flex items-center gap-1.5 text-xs font-semibold"
             >
-              <Database className="w-4 h-4 text-cyan-400" />
-              <span>Settings</span>
+              <Settings2 className="w-4 h-4 text-cyan-400" />
+              <span>Cloud Settings ⚙</span>
             </button>
 
             <button
@@ -224,88 +254,135 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
           </div>
         </div>
 
-        {/* 2. REAL STORAGE PROGRESS & METRICS */}
-        <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-          {/* Cloud Storage Card */}
-          <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-2.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-medium flex items-center gap-1.5">
-                <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-                Cloud Storage
-              </span>
-              <span className="font-bold text-white font-mono">
-                {formatBytes(stats.usedBytes)} / {formatBytes(stats.maxBytes)}
+        {/* Not Configured Banner */}
+        {!supabaseConfig.isConfigured && (
+          <div className="relative z-10 p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Supabase project is not configured. Connect your Supabase project in Cloud Settings to store music.
               </span>
             </div>
+            <button
+              onClick={onOpenSettings}
+              className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold hover:bg-amber-500/30 transition shrink-0"
+            >
+              Connect
+            </button>
+          </div>
+        )}
 
-            {/* Storage Progress Bar */}
-            <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-500 ${
-                  stats.usagePercentage > 90
-                    ? 'bg-rose-500'
-                    : stats.usagePercentage > 75
-                    ? 'bg-amber-400'
-                    : 'bg-gradient-to-r from-cyan-400 to-purple-500'
-                }`}
-                style={{ width: `${Math.max(2, stats.usagePercentage)}%` }}
-              />
-            </div>
+        {/* Real Storage Warnings */}
+        {cloudSettings.storageWarnings && (
+          <>
+            {isStorageFull && (
+              <div className="relative z-10 p-3 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2 font-medium">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>Cloud storage full ({stats.usagePercentage}% used). Free up space or upgrade storage in Supabase.</span>
+              </div>
+            )}
+            {isStorageCritical && !isStorageFull && (
+              <div className="relative z-10 p-3 rounded-2xl bg-rose-950/40 border border-rose-500/30 text-rose-200 text-xs flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>Storage critically low ({stats.usagePercentage}% used).</span>
+              </div>
+            )}
+            {isStorageWarning && (
+              <div className="relative z-10 p-3 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Storage almost full ({stats.usagePercentage}% used).</span>
+              </div>
+            )}
+          </>
+        )}
 
-            <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-              <span>{stats.usagePercentage}% used</span>
-              <span className="text-cyan-300">{formatBytes(stats.availableBytes)} available</span>
+        {/* 2. CLOUD STORAGE DASHBOARD PROGRESS */}
+        <div className="relative z-10 p-4 rounded-2xl bg-black/40 border border-white/10 space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+              Cloud Storage
+            </span>
+            <span className="font-bold text-white font-mono text-sm">
+              {formatBytes(stats.usedBytes)} / {formatBytes(stats.maxBytes)}
+            </span>
+          </div>
+
+          {/* Neon Storage Progress Bar */}
+          <div className="w-full h-2.5 rounded-full bg-slate-950 overflow-hidden p-0.5 border border-white/5">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                stats.usagePercentage >= 90
+                  ? 'bg-rose-500 shadow-sm shadow-rose-500'
+                  : stats.usagePercentage >= 75
+                  ? 'bg-amber-400 shadow-sm shadow-amber-400'
+                  : 'bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 shadow-sm shadow-cyan-400/50'
+              }`}
+              style={{ width: `${Math.max(stats.usedBytes > 0 ? 2 : 0, stats.usagePercentage)}%` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-slate-400">{stats.usagePercentage}% used</span>
+            <span className="text-cyan-300 font-bold">{formatBytes(stats.availableBytes)} available</span>
+          </div>
+        </div>
+
+        {/* 3. YOUR CLOUD & OFFLINE METRICS */}
+        <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* YOUR CLOUD */}
+          <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-2">
+            <p className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Cloud className="w-3.5 h-3.5" />
+              YOUR CLOUD
+            </p>
+            <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+              <div className="p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                <span className="text-base font-black text-white block">{stats.totalSongs}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-medium">Songs</span>
+              </div>
+              <div className="p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                <span className="text-base font-black text-purple-300 block">{totalAlbumsCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-medium">Albums</span>
+              </div>
+              <div className="p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                <span className="text-base font-black text-pink-300 block">{totalArtistsCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-medium">Artists</span>
+              </div>
             </div>
           </div>
 
-          {/* Cloud Song Summary */}
-          <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-slate-400 font-medium">Cloud Library</p>
-              <h3 className="text-2xl font-black text-white mt-1">
-                {stats.totalSongs}{' '}
-                <span className="text-xs font-normal text-slate-400">Tracks</span>
-              </h3>
-            </div>
-            <div className="text-right text-[11px] text-slate-400 space-y-0.5">
-              <p className="text-purple-300">{playlists.length} Playlists</p>
-              <p className="text-pink-300">{stats.favoriteCount} Favorites</p>
-            </div>
-          </div>
-
-          {/* Offline Downloaded Summary */}
-          <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                Available Offline
-              </p>
-              <h3 className="text-2xl font-black text-emerald-300 mt-1">
-                {stats.offlineSongsCount}{' '}
-                <span className="text-xs font-normal text-slate-400">Downloaded</span>
-              </h3>
-            </div>
-            <div className="text-right text-[11px] text-slate-400">
-              <span className="font-mono text-white text-xs block font-bold">
-                {formatBytes(stats.offlineBytes)}
-              </span>
-              <span>Device storage</span>
+          {/* OFFLINE ON THIS DEVICE */}
+          <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-2">
+            <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              OFFLINE ON THIS DEVICE
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1 text-center">
+              <div className="p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                <span className="text-base font-black text-emerald-300 block">{stats.offlineSongsCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-medium">Songs Offline</span>
+              </div>
+              <div className="p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                <span className="text-base font-black text-white block font-mono">{formatBytes(stats.offlineBytes)}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-medium">Device Storage</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. TABS & SEARCH BAR */}
+      {/* 4. SEARCH & FILTER TABS */}
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
-          {/* Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+          {/* Navigation Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-1">
             <button
               onClick={() => setActiveTab('all')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
                 activeTab === 'all'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               All Cloud ({cloudSongs.length})
@@ -315,20 +392,20 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               onClick={() => setActiveTab('offline')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeTab === 'offline'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm shadow-emerald-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Offline ({stats.offlineSongsCount})</span>
+              <span>Downloaded ({stats.offlineSongsCount})</span>
             </button>
 
             <button
               onClick={() => setActiveTab('cloud_only')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeTab === 'cloud_only'
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm shadow-purple-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <Cloud className="w-3.5 h-3.5" />
@@ -340,294 +417,250 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeTab === 'storage'
                   ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-white border border-cyan-400/30'
-                  : 'text-slate-400 hover:text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <HardDrive className="w-3.5 h-3.5" />
-              <span>Manage Storage</span>
+              <span>Storage Management</span>
             </button>
           </div>
 
-          {/* Search Input */}
-          {activeTab !== 'storage' && (
-            <div className="relative w-full sm:w-56">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search cloud music..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-900/60 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-          )}
+          {/* Search Cloud Music */}
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search Cloud Music..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900/80 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+            />
+          </div>
+        </div>
+
+        {/* Sort Controls (shown in All, Offline, Cloud Only and Storage) */}
+        <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+          <span>
+            Showing {filteredTracks.length} song{filteredTracks.length === 1 ? '' : 's'}
+          </span>
+
+          <div className="flex items-center gap-1.5">
+            <ArrowDownUp className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-[11px] text-slate-500">Sort:</span>
+            <select
+              value={sortOption}
+              onChange={(e) => setSortOption(e.target.value as SortOption)}
+              className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+            >
+              <option value="largest">Largest File</option>
+              <option value="smallest">Smallest File</option>
+              <option value="newest">Newest Upload</option>
+              <option value="oldest">Oldest Upload</option>
+              <option value="artist">Artist (A-Z)</option>
+              <option value="title">Title (A-Z)</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* 4. TAB CONTENTS */}
-      {activeTab === 'storage' ? (
-        /* MANAGE STORAGE ANALYTICS VIEW */
-        <div className="space-y-5 animate-in fade-in">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Cloud Storage Quota Card */}
-            <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Cloud className="w-4 h-4 text-cyan-400" />
-                  Supabase Cloud Quota
-                </h3>
-                <span className="text-xs font-mono text-cyan-300 font-bold">
-                  {stats.usagePercentage}%
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="w-full h-3 rounded-full bg-slate-950 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-400 to-purple-500"
-                    style={{ width: `${stats.usagePercentage}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-slate-400 font-mono">
-                  <span>Used: {formatBytes(stats.usedBytes)}</span>
-                  <span>Total: {formatBytes(stats.maxBytes)}</span>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-white/10 text-xs text-slate-400 space-y-1.5">
-                <div className="flex justify-between">
-                  <span>Total Cloud Songs:</span>
-                  <span className="font-bold text-white">{stats.totalSongs}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Average Song Size:</span>
-                  <span className="font-bold text-white">
-                    {stats.totalSongs > 0
-                      ? formatBytes(stats.usedBytes / stats.totalSongs)
-                      : '0 MB'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Available Space:</span>
-                  <span className="font-bold text-emerald-400 font-mono">
-                    {formatBytes(stats.availableBytes)}
-                  </span>
-                </div>
-              </div>
+      {/* 5. STORAGE MANAGEMENT VIEW (When activeTab === 'storage') */}
+      {activeTab === 'storage' && (
+        <div className="space-y-4 animate-in fade-in">
+          <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-cyan-400" />
+                <span>Storage Management Breakdown</span>
+              </h3>
+              <span className="text-xs font-mono text-cyan-300 font-bold">
+                {formatBytes(stats.usedBytes)} Total
+              </span>
             </div>
 
-            {/* Offline Device Storage Card */}
-            <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Offline Device Storage
-                </h3>
-                <span className="text-xs font-mono text-emerald-300 font-bold">
-                  {stats.offlineSongsCount} Tracks
-                </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-2xl bg-black/40 border border-white/5 space-y-1">
+                <span className="text-slate-400 text-[11px] block">Cloud Storage</span>
+                <span className="text-sm font-bold text-white font-mono">{formatBytes(stats.usedBytes)} used</span>
               </div>
 
-              <div className="space-y-1.5">
-                <p className="text-2xl font-black text-white font-mono">
-                  {formatBytes(stats.offlineBytes)}
-                </p>
-                <p className="text-xs text-slate-400">
-                  Total audio binary data cached in browser IndexedDB
-                </p>
+              <div className="p-3 rounded-2xl bg-black/40 border border-white/5 space-y-1">
+                <span className="text-slate-400 text-[11px] block">Available</span>
+                <span className="text-sm font-bold text-cyan-300 font-mono">{formatBytes(stats.availableBytes)}</span>
               </div>
 
-              <div className="pt-2 border-t border-white/10 text-xs text-slate-400 space-y-1.5">
-                <div className="flex justify-between">
-                  <span>Playable without internet:</span>
-                  <span className="text-emerald-400 font-bold">100% Offline Ready</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Storage Engine:</span>
-                  <span className="font-mono text-slate-300">IndexedDB (High Speed)</span>
-                </div>
+              <div className="p-3 rounded-2xl bg-black/40 border border-white/5 space-y-1">
+                <span className="text-slate-400 text-[11px] block">Cloud Songs</span>
+                <span className="text-sm font-bold text-white">{stats.totalSongs}</span>
               </div>
-            </div>
-          </div>
 
-          {/* Largest Songs Breakdown */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <ArrowUpDown className="w-4 h-4 text-purple-400" />
-              Largest Songs in Cloud
-            </h3>
-
-            <div className="space-y-2">
-              {largestSongs.map((song, rank) => {
-                const offlineMatch = getOfflineMatch(song);
-                const isOffline = Boolean(offlineMatch);
-
-                return (
-                  <div
-                    key={song.id}
-                    className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/40 border border-white/5 hover:border-white/15 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-xs font-mono text-slate-500 w-5 text-center">
-                        #{rank + 1}
-                      </span>
-                      <img
-                        src={song.cover_url || './logo.png'}
-                        alt=""
-                        className="w-10 h-10 rounded-xl object-cover border border-white/10 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white truncate">
-                          {song.title}
-                        </h4>
-                        <p className="text-[11px] text-slate-400 truncate">
-                          {song.artist}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-xs font-mono font-bold text-cyan-300 px-2 py-0.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
-                        {formatBytes(song.file_size)}
-                      </span>
-                      {isOffline ? (
-                        <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Offline
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Cloud</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              <div className="p-3 rounded-2xl bg-black/40 border border-white/5 space-y-1">
+                <span className="text-slate-400 text-[11px] block">Offline Storage</span>
+                <span className="text-sm font-bold text-emerald-300 font-mono">{formatBytes(stats.offlineBytes)}</span>
+              </div>
             </div>
           </div>
         </div>
-      ) : (
-        /* CLOUD SONGS LIST */
-        <div className="space-y-2.5 animate-in fade-in">
-          {filteredTracks.length === 0 ? (
-            <div className="text-center py-16 px-4 rounded-3xl bg-slate-900/30 border border-dashed border-white/10 space-y-3">
-              <Cloud className="w-12 h-12 text-slate-600 mx-auto" />
-              <p className="text-sm font-bold text-slate-300">
-                {activeTab === 'offline'
-                  ? 'No offline songs downloaded yet'
-                  : 'No cloud tracks found'}
+      )}
+
+      {/* 6. CLOUD LIBRARY SONG CARDS */}
+      <div className="space-y-3">
+        {filteredTracks.length === 0 ? (
+          /* Real Empty State (Zero Songs) */
+          <div className="p-10 rounded-3xl bg-slate-900/30 border border-white/5 text-center space-y-3">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
+              <Cloud className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">
+                {cloudSongs.length === 0 ? 'No music uploaded yet' : 'No matching cloud songs'}
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                {cloudSongs.length === 0
+                  ? 'Your JTEC CLOUD storage is empty (0 B used). Upload your favourite audio files to stream or download anywhere.'
+                  : 'Try adjusting your search terms or filter tabs.'}
               </p>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {activeTab === 'offline'
-                  ? 'Tap the "Download" button on any cloud song to make it available without internet.'
-                  : 'Upload songs to JTEC CLOUD to listen from any device or download for offline playback.'}
-              </p>
+            </div>
+            {cloudSongs.length === 0 && (
               <button
                 onClick={onOpenUpload}
-                className="mt-2 px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold hover:bg-cyan-500/30 transition"
+                className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 hover:brightness-110 active:scale-95 transition inline-flex items-center gap-2"
               >
-                + Upload Your First Cloud Track
+                <Upload className="w-4 h-4" />
+                <span>+ Upload Music</span>
               </button>
-            </div>
-          ) : (
-            filteredTracks.map((song) => {
-              const offlineMatch = getOfflineMatch(song);
-              const isOffline = Boolean(offlineMatch && offlineMatch.hasStoredBlob !== false);
-              const isThisPlaying =
-                (currentSong?.id === song.id || currentSong?.cloudId === song.id) && isPlaying;
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredTracks.map((song) => {
+              const isDownloaded = isSongDownloaded(song);
               const isDownloading = downloadingIds.has(song.id);
+              const offlineMatch = getOfflineMatch(song);
+              const isCurrentPlaying =
+                isPlaying && currentSong && (currentSong.cloudId === song.id || currentSong.id === song.id);
 
               return (
                 <div
                   key={song.id}
-                  className={`flex items-center gap-3 p-3 rounded-2xl border transition group ${
-                    isThisPlaying
-                      ? 'bg-cyan-500/15 border-cyan-400/50 shadow-lg shadow-cyan-500/10'
-                      : 'bg-slate-900/50 border-white/5 hover:border-white/20'
+                  className={`group p-3 sm:p-4 rounded-2xl bg-slate-900/60 hover:bg-slate-900/90 border transition flex items-center justify-between gap-3 ${
+                    isCurrentPlaying
+                      ? 'border-cyan-500/50 shadow-lg shadow-cyan-500/10'
+                      : 'border-white/5 hover:border-cyan-500/25'
                   }`}
                 >
-                  {/* Artwork & Play button */}
-                  <div
-                    onClick={() => {
-                      if (offlineMatch) {
-                        onPlaySong(offlineMatch);
-                      } else {
-                        onPlayCloudSong(song);
-                      }
-                    }}
-                    className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0 border border-white/10"
-                  >
-                    <img
-                      src={song.cover_url || './logo.png'}
-                      alt={song.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                      <Play className="w-4 h-4 text-white fill-white" />
-                    </div>
-                    {isThisPlaying && (
-                      <div className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-                    )}
-                  </div>
+                  {/* Left: Artwork & Metadata */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="relative w-11 h-11 rounded-xl bg-slate-800 flex items-center justify-center shrink-0 overflow-hidden border border-white/10 shadow-sm">
+                      {song.cover_url ? (
+                        <img
+                          src={song.cover_url}
+                          alt=""
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Music className="w-5 h-5 text-slate-400" />
+                      )}
 
-                  {/* Song Metadata */}
-                  <div
-                    onClick={() => {
-                      if (offlineMatch) {
-                        onPlaySong(offlineMatch);
-                      } else {
-                        onPlayCloudSong(song);
-                      }
-                    }}
-                    className="flex-1 min-w-0 cursor-pointer"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <h4
-                        className={`text-xs font-bold truncate ${
-                          isThisPlaying ? 'text-cyan-300' : 'text-white'
+                      {/* Play overlay on hover or current */}
+                      <button
+                        onClick={() => {
+                          if (offlineMatch && offlineMatch.hasStoredBlob) {
+                            onPlaySong(offlineMatch);
+                          } else {
+                            onPlayCloudSong(song);
+                          }
+                        }}
+                        className={`absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center transition ${
+                          isCurrentPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                         }`}
                       >
-                        {song.title}
-                      </h4>
+                        <Play
+                          className={`w-4 h-4 ${
+                            isCurrentPlaying ? 'fill-cyan-400 text-cyan-400' : 'fill-white text-white'
+                          }`}
+                        />
+                      </button>
                     </div>
 
-                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                      {song.artist} • {song.album}
-                    </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className={`font-bold text-xs sm:text-sm truncate ${
+                          isCurrentPlaying ? 'text-cyan-300' : 'text-white'
+                        }`}>
+                          {song.title}
+                        </p>
+                      </div>
 
-                    <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 font-mono">
-                      <span>{formatBytes(song.file_size)}</span>
-                      <span>•</span>
-                      <span>{formatSeconds(song.duration)}</span>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        {song.artist} • {song.album}
+                      </p>
+
+                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500 font-mono">
+                        <span>{formatBytes(song.file_size)}</span>
+
+                        {/* Status Badges */}
+                        {isDownloaded ? (
+                          <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Available Offline</span>
+                          </span>
+                        ) : isDownloading ? (
+                          <span className="flex items-center gap-1 text-cyan-400 font-semibold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            <span>Downloading...</span>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-purple-400">
+                            <Cloud className="w-3 h-3" />
+                            <span>Cloud Only</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Offline / Download Status Actions */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isOffline ? (
-                      <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-bold text-emerald-300">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        <span>Offline</span>
-                      </div>
-                    ) : (
+                  {/* Right: Actions */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Play Button */}
+                    <button
+                      onClick={() => {
+                        if (offlineMatch && offlineMatch.hasStoredBlob) {
+                          onPlaySong(offlineMatch);
+                        } else {
+                          onPlayCloudSong(song);
+                        }
+                      }}
+                      title="Play track"
+                      className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 border border-white/5 transition flex items-center gap-1 text-xs font-semibold"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span className="hidden sm:inline">Play</span>
+                    </button>
+
+                    {/* Download Button (if not already downloaded) */}
+                    {!isDownloaded ? (
                       <button
                         onClick={() => handleDownload(song)}
                         disabled={isDownloading}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-xs font-semibold text-cyan-300 active:scale-95 transition disabled:opacity-50"
+                        title="Download for 100% offline playback"
+                        className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1 text-xs font-semibold disabled:opacity-50"
                       >
-                        {isDownloading ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Downloading...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Download</span>
-                          </>
-                        )}
+                        <Download className={`w-3.5 h-3.5 ${isDownloading ? 'animate-bounce' : ''}`} />
+                        <span className="hidden sm:inline">
+                          {isDownloading ? 'Downloading...' : 'Download'}
+                        </span>
                       </button>
+                    ) : (
+                      <span
+                        title="Stored locally in IndexedDB"
+                        className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Offline</span>
+                      </span>
                     )}
 
-                    {/* Track Options Menu */}
+                    {/* More Menu Dropdown */}
                     <div className="relative">
                       <button
                         onClick={() =>
@@ -638,94 +671,114 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                         <MoreVertical className="w-4 h-4" />
                       </button>
 
-                      {/* Dropdown Menu */}
                       {activeMenuSongId === song.id && (
-                        <div className="absolute right-0 top-10 w-48 rounded-2xl bg-[#090d20]/95 backdrop-blur-xl border border-white/15 p-1.5 shadow-2xl z-30 space-y-1 text-xs">
+                        <div
+                          className="absolute right-0 top-full mt-1 w-48 rounded-2xl bg-[#0c1024] border border-cyan-500/30 shadow-2xl p-1.5 z-40 space-y-1 text-xs animate-in fade-in"
+                          onClick={() => setActiveMenuSongId(null)}
+                        >
+                          <button
+                            onClick={() => {
+                              if (offlineMatch && offlineMatch.hasStoredBlob) {
+                                onPlaySong(offlineMatch);
+                              } else {
+                                onPlayCloudSong(song);
+                              }
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/5 text-slate-200 flex items-center gap-2"
+                          >
+                            <Play className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Play Now</span>
+                          </button>
+
                           <button
                             onClick={() => {
                               const s = offlineMatch || {
-                                id: song.id,
+                                id: `stream_${song.id}`,
                                 title: song.title,
                                 artist: song.artist,
                                 album: song.album,
                                 duration: song.duration,
-                                artworkUrl: song.cover_url,
-                                format: 'mp3',
+                                format: song.file_name.split('.').pop() || 'mp3',
                                 size: song.file_size,
                                 dateAdded: Date.now(),
                                 hasStoredBlob: false,
+                                cloudId: song.id,
                                 isCloud: true,
                                 audioUrl: song.audio_url,
                               };
                               onPlayNext(s);
-                              setActiveMenuSongId(null);
                             }}
-                            className="w-full text-left px-3 py-2 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white transition"
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/5 text-slate-200 flex items-center gap-2"
                           >
-                            Play Next
+                            <Plus className="w-3.5 h-3.5 text-purple-400" />
+                            <span>Play Next</span>
                           </button>
 
                           <button
                             onClick={() => {
                               const s = offlineMatch || {
-                                id: song.id,
+                                id: `stream_${song.id}`,
                                 title: song.title,
                                 artist: song.artist,
                                 album: song.album,
                                 duration: song.duration,
-                                artworkUrl: song.cover_url,
-                                format: 'mp3',
+                                format: song.file_name.split('.').pop() || 'mp3',
                                 size: song.file_size,
                                 dateAdded: Date.now(),
                                 hasStoredBlob: false,
+                                cloudId: song.id,
                                 isCloud: true,
                                 audioUrl: song.audio_url,
                               };
                               onAddToQueue(s);
-                              setActiveMenuSongId(null);
                             }}
-                            className="w-full text-left px-3 py-2 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white transition"
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/5 text-slate-200 flex items-center gap-2"
                           >
-                            Add to Queue
+                            <Disc className="w-3.5 h-3.5 text-pink-400" />
+                            <span>Add to Queue</span>
                           </button>
-
-                          {offlineMatch && (
-                            <button
-                              onClick={() => {
-                                onToggleFavorite(offlineMatch);
-                                setActiveMenuSongId(null);
-                              }}
-                              className="w-full text-left px-3 py-2 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white transition flex items-center justify-between"
-                            >
-                              <span>{offlineMatch.isFavorite ? 'Remove Favorite' : 'Favorite'}</span>
-                              <Heart
-                                className={`w-3.5 h-3.5 ${
-                                  offlineMatch.isFavorite ? 'fill-pink-500 text-pink-500' : ''
-                                }`}
-                              />
-                            </button>
-                          )}
-
-                          {isOffline && offlineMatch && (
-                            <button
-                              onClick={() => {
-                                setConfirmRemoveOfflineId(offlineMatch.id);
-                                setActiveMenuSongId(null);
-                              }}
-                              className="w-full text-left px-3 py-2 rounded-xl text-amber-400 hover:bg-amber-500/10 transition"
-                            >
-                              Remove Offline Copy
-                            </button>
-                          )}
 
                           <button
                             onClick={() => {
-                              setConfirmDeleteCloudSong(song);
-                              setActiveMenuSongId(null);
+                              const s = offlineMatch || {
+                                id: `stream_${song.id}`,
+                                title: song.title,
+                                artist: song.artist,
+                                album: song.album,
+                                duration: song.duration,
+                                format: song.file_name.split('.').pop() || 'mp3',
+                                size: song.file_size,
+                                dateAdded: Date.now(),
+                                hasStoredBlob: false,
+                                cloudId: song.id,
+                                isCloud: true,
+                                audioUrl: song.audio_url,
+                              };
+                              onAddToPlaylist(s);
                             }}
-                            className="w-full text-left px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/10 transition flex items-center gap-1.5"
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/5 text-slate-200 flex items-center gap-2"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Plus className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Add to Playlist</span>
+                          </button>
+
+                          {/* Remove Offline Only */}
+                          {isDownloaded && offlineMatch && (
+                            <button
+                              onClick={() => setRemoveOfflineModalSong(song)}
+                              className="w-full text-left px-3 py-2 rounded-xl hover:bg-amber-950/20 text-amber-300 flex items-center gap-2"
+                            >
+                              <HardDrive className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Remove Offline Only</span>
+                            </button>
+                          )}
+
+                          {/* Delete from Cloud */}
+                          <button
+                            onClick={() => setDeleteModalSong(song)}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-950/20 text-rose-300 flex items-center gap-2"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                             <span>Delete from Cloud</span>
                           </button>
                         </div>
@@ -734,75 +787,127 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
-      )}
+            })}
+          </div>
+        )}
+      </div>
 
-      {/* 5. CONFIRM: REMOVE OFFLINE COPY MODAL */}
-      {confirmRemoveOfflineId && (
+      {/* 7. CONFIRMATION MODAL: DELETE FROM CLOUD */}
+      {deleteModalSong && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-          <div className="w-full max-w-sm rounded-3xl bg-[#090d20] border border-amber-500/30 p-6 shadow-2xl space-y-4 text-center">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 mx-auto flex items-center justify-center">
-              <AlertCircle className="w-6 h-6 text-amber-400" />
+          <div className="relative w-full max-w-md rounded-3xl bg-[#090d20] border border-rose-500/30 p-6 shadow-2xl space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center">
+              <Trash2 className="w-6 h-6" />
             </div>
+
             <div>
-              <h3 className="text-base font-bold text-white">Remove Offline Copy?</h3>
-              <p className="text-xs text-slate-400 mt-1.5">
-                This will only remove the local downloaded file from this device to free storage space. The track remains safely stored in JTEC CLOUD and can be re-downloaded anytime.
+              <h3 className="text-base font-extrabold text-white">
+                Delete from JTEC CLOUD?
+              </h3>
+              <p className="text-xs text-slate-300 mt-1">
+                Are you sure you want to remove <span className="text-white font-bold">"{deleteModalSong.title}"</span> from Supabase Cloud? This removes the audio file from Supabase Storage and the database record.
               </p>
             </div>
-            <div className="flex gap-2 pt-2">
+
+            {isSongDownloaded(deleteModalSong) ? (
+              <div className="p-3 rounded-2xl bg-amber-950/30 border border-amber-500/30 text-xs text-amber-200 space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-amber-300">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>This song is also downloaded offline.</span>
+                </p>
+                <p className="text-[11px] text-amber-200/90">
+                  Do you want to delete both the cloud copy and the offline downloaded file?
+                </p>
+              </div>
+            ) : null}
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
               <button
-                onClick={() => setConfirmRemoveOfflineId(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs font-bold text-slate-300 hover:text-white"
+                onClick={() => setDeleteModalSong(null)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold"
               >
-                Keep Download
+                Cancel
               </button>
-              <button
-                onClick={async () => {
-                  const id = confirmRemoveOfflineId;
-                  setConfirmRemoveOfflineId(null);
-                  await onRemoveOfflineSong(id);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-lg"
-              >
-                Remove Copy
-              </button>
+
+              {isSongDownloaded(deleteModalSong) ? (
+                <>
+                  <button
+                    onClick={async () => {
+                      const s = deleteModalSong;
+                      setDeleteModalSong(null);
+                      await onDeleteCloudSong(s, false);
+                    }}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold"
+                  >
+                    Delete Cloud Only
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      const s = deleteModalSong;
+                      setDeleteModalSong(null);
+                      await onDeleteCloudSong(s, true);
+                    }}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30"
+                  >
+                    Delete Both
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const s = deleteModalSong;
+                    setDeleteModalSong(null);
+                    await onDeleteCloudSong(s, false);
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30"
+                >
+                  Delete from Cloud
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 6. CONFIRM: PERMANENT CLOUD DELETION MODAL */}
-      {confirmDeleteCloudSong && (
+      {/* 8. CONFIRMATION MODAL: REMOVE OFFLINE ONLY */}
+      {removeOfflineModalSong && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-          <div className="w-full max-w-sm rounded-3xl bg-[#090d20] border border-rose-500/30 p-6 shadow-2xl space-y-4 text-center">
-            <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 mx-auto flex items-center justify-center">
-              <Trash2 className="w-6 h-6 text-rose-400" />
+          <div className="relative w-full max-w-md rounded-3xl bg-[#090d20] border border-cyan-500/30 p-6 shadow-2xl space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+              <HardDrive className="w-6 h-6" />
             </div>
+
             <div>
-              <h3 className="text-base font-bold text-white">Delete from JTEC CLOUD?</h3>
-              <p className="text-xs text-slate-400 mt-1.5">
-                Are you sure you want to delete <span className="text-white font-semibold">{confirmDeleteCloudSong.title}</span>? This will permanently delete the audio file from your Supabase storage bucket and database.
+              <h3 className="text-base font-extrabold text-white">
+                Remove Offline Copy Only?
+              </h3>
+              <p className="text-xs text-slate-300 mt-1">
+                This frees up device storage by removing the local IndexedDB copy of{' '}
+                <span className="text-white font-bold">"{removeOfflineModalSong.title}"</span>. The song will remain stored in JTEC CLOUD and can still be streamed online or re-downloaded at any time.
               </p>
             </div>
-            <div className="flex gap-2 pt-2">
+
+            <div className="flex items-center justify-end gap-2 pt-2">
               <button
-                onClick={() => setConfirmDeleteCloudSong(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs font-bold text-slate-300 hover:text-white"
+                onClick={() => setRemoveOfflineModalSong(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold"
               >
                 Cancel
               </button>
+
               <button
                 onClick={async () => {
-                  const song = confirmDeleteCloudSong;
-                  setConfirmDeleteCloudSong(null);
-                  await onDeleteCloudSong(song);
+                  const s = removeOfflineModalSong;
+                  setRemoveOfflineModalSong(null);
+                  const match = getOfflineMatch(s);
+                  if (match) {
+                    await onRemoveOfflineSong(match.id);
+                  }
                 }}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30"
+                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-lg shadow-amber-600/30"
               >
-                Delete Forever
+                Remove Offline
               </button>
             </div>
           </div>

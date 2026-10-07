@@ -1,5 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { X, Upload, Music, AlertTriangle, CheckCircle2, RefreshCw, FileAudio, Tag, User, Disc, Radio } from 'lucide-react';
+import { 
+  X, Upload, Music, AlertTriangle, CheckCircle2, RefreshCw, 
+  FileAudio, Tag, User, Disc, Radio, AlertCircle, Settings
+} from 'lucide-react';
 import { extractAudioMetadata } from '../services/id3Parser';
 import { SupabaseService, computeFileHash, formatBytes } from '../services/supabase';
 import { CloudSong } from '../types/music';
@@ -8,9 +11,11 @@ interface CloudUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUploadSuccess: (newSongs: CloudSong[]) => void;
+  onOpenSettings?: () => void;
 }
 
 interface QueuedUploadItem {
+  id: string;
   file: File;
   fileHash: string;
   title: string;
@@ -19,6 +24,7 @@ interface QueuedUploadItem {
   genre: string;
   duration: number;
   artworkUrl?: string;
+  artworkBlob?: Blob;
   isDuplicate: boolean;
   duplicateMatch?: CloudSong | null;
   forceUpload: boolean;
@@ -31,14 +37,35 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
   isOpen,
   onClose,
   onUploadSuccess,
+  onOpenSettings,
 }) => {
   const [items, setItems] = useState<QueuedUploadItem[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const supabaseConfig = SupabaseService.getConfig();
+
   if (!isOpen) return null;
+
+  const getAudioDuration = (file: File): Promise<number> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () => {
+        const dur = audio.duration || 0;
+        URL.revokeObjectURL(url);
+        resolve(Math.round(dur));
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(0);
+      };
+      audio.src = url;
+    });
+  };
 
   const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -51,22 +78,29 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
       const file = files[i];
       try {
         const metadata = await extractAudioMetadata(file);
+        let duration = metadata.duration || 0;
+        if (!duration || duration === 0) {
+          duration = await getAudioDuration(file);
+        }
+
         const hash = await computeFileHash(file);
         const duplicateMatch = await SupabaseService.checkDuplicate(
           hash,
+          file.name,
           metadata.title,
           metadata.artist,
           file.size
         );
 
         newItems.push({
+          id: `item_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 7)}`,
           file,
           fileHash: hash,
-          title: metadata.title,
-          artist: metadata.artist,
-          album: metadata.album,
+          title: metadata.title || file.name.replace(/\.[^/.]+$/, ''),
+          artist: metadata.artist || 'Unknown Artist',
+          album: metadata.album || 'Single',
           genre: 'Music',
-          duration: metadata.duration || 0,
+          duration,
           artworkUrl: metadata.artworkUrl,
           isDuplicate: Boolean(duplicateMatch),
           duplicateMatch,
@@ -84,19 +118,34 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleRemoveItem = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-    if (editingIndex === index) setEditingIndex(null);
+  const handleRemoveItem = (id: string) => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+    if (editingItemId === id) setEditingItemId(null);
   };
 
-  const handleUpdateItem = (index: number, field: 'title' | 'artist' | 'album' | 'genre', val: string) => {
+  const handleForceUpload = (id: string) => {
     setItems((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, [field]: val } : item))
+      prev.map((it) => (it.id === id ? { ...it, forceUpload: true } : it))
+    );
+  };
+
+  const handleUpdateItem = (
+    id: string,
+    field: 'title' | 'artist' | 'album' | 'genre',
+    val: string
+  ) => {
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: val } : item))
     );
   };
 
   const handleStartUpload = async () => {
     if (items.length === 0 || isUploading) return;
+
+    if (!supabaseConfig.isConfigured) {
+      if (onOpenSettings) onOpenSettings();
+      return;
+    }
 
     setIsUploading(true);
     const completedSongs: CloudSong[] = [];
@@ -107,16 +156,16 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
 
       if (item.isDuplicate && !item.forceUpload) {
         setItems((prev) =>
-          prev.map((it, idx) =>
-            idx === i ? { ...it, uploadStatus: 'skipped' } : it
+          prev.map((it) =>
+            it.id === item.id ? { ...it, uploadStatus: 'skipped' } : it
           )
         );
         continue;
       }
 
       setItems((prev) =>
-        prev.map((it, idx) =>
-          idx === i ? { ...it, uploadStatus: 'uploading', progress: 5 } : it
+        prev.map((it) =>
+          it.id === item.id ? { ...it, uploadStatus: 'uploading', progress: 10 } : it
         )
       );
 
@@ -129,13 +178,14 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
             album: item.album,
             genre: item.genre,
             duration: item.duration,
+            artworkBlob: item.artworkBlob,
             artworkUrl: item.artworkUrl,
             fileHash: item.fileHash,
           },
           (percent) => {
             setItems((prev) =>
-              prev.map((it, idx) =>
-                idx === i ? { ...it, progress: percent } : it
+              prev.map((it) =>
+                it.id === item.id ? { ...it, progress: percent } : it
               )
             );
           }
@@ -144,8 +194,8 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
         completedSongs.push(uploadedSong);
 
         setItems((prev) =>
-          prev.map((it, idx) =>
-            idx === i
+          prev.map((it) =>
+            it.id === item.id
               ? { ...it, uploadStatus: 'completed', progress: 100 }
               : it
           )
@@ -153,9 +203,9 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Upload failed';
         setItems((prev) =>
-          prev.map((it, idx) =>
-            idx === i
-              ? { ...it, uploadStatus: 'error', errorMessage: msg }
+          prev.map((it) =>
+            it.id === item.id
+              ? { ...it, uploadStatus: 'error', errorMessage: msg, progress: 0 }
               : it
           )
         );
@@ -168,7 +218,59 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
     }
   };
 
-  const allDone = items.length > 0 && items.every((it) => it.uploadStatus === 'completed' || it.uploadStatus === 'skipped');
+  const handleRetryItem = async (itemId: string) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item || isUploading) return;
+
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === itemId ? { ...it, uploadStatus: 'uploading', progress: 15, errorMessage: undefined } : it
+      )
+    );
+
+    try {
+      const uploadedSong = await SupabaseService.uploadMusicFile(
+        item.file,
+        {
+          title: item.title,
+          artist: item.artist,
+          album: item.album,
+          genre: item.genre,
+          duration: item.duration,
+          artworkBlob: item.artworkBlob,
+          artworkUrl: item.artworkUrl,
+          fileHash: item.fileHash,
+        },
+        (percent) => {
+          setItems((prev) =>
+            prev.map((it) => (it.id === itemId ? { ...it, progress: percent } : it))
+          );
+        }
+      );
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === itemId ? { ...it, uploadStatus: 'completed', progress: 100 } : it
+        )
+      );
+
+      onUploadSuccess([uploadedSong]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === itemId ? { ...it, uploadStatus: 'error', errorMessage: msg } : it
+        )
+      );
+    }
+  };
+
+  const pendingCount = items.filter(
+    (it) => (it.uploadStatus === 'pending' || it.uploadStatus === 'error') && (!it.isDuplicate || it.forceUpload)
+  ).length;
+
+  const completedCount = items.filter((it) => it.uploadStatus === 'completed').length;
+  const allCompleted = items.length > 0 && completedCount === items.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
@@ -184,7 +286,7 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
                 Upload to JTEC CLOUD
               </h2>
               <p className="text-xs text-slate-400">
-                Store music files & metadata in your Supabase bucket
+                Store music files in Supabase Storage and sync metadata
               </p>
             </div>
           </div>
@@ -197,270 +299,239 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
           </button>
         </div>
 
-        {/* File Select Dropzone */}
-        {items.length === 0 && (
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-cyan-500/30 hover:border-cyan-400/60 rounded-3xl p-8 text-center cursor-pointer bg-slate-900/40 hover:bg-slate-900/70 transition space-y-3 group"
-          >
-            <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 mx-auto flex items-center justify-center group-hover:scale-110 transition">
-              <FileAudio className="w-8 h-8 text-cyan-400" />
+        {/* Warning if Supabase is not connected */}
+        {!supabaseConfig.isConfigured && (
+          <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+              <div>
+                <p className="font-bold text-white">Supabase Connection Required</p>
+                <p className="text-[11px] text-amber-300/90 mt-0.5">
+                  Connect your project with your URL and public Anon Key to upload audio to Supabase.
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-bold text-white">
-                Select Audio Files from Device
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Supports MP3, M4A, AAC, WAV, OGG, and FLAC
-              </p>
-            </div>
-            <span className="inline-block px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold">
-              Browse Tracks
-            </span>
+            {onOpenSettings && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenSettings();
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold hover:bg-amber-500/30 transition text-xs shrink-0 flex items-center gap-1.5"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Connect</span>
+              </button>
+            )}
           </div>
         )}
 
-        {/* Hidden native input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
-          multiple
-          onChange={handleFilesSelected}
-          className="hidden"
-        />
+        {/* File Select Dropzone */}
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="p-6 rounded-2xl border-2 border-dashed border-cyan-500/30 hover:border-cyan-400 bg-black/30 hover:bg-black/50 text-center cursor-pointer transition space-y-2 group"
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*"
+            className="hidden"
+            onChange={handleFilesSelected}
+          />
+          <div className="w-12 h-12 mx-auto rounded-full bg-cyan-500/10 text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <FileAudio className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-white">
+              {isProcessingFiles ? 'Reading audio metadata...' : 'Select Music Files to Upload'}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              Supports MP3, WAV, M4A, AAC, OGG & FLAC (Multiple selection supported)
+            </p>
+          </div>
+        </div>
 
-        {/* Queued Files List */}
+        {/* Upload Queue Section */}
         {items.length > 0 && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>{items.length} track(s) selected</span>
-              {!isUploading && !allDone && (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-cyan-400 hover:underline font-medium"
-                >
-                  + Add more files
-                </button>
-              )}
+            <div className="flex items-center justify-between text-xs text-slate-300">
+              <span className="font-bold">
+                Upload Queue ({items.length} track{items.length === 1 ? '' : 's'})
+              </span>
+              <span className="text-slate-400 font-mono">
+                {completedCount} completed
+              </span>
             </div>
 
-            <div className="space-y-2.5 max-h-64 overflow-y-auto custom-scrollbar pr-1">
-              {items.map((item, idx) => (
+            <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+              {items.map((item) => (
                 <div
-                  key={idx}
-                  className={`p-3.5 rounded-2xl border transition ${
+                  key={item.id}
+                  className={`p-3.5 rounded-2xl border transition text-xs space-y-2 ${
                     item.uploadStatus === 'completed'
-                      ? 'bg-emerald-500/10 border-emerald-500/30'
+                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
                       : item.uploadStatus === 'error'
-                      ? 'bg-rose-500/10 border-rose-500/30'
-                      : item.isDuplicate && !item.forceUpload
-                      ? 'bg-amber-500/10 border-amber-500/30'
-                      : 'bg-slate-900/60 border-white/10'
+                      ? 'bg-rose-950/20 border-rose-500/30 text-rose-200'
+                      : item.uploadStatus === 'skipped'
+                      ? 'bg-slate-900/40 border-slate-700/40 text-slate-400'
+                      : 'bg-slate-900/60 border-white/10 text-white'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={item.artworkUrl || './logo.png'}
-                      alt=""
-                      className="w-11 h-11 rounded-xl object-cover border border-white/10 shrink-0"
-                    />
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <h4 className="text-xs font-bold text-white truncate">
-                          {item.title}
-                        </h4>
-                        <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                          {formatBytes(item.file.size)}
-                        </span>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className="w-9 h-9 rounded-xl bg-slate-800 flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
+                        {item.artworkUrl ? (
+                          <img
+                            src={item.artworkUrl}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Music className="w-4 h-4 text-slate-400" />
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate">
-                        {item.artist} • {item.album}
-                      </p>
 
-                      {/* Duplicate Warning */}
-                      {item.isDuplicate && item.uploadStatus === 'pending' && (
-                        <div className="mt-2 p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300 space-y-1.5">
-                          <p className="flex items-center gap-1 font-semibold">
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                            This song already exists in JTEC CLOUD.
-                          </p>
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setItems((prev) =>
-                                  prev.map((it, i) =>
-                                    i === idx ? { ...it, forceUpload: false } : it
-                                  )
-                                )
-                              }
-                              className={`px-2 py-0.5 rounded-lg border text-[10px] font-bold ${
-                                !item.forceUpload
-                                  ? 'bg-amber-500 text-black border-amber-400'
-                                  : 'bg-black/30 text-amber-200 border-amber-500/30'
-                              }`}
-                            >
-                              Keep Existing
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setItems((prev) =>
-                                  prev.map((it, i) =>
-                                    i === idx ? { ...it, forceUpload: true } : it
-                                  )
-                                )
-                              }
-                              className={`px-2 py-0.5 rounded-lg border text-[10px] font-bold ${
-                                item.forceUpload
-                                  ? 'bg-cyan-500 text-black border-cyan-400'
-                                  : 'bg-black/30 text-cyan-200 border-cyan-500/30'
-                              }`}
-                            >
-                              Upload Anyway
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Progress Bar */}
-                      {item.uploadStatus === 'uploading' && (
-                        <div className="mt-2 space-y-1">
-                          <div className="flex justify-between text-[10px] font-mono text-cyan-300">
-                            <span>Uploading...</span>
-                            <span>{item.progress}%</span>
-                          </div>
-                          <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden">
-                            <div
-                              className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 transition-all duration-200"
-                              style={{ width: `${item.progress}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Success / Status text */}
-                      {item.uploadStatus === 'completed' && (
-                        <p className="text-[10px] text-emerald-400 flex items-center gap-1 mt-1 font-bold">
-                          <CheckCircle2 className="w-3 h-3" /> ✓ Uploaded to JTEC CLOUD
+                      <div className="min-w-0">
+                        <p className="font-bold truncate text-white">{item.title}</p>
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {item.artist} • {formatBytes(item.file.size)}
                         </p>
-                      )}
-                      {item.uploadStatus === 'skipped' && (
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          Skipped (Kept existing cloud version)
-                        </p>
-                      )}
-                      {item.uploadStatus === 'error' && (
-                        <p className="text-[10px] text-rose-400 mt-1 font-medium">
-                          Error: {item.errorMessage}
-                        </p>
-                      )}
+                      </div>
                     </div>
 
-                    {!isUploading && item.uploadStatus === 'pending' && (
-                      <div className="flex items-center gap-1 shrink-0">
+                    {/* Status Badge & Actions */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {item.uploadStatus === 'completed' && (
+                        <span className="flex items-center gap-1 text-emerald-400 font-semibold font-mono text-[11px]">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Uploaded</span>
+                        </span>
+                      )}
+
+                      {item.uploadStatus === 'uploading' && (
+                        <span className="flex items-center gap-1 text-cyan-400 font-mono text-[11px]">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>{item.progress}%</span>
+                        </span>
+                      )}
+
+                      {item.uploadStatus === 'pending' && !item.isDuplicate && (
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          Waiting...
+                        </span>
+                      )}
+
+                      {item.uploadStatus === 'error' && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-rose-400">Failed</span>
+                          <button
+                            onClick={() => handleRetryItem(item.id)}
+                            className="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 text-[10px] hover:bg-rose-500/30 transition"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Remove button if not uploading */}
+                      {item.uploadStatus !== 'uploading' && item.uploadStatus !== 'completed' && (
                         <button
-                          type="button"
-                          onClick={() => setEditingIndex(editingIndex === idx ? null : idx)}
-                          title="Edit metadata"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition"
+                          onClick={() => handleRemoveItem(item.id)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/5"
                         >
-                          <Tag className="w-4 h-4" />
+                          <X className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveItem(idx)}
-                          title="Remove file"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/5 transition"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
-                  {/* Metadata Editor Drawer */}
-                  {editingIndex === idx && (
-                    <div className="mt-3 pt-3 border-t border-white/10 grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Title</label>
-                        <input
-                          type="text"
-                          value={item.title}
-                          onChange={(e) => handleUpdateItem(idx, 'title', e.target.value)}
-                          className="w-full px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white"
-                        />
+                  {/* Progress bar during upload */}
+                  {item.uploadStatus === 'uploading' && (
+                    <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 transition-all duration-300"
+                        style={{ width: `${item.progress}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Duplicate warning & resolution */}
+                  {item.isDuplicate && !item.forceUpload && item.uploadStatus !== 'completed' && (
+                    <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-[11px] flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>This song is already in JTEC CLOUD.</span>
                       </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Artist</label>
-                        <input
-                          type="text"
-                          value={item.artist}
-                          onChange={(e) => handleUpdateItem(idx, 'artist', e.target.value)}
-                          className="w-full px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Album</label>
-                        <input
-                          type="text"
-                          value={item.album}
-                          onChange={(e) => handleUpdateItem(idx, 'album', e.target.value)}
-                          className="w-full px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Genre</label>
-                        <input
-                          type="text"
-                          value={item.genre}
-                          onChange={(e) => handleUpdateItem(idx, 'genre', e.target.value)}
-                          className="w-full px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white"
-                        />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleRemoveItem(item.id)}
+                          className="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleForceUpload(item.id)}
+                          className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold hover:bg-amber-500/30"
+                        >
+                          Upload Anyway
+                        </button>
                       </div>
                     </div>
+                  )}
+
+                  {/* Error message */}
+                  {item.errorMessage && (
+                    <p className="text-[10px] text-rose-300 font-mono">
+                      Error: {item.errorMessage}
+                    </p>
                   )}
                 </div>
               ))}
             </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isUploading}
-                className="py-3 px-4 rounded-xl bg-slate-900 border border-white/10 text-slate-300 font-bold hover:text-white transition cursor-pointer"
-              >
-                {allDone ? 'Close' : 'Cancel'}
-              </button>
-
-              {!allDone && (
-                <button
-                  type="button"
-                  onClick={handleStartUpload}
-                  disabled={isUploading || isProcessingFiles}
-                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold transition flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-cyan-500/20 cursor-pointer active:scale-95"
-                >
-                  {isUploading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Uploading to Cloud...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Start Upload ({items.length} track{items.length > 1 ? 's' : ''})
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
           </div>
         )}
+
+        {/* Modal Footer */}
+        <div className="flex items-center justify-between pt-3 border-t border-white/10">
+          <button
+            onClick={() => setItems([])}
+            disabled={isUploading || items.length === 0}
+            className="text-xs text-slate-400 hover:text-white transition disabled:opacity-40"
+          >
+            Clear All
+          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              disabled={isUploading}
+              className="px-4 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-slate-300 hover:text-white transition disabled:opacity-50"
+            >
+              {allCompleted ? 'Done' : 'Close'}
+            </button>
+
+            {!allCompleted && (
+              <button
+                onClick={handleStartUpload}
+                disabled={isUploading || items.length === 0 || pendingCount === 0 || !supabaseConfig.isConfigured}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-400 to-purple-600 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 hover:brightness-110 active:scale-95 transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {isUploading ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload {pendingCount > 0 ? `(${pendingCount})` : ''}</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

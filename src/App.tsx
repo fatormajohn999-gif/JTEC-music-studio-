@@ -22,7 +22,7 @@ import { PlaylistModal } from './components/PlaylistModal';
 import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
-import { SupabaseConnectModal } from './components/SupabaseConnectModal';
+import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { CloudUploadModal } from './components/CloudUploadModal';
 
 // Screens
@@ -47,7 +47,7 @@ export default function App() {
 
   // Supabase Cloud State
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
-  const [isCloudConnectOpen, setIsCloudConnectOpen] = useState(false);
+  const [isCloudSettingsOpen, setIsCloudSettingsOpen] = useState(false);
   const [isCloudUploadOpen, setIsCloudUploadOpen] = useState(false);
 
   // Playback & Queue State
@@ -184,6 +184,10 @@ export default function App() {
 
         const stats = await StorageService.getStorageStats();
         setStorageStats(stats);
+
+        // Fetch Supabase cloud songs (real data only)
+        const initialCloud = await SupabaseService.fetchCloudSongs();
+        setCloudSongs(initialCloud);
       } catch (err) {
         console.error('Initialization error:', err);
       }
@@ -191,6 +195,13 @@ export default function App() {
 
     initApp();
   }, []);
+
+  // Sync cloud tracks when user opens Cloud tab
+  useEffect(() => {
+    if (currentTab === 'cloud') {
+      SupabaseService.fetchCloudSongs().then((cs) => setCloudSongs(cs));
+    }
+  }, [currentTab]);
 
   // Hook Audio Engine events
   useEffect(() => {
@@ -277,15 +288,18 @@ export default function App() {
         return prev;
       });
 
-      // Fetch blob from IndexedDB
+      // Fetch blob from IndexedDB (or stream from cloud audioUrl)
       const blob = await StorageService.getSongBlob(song.id);
-      if (!blob) {
-        setGlobalError("JTEC MUSIC couldn't find the audio data for this file. Please re-import this track.");
+      if (blob) {
+        await audioEngine.loadAudio(blob);
+      } else if (song.audioUrl) {
+        await audioEngine.loadAudio(song.audioUrl);
+      } else {
+        setGlobalError("JTEC MUSIC couldn't find audio data for this track. Please download or re-import it.");
         setTimeout(() => setGlobalError(null), 5000);
         return;
       }
 
-      await audioEngine.loadAudio(blob);
       audioEngine.applyEffects(effects);
       await audioEngine.play();
 
@@ -545,6 +559,121 @@ export default function App() {
     setStorageStats({ songCount: 0, estimatedBytes: 0 });
   };
 
+  // Cloud Handlers
+  const handleRefreshCloud = async () => {
+    const fetched = await SupabaseService.fetchCloudSongs();
+    setCloudSongs(fetched);
+  };
+
+  const handlePlayCloudSong = async (cloudSong: CloudSong) => {
+    // Check if an offline downloaded copy exists
+    const match = songs.find(
+      (s) => s.cloudId === cloudSong.id || (cloudSong.file_hash && s.fileHash === cloudSong.file_hash)
+    );
+    if (match && match.hasStoredBlob) {
+      await playSong(match);
+      return;
+    }
+
+    // Stream from Supabase public audio_url
+    const streamedSong: Song = {
+      id: `stream_${cloudSong.id}`,
+      title: cloudSong.title,
+      artist: cloudSong.artist,
+      album: cloudSong.album,
+      duration: cloudSong.duration,
+      genre: cloudSong.genre,
+      artworkUrl: cloudSong.cover_url,
+      format: (cloudSong.file_name.split('.').pop() || 'mp3').toLowerCase(),
+      size: cloudSong.file_size,
+      dateAdded: Date.now(),
+      hasStoredBlob: false,
+      cloudId: cloudSong.id,
+      isCloud: true,
+      audioUrl: cloudSong.audio_url,
+      fileHash: cloudSong.file_hash,
+    };
+
+    await playSong(streamedSong);
+  };
+
+  const handleDownloadCloudSong = async (cloudSong: CloudSong) => {
+    try {
+      const { song, blob } = await SupabaseService.downloadForOffline(cloudSong);
+      await StorageService.saveSong(song, blob);
+
+      setSongs((prev) => {
+        const existingIdx = prev.findIndex(
+          (s) => s.cloudId === cloudSong.id || (cloudSong.file_hash && s.fileHash === cloudSong.file_hash)
+        );
+        if (existingIdx >= 0) {
+          const next = [...prev];
+          next[existingIdx] = song;
+          return next;
+        }
+        return [song, ...prev];
+      });
+
+      const stats = await StorageService.getStorageStats();
+      setStorageStats(stats);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not download song';
+      setGlobalError(msg);
+      setTimeout(() => setGlobalError(null), 5000);
+    }
+  };
+
+  const handleRemoveOfflineSong = async (songId: string) => {
+    await StorageService.removeOfflineBlobOnly(songId);
+    setSongs((prev) =>
+      prev.map((s) => (s.id === songId ? { ...s, hasStoredBlob: false } : s))
+    );
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
+  };
+
+  const handleDeleteCloudSong = async (cloudSong: CloudSong, deleteOfflineCopy = false) => {
+    try {
+      await SupabaseService.deleteSongFromCloud(cloudSong);
+      setCloudSongs((prev) => prev.filter((s) => s.id !== cloudSong.id));
+
+      if (deleteOfflineCopy) {
+        const match = songs.find(
+          (s) => s.cloudId === cloudSong.id || (cloudSong.file_hash && s.fileHash === cloudSong.file_hash)
+        );
+        if (match) {
+          await StorageService.deleteSong(match.id);
+          setSongs((prev) => prev.filter((s) => s.id !== match.id));
+          setQueue((prev) => prev.filter((s) => s.id !== match.id));
+          if (currentSong?.id === match.id) {
+            audioEngine.pause();
+            setCurrentSong(null);
+          }
+        }
+      }
+
+      const stats = await StorageService.getStorageStats();
+      setStorageStats(stats);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not delete song';
+      setGlobalError(msg);
+      setTimeout(() => setGlobalError(null), 5000);
+    }
+  };
+
+  const handleClearOfflineDownloads = async () => {
+    await StorageService.clearOfflineDownloadsOnly();
+    const allSongs = await StorageService.getAllSongs();
+    setSongs(allSongs);
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
+  };
+
+  const handleUploadSuccess = (newSongs: CloudSong[]) => {
+    setCloudSongs((prev) => [...newSongs, ...prev]);
+    setIsCloudUploadOpen(false);
+  };
+
   // Import completion callback
   const handleImportComplete = async (newSongs: Song[]) => {
     setSongs((prev) => [...newSongs, ...prev]);
@@ -588,6 +717,10 @@ export default function App() {
         }}
         onOpenSettings={() => setIsSettingsView(true)}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
+        onOpenCloud={() => {
+          setIsSettingsView(false);
+          setCurrentTab('cloud');
+        }}
       />
 
       {/* Main Body Content Router */}
@@ -630,18 +763,30 @@ export default function App() {
             }}
             onSelectPlaylist={handlePlayPlaylist}
           />
-        ) : currentTab === 'search' ? (
-          <SearchScreen
-            songs={songs}
+        ) : currentTab === 'cloud' ? (
+          <CloudScreen
+            cloudSongs={cloudSongs}
+            offlineSongs={songs.filter((s) => s.hasStoredBlob)}
             playlists={playlists}
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={playSong}
-            onSelectPlaylist={handlePlayPlaylist}
-            onOpenSongOptions={(song) => setOptionsMenuSong(song)}
+            onPlayCloudSong={handlePlayCloudSong}
+            onDownloadSong={handleDownloadCloudSong}
+            onRemoveOfflineSong={handleRemoveOfflineSong}
+            onDeleteCloudSong={handleDeleteCloudSong}
             onToggleFavorite={handleToggleFavorite}
+            onOpenUpload={() => setIsCloudUploadOpen(true)}
+            onOpenSettings={() => setIsCloudSettingsOpen(true)}
+            onRefresh={handleRefreshCloud}
+            onAddToPlaylist={(song) => {
+              setSongToAddPlaylist(song);
+              setIsPlaylistModalOpen(true);
+            }}
+            onAddToQueue={handleAddToQueue}
+            onPlayNext={handlePlayNext}
           />
-        ) : (
+        ) : currentTab === 'playlists' ? (
           <PlaylistsScreen
             playlists={playlists}
             songs={songs}
@@ -658,6 +803,17 @@ export default function App() {
             onRemoveSongFromPlaylist={handleRemoveSongFromPlaylist}
             onReorderPlaylistSongs={handleReorderPlaylistSongs}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
+          />
+        ) : (
+          <SearchScreen
+            songs={songs}
+            playlists={playlists}
+            currentSong={currentSong}
+            isPlaying={isPlaying}
+            onPlaySong={playSong}
+            onSelectPlaylist={handlePlayPlaylist}
+            onOpenSongOptions={(song) => setOptionsMenuSong(song)}
+            onToggleFavorite={handleToggleFavorite}
           />
         )}
       </main>
@@ -775,6 +931,26 @@ export default function App() {
         onToggleFavorite={handleToggleFavorite}
         onViewDetails={(song) => setDetailsSong(song)}
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
+      />
+
+      {/* CLOUD UPLOAD MODAL */}
+      <CloudUploadModal
+        isOpen={isCloudUploadOpen}
+        onClose={() => setIsCloudUploadOpen(false)}
+        onUploadSuccess={handleUploadSuccess}
+        onOpenSettings={() => {
+          setIsCloudUploadOpen(false);
+          setIsCloudSettingsOpen(true);
+        }}
+      />
+
+      {/* CLOUD SETTINGS MODAL */}
+      <CloudSettingsModal
+        isOpen={isCloudSettingsOpen}
+        onClose={() => setIsCloudSettingsOpen(false)}
+        onRefreshCloud={handleRefreshCloud}
+        onClearOfflineDownloads={handleClearOfflineDownloads}
+        onConfigChanged={handleRefreshCloud}
       />
 
       {/* STARTUP / SPLASH SCREEN */}
