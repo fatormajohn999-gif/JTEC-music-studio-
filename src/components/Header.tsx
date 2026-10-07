@@ -1,17 +1,19 @@
 import React from 'react';
-import { Search, Settings, Sliders, Disc3 } from 'lucide-react';
+import { Search, Settings, Sliders, Cloud } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onOpenEffects: () => void;
+  onOpenCloud?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenSettings,
   onOpenEffects,
+  onOpenCloud,
 }) => {
   return (
     <header className="sticky top-0 z-30 w-full glass-panel border-b border-white/10 px-4 py-3">
@@ -52,6 +54,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Sliders className="w-5 h-5" />
           </button>
+
+          {onOpenCloud && (
+            <button
+              onClick={onOpenCloud}
+              title="JTEC CLOUD Storage"
+              className="p-2 rounded-xl text-slate-300 hover:text-cyan-300 hover:bg-white/5 active:scale-95 transition"
+            >
+              <Cloud className="w-5 h-5" />
+            </button>
+          )}
 
           <button
             onClick={onOpenSearch}

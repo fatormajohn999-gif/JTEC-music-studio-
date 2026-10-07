@@ -17,6 +17,7 @@ interface HomeScreenProps {
   onSelectPlaylist: (playlist: Playlist) => void;
   onOpenSongOptions: (song: Song) => void;
   onToggleFavorite: (song: Song) => void;
+  onOpenCloud?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -31,6 +32,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectPlaylist,
   onOpenSongOptions,
   onToggleFavorite,
+  onOpenCloud,
 }) => {
   const favoriteSongs = songs.filter((s) => s.isFavorite);
   const recentlyAdded = [...songs].sort((a, b) => b.dateAdded - a.dateAdded).slice(0, 6);
@@ -40,7 +42,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* PWA Install Alert Banner */}
       <PWAInstallButton />
 
-      {/* Hero Welcome / Big Import CTA */}
+      {/* Hero Welcome / Big Import & Cloud CTA */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0c122c] via-[#090d20] to-[#140b28] border border-cyan-500/25 p-6 sm:p-8 shadow-2xl">
         {/* Glow lights */}
         <div className="absolute top-0 right-0 w-60 h-60 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -50,23 +52,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div className="text-center sm:text-left space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Offline Master Audio Engine</span>
+              <span>Offline Master Audio Engine • JTEC CLOUD</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               Bring Your <span className="text-gradient-cyan-purple">Vibe Offline</span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-md">
-              Zero streaming lag. True Web Audio Slow+Reverb DSP, custom visualizers, and offline storage.
+              Zero streaming lag. True Web Audio Slow+Reverb DSP, custom visualizers, Supabase cloud sync, and offline storage.
             </p>
           </div>
 
-          <button
-            onClick={onOpenImport}
-            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 hover:shadow-cyan-400/40 active:scale-95 transition flex items-center justify-center gap-2.5 shrink-0 group"
-          >
-            <Upload className="w-5 h-5 group-hover:-translate-y-0.5 transition" />
-            <span>Import Music</span>
-          </button>
+          <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto">
+            {onOpenCloud && (
+              <button
+                onClick={onOpenCloud}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 font-bold text-sm hover:bg-slate-900 transition flex items-center justify-center gap-2 shrink-0 active:scale-95 cursor-pointer shadow-lg shadow-cyan-500/10"
+              >
+                <span>☁️ JTEC CLOUD</span>
+              </button>
+            )}
+
+            <button
+              onClick={onOpenImport}
+              className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 hover:shadow-cyan-400/40 active:scale-95 transition flex items-center justify-center gap-2.5 shrink-0 group cursor-pointer"
+            >
+              <Upload className="w-5 h-5 group-hover:-translate-y-0.5 transition" />
+              <span>Import Music</span>
+            </button>
+          </div>
         </div>
       </div>
 

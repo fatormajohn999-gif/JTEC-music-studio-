@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Song, Playlist, AudioEffectsConfig, VisualizerMode, PerformanceMode, RepeatMode, AppSettings, 
-  ArtworkPalette, CinematicScene 
+  ArtworkPalette, CinematicScene, CloudSong 
 } from './types/music';
 import { StorageService } from './services/storage';
+import { SupabaseService } from './services/supabase';
 import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
 import { generateDemoTrack1, generateDemoTrack2 } from './services/demoTracks';
@@ -21,6 +22,8 @@ import { PlaylistModal } from './components/PlaylistModal';
 import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
+import { SupabaseConnectModal } from './components/SupabaseConnectModal';
+import { CloudUploadModal } from './components/CloudUploadModal';
 
 // Screens
 import { HomeScreen } from './screens/HomeScreen';
@@ -28,6 +31,7 @@ import { LibraryScreen } from './screens/LibraryScreen';
 import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { CloudScreen } from './screens/CloudScreen';
 
 export default function App() {
   // Navigation & Screen state
@@ -40,6 +44,11 @@ export default function App() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [recentlyPlayedIds, setRecentlyPlayedIds] = useState<string[]>([]);
   const [storageStats, setStorageStats] = useState({ songCount: 0, estimatedBytes: 0 });
+
+  // Supabase Cloud State
+  const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
+  const [isCloudConnectOpen, setIsCloudConnectOpen] = useState(false);
+  const [isCloudUploadOpen, setIsCloudUploadOpen] = useState(false);
 
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);

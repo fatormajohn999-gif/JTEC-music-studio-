@@ -113,6 +113,40 @@ export const StorageService = {
     });
   },
 
+  /**
+   * Removes ONLY the downloaded audio blob from local device storage,
+   * keeping the song metadata record intact (status becomes Cloud-only).
+   */
+  async removeOfflineBlobOnly(songId: string): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['songs', 'audio_blobs'], 'readwrite');
+      tx.objectStore('audio_blobs').delete(songId);
+      const songStore = tx.objectStore('songs');
+      const getReq = songStore.get(songId);
+      getReq.onsuccess = () => {
+        const song: Song = getReq.result;
+        if (song) {
+          song.hasStoredBlob = false;
+          songStore.put(song);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  async hasOfflineBlob(songId: string): Promise<boolean> {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('audio_blobs', 'readonly');
+      const store = tx.objectStore('audio_blobs');
+      const req = store.getKey(songId);
+      req.onsuccess = () => resolve(req.result !== undefined);
+      req.onerror = () => resolve(false);
+    });
+  },
+
   async toggleFavorite(songId: string, isFavorite: boolean): Promise<void> {
     const db = await getDB();
     return new Promise((resolve, reject) => {

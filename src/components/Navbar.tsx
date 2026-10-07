@@ -1,7 +1,7 @@
 import React from 'react';
-import { Home, Library, Search, Disc, FolderHeart } from 'lucide-react';
+import { Home, Library, Search, Disc, Cloud } from 'lucide-react';
 
-export type NavTab = 'home' | 'library' | 'search' | 'playlists';
+export type NavTab = 'home' | 'library' | 'cloud' | 'playlists' | 'search';
 
 interface NavbarProps {
   currentTab: NavTab;
@@ -12,8 +12,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
   const tabs: { id: NavTab; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'library', label: 'Library', icon: Library },
-    { id: 'search', label: 'Search', icon: Search },
+    { id: 'cloud', label: 'Cloud', icon: Cloud },
     { id: 'playlists', label: 'Playlists', icon: Disc },
+    { id: 'search', label: 'Search', icon: Search },
   ];
 
   return (

@@ -4,6 +4,7 @@ export interface Song {
   artist: string;
   album: string;
   duration: number; // in seconds
+  genre?: string;
   artworkUrl?: string;
   format: string; // 'mp3' | 'wav' | 'm4a' | 'ogg' | 'flac' | 'audio'
   size: number; // bytes
@@ -14,6 +15,42 @@ export interface Song {
   isDemo?: boolean;
   year?: string;
   palette?: ArtworkPalette;
+  // Supabase Cloud Metadata
+  cloudId?: string;
+  isCloud?: boolean;
+  filePath?: string;
+  audioUrl?: string;
+  coverUrl?: string;
+  fileHash?: string;
+}
+
+export interface CloudSong {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  duration: number;
+  file_name: string;
+  file_path: string;
+  file_size: number; // in bytes
+  audio_url: string;
+  cover_url?: string;
+  file_hash?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CloudStorageStats {
+  totalSongs: number;
+  usedBytes: number;
+  maxBytes: number;
+  availableBytes: number;
+  usagePercentage: number;
+  offlineSongsCount: number;
+  offlineBytes: number;
+  playlistCount: number;
+  favoriteCount: number;
 }
 
 export interface ArtworkPalette {
