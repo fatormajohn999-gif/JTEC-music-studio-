@@ -125,8 +125,10 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-cyan-500/30 text-xs font-semibold text-cyan-300 shadow-lg shadow-cyan-500/10 hover:border-cyan-400 transition"
           >
             <Compass className="w-3.5 h-3.5" />
-            <span className="capitalize">
-              {visualizerMode === 'auto' ? `Auto: ${detectedAutoScene}` : visualizerMode.replace('_', ' ')}
+            <span>
+              {visualizerMode === 'auto' 
+                ? `Auto: ${SCENE_OPTIONS.find(o => o.id === detectedAutoScene)?.label || detectedAutoScene}` 
+                : (SCENE_OPTIONS.find(o => o.id === visualizerMode)?.label || visualizerMode)}
             </span>
           </button>
 

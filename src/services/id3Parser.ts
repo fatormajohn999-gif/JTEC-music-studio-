@@ -4,6 +4,7 @@ export interface ExtractedMetadata {
   album: string;
   duration: number;
   artworkUrl?: string;
+  artworkBlob?: Blob;
   year?: string;
 }
 
@@ -45,6 +46,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
   let artist = 'Unknown Artist';
   let album = 'Local Device';
   let artworkUrl: string | undefined = undefined;
+  let artworkBlob: Blob | undefined = undefined;
   let year: string | undefined = undefined;
 
   // Try parsing filename if structured like "Artist - Title"
@@ -165,6 +167,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
             if (imgDataSize > 0) {
               const imgBytes = new Uint8Array(buffer, p, imgDataSize);
               const blob = new Blob([imgBytes], { type: mimeType });
+              artworkBlob = blob;
               artworkUrl = URL.createObjectURL(blob);
             }
           } catch (e) {
@@ -222,6 +225,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
     album,
     duration,
     artworkUrl,
+    artworkBlob,
     year,
   };
 }

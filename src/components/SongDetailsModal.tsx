@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Music, HardDrive, Calendar, Clock, Tag, Disc, User } from 'lucide-react';
+import { X, Music, HardDrive, Calendar, Clock, Tag, Disc, Cloud } from 'lucide-react';
 import { Song } from '../types/music';
 
 interface SongDetailsModalProps {
@@ -72,6 +72,18 @@ export const SongDetailsModal: React.FC<SongDetailsModalProps> = ({
               <Clock className="w-4 h-4 text-pink-400" /> Duration
             </span>
             <span className="font-mono text-white">{formatDuration(song.duration)}</span>
+          </div>
+
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-white/5">
+            <span className="flex items-center gap-2 text-slate-400">
+              {song.isCloud ? <Cloud className="w-4 h-4 text-cyan-400" /> : <HardDrive className="w-4 h-4 text-amber-400" />} 
+              Storage Source
+            </span>
+            <span className={`font-semibold ${song.isCloud ? 'text-cyan-300' : 'text-amber-300'}`}>
+              {song.isCloud 
+                ? (song.hasStoredBlob ? '☁️ Supabase Cloud (Saved Offline)' : '☁️ Supabase Cloud (Streaming)') 
+                : '📱 Local Device Storage'}
+            </span>
           </div>
 
           <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-white/5">

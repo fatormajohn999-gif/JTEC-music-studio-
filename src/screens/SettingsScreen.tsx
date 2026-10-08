@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
-  Trash2, ShieldCheck, Check, Sparkles, RefreshCw 
+  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2
 } from 'lucide-react';
 import { AppSettings, PerformanceMode, VisualizerMode } from '../types/music';
 
@@ -10,6 +10,7 @@ interface SettingsScreenProps {
   storageStats: { songCount: number; estimatedBytes: number };
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClearLibrary: () => void;
+  onOpenCloudSettings?: () => void;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
@@ -17,6 +18,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   storageStats,
   onUpdateSettings,
   onClearLibrary,
+  onOpenCloudSettings,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -216,8 +218,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/20 text-xs text-cyan-300">
           <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400" />
-          <span>Music is 100% stored on your device only. Nothing is ever uploaded to any cloud server.</span>
+          <span>Offline first: all downloaded tracks play 100% offline from your device IndexedDB. Persistent cloud backup is powered by Supabase.</span>
         </div>
+
+        {/* Cloud Settings Link */}
+        {onOpenCloudSettings && (
+          <button
+            onClick={onOpenCloudSettings}
+            className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 to-purple-600/10 border border-cyan-500/30 text-white hover:border-cyan-400 transition text-xs font-semibold"
+          >
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-cyan-400" />
+              <span>JTEC CLOUD & Supabase Storage Settings</span>
+            </div>
+            <span className="text-cyan-300 text-[11px]">Configure →</span>
+          </button>
+        )}
 
         {/* Clear Library Button */}
         {showClearConfirm ? (

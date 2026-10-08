@@ -111,6 +111,54 @@ export default function App() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  // Synchronize cloud songs with local state & IndexedDB cache
+  const syncCloudWithLocalSongs = async (cloudList: CloudSong[]) => {
+    setCloudSongs(cloudList);
+    const localList = await StorageService.getAllSongs();
+    const updatedSongs = [...localList];
+
+    for (const cs of cloudList) {
+      const existing = updatedSongs.find(
+        (s) => s.cloudId === cs.id || (cs.file_hash && s.fileHash === cs.file_hash) ||
+               (s.title.trim().toLowerCase() === cs.title.trim().toLowerCase() && 
+                s.artist.trim().toLowerCase() === cs.artist.trim().toLowerCase())
+      );
+
+      if (existing) {
+        existing.isCloud = true;
+        existing.cloudId = cs.id;
+        existing.audioUrl = cs.audio_url;
+        if (!existing.artworkUrl && cs.cover_url) {
+          existing.artworkUrl = cs.cover_url;
+        }
+        await StorageService.saveSong(existing);
+      } else {
+        const streamableSong: Song = {
+          id: `cloud_${cs.id}`,
+          title: cs.title,
+          artist: cs.artist,
+          album: cs.album,
+          duration: cs.duration,
+          genre: cs.genre,
+          artworkUrl: cs.cover_url,
+          format: (cs.file_name.split('.').pop() || 'mp3').toLowerCase(),
+          size: cs.file_size,
+          dateAdded: new Date(cs.created_at).getTime() || Date.now(),
+          hasStoredBlob: false,
+          cloudId: cs.id,
+          isCloud: true,
+          audioUrl: cs.audio_url,
+          fileHash: cs.file_hash,
+        };
+        updatedSongs.push(streamableSong);
+        await StorageService.saveSong(streamableSong);
+      }
+    }
+
+    setSongs(updatedSongs);
+    return updatedSongs;
+  };
+
   // Initialize Library and Database
   useEffect(() => {
     async function initApp() {
@@ -210,9 +258,13 @@ export default function App() {
         const stats = await StorageService.getStorageStats();
         setStorageStats(stats);
 
-        // Fetch Supabase cloud songs (real data only)
+        // Fetch Supabase cloud songs (real data only) and merge into library
         const initialCloud = await SupabaseService.fetchCloudSongs();
-        setCloudSongs(initialCloud);
+        if (initialCloud.length > 0) {
+          await syncCloudWithLocalSongs(initialCloud);
+        } else {
+          setCloudSongs([]);
+        }
       } catch (err) {
         console.error('Initialization error:', err);
       }
@@ -224,7 +276,7 @@ export default function App() {
   // Sync cloud tracks when user opens Cloud tab
   useEffect(() => {
     if (currentTab === 'cloud') {
-      SupabaseService.fetchCloudSongs().then((cs) => setCloudSongs(cs));
+      SupabaseService.fetchCloudSongs().then((cs) => syncCloudWithLocalSongs(cs));
     }
   }, [currentTab]);
 
@@ -332,7 +384,18 @@ export default function App() {
       if (blob) {
         await audioEngine.loadAudio(blob);
       } else if (song.audioUrl) {
-        await audioEngine.loadAudio(song.audioUrl);
+        try {
+          await audioEngine.loadAudio(song.audioUrl);
+        } catch (streamErr) {
+          console.warn('Direct audio stream failed, falling back to fetch blob:', streamErr);
+          const resp = await fetch(song.audioUrl);
+          if (resp.ok) {
+            const fetchedBlob = await resp.blob();
+            await audioEngine.loadAudio(fetchedBlob);
+          } else {
+            throw new Error(`Failed to stream audio (HTTP ${resp.status})`);
+          }
+        }
       } else {
         setGlobalError("JTEC MUSIC couldn't find audio data for this track. Please download or re-import it.");
         setTimeout(() => setGlobalError(null), 5000);
@@ -712,12 +775,51 @@ export default function App() {
   };
 
   const handleUploadSuccess = async (newSongs: CloudSong[]) => {
-    setCloudSongs((prev) => [...newSongs, ...prev]);
-    const allSongs = await StorageService.getAllSongs();
-    setSongs(allSongs);
+    const allCloud = await SupabaseService.fetchCloudSongs();
+    await syncCloudWithLocalSongs(allCloud);
     const stats = await StorageService.getStorageStats();
     setStorageStats(stats);
     setIsCloudUploadOpen(false);
+  };
+
+  // Upload local track to Supabase Cloud directly from song options menu
+  const handleUploadLocalSongToCloud = async (song: Song) => {
+    try {
+      const blob = await StorageService.getSongBlob(song.id);
+      if (!blob) {
+        setGlobalError("Audio file not found on local device storage to upload.");
+        setTimeout(() => setGlobalError(null), 5000);
+        return;
+      }
+      const file = new File([blob], `${song.title}.${song.format || 'mp3'}`, {
+        type: blob.type || 'audio/mpeg',
+      });
+      const uploaded = await SupabaseService.uploadMusicFile(file, {
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        genre: song.genre || 'Music',
+        duration: song.duration,
+        artworkUrl: song.artworkUrl,
+        fileHash: song.fileHash || '',
+      });
+      // Update local song record
+      const updatedSong: Song = {
+        ...song,
+        isCloud: true,
+        cloudId: uploaded.id,
+        audioUrl: uploaded.audio_url,
+      };
+      await StorageService.saveSong(updatedSong);
+      setSongs((prev) => prev.map((s) => (s.id === song.id ? updatedSong : s)));
+      setCloudSongs((prev) => [uploaded, ...prev]);
+      setGlobalError(`"${song.title}" uploaded successfully to JTEC CLOUD!`);
+      setTimeout(() => setGlobalError(null), 4000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Upload failed.';
+      setGlobalError(msg);
+      setTimeout(() => setGlobalError(null), 6000);
+    }
   };
 
   // Import completion callback
@@ -777,6 +879,7 @@ export default function App() {
             storageStats={storageStats}
             onUpdateSettings={handleUpdateSettings}
             onClearLibrary={handleClearEntireLibrary}
+            onOpenCloudSettings={() => setIsCloudSettingsOpen(true)}
           />
         ) : currentTab === 'home' ? (
           <HomeScreen
@@ -791,6 +894,10 @@ export default function App() {
             onSelectPlaylist={handlePlayPlaylist}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
+            onOpenCloud={() => {
+              setIsSettingsView(false);
+              setCurrentTab('cloud');
+            }}
           />
         ) : currentTab === 'library' ? (
           <LibraryScreen
@@ -803,6 +910,7 @@ export default function App() {
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenImport={() => setIsImportOpen(true)}
+            onOpenCloudUpload={() => setIsCloudUploadOpen(true)}
             onOpenCreatePlaylist={() => {
               setSongToAddPlaylist(null);
               setIsPlaylistModalOpen(true);
@@ -940,6 +1048,10 @@ export default function App() {
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
         onImportComplete={handleImportComplete}
+        onOpenCloudUpload={() => {
+          setIsImportOpen(false);
+          setIsCloudUploadOpen(true);
+        }}
       />
 
       {/* PLAYLIST MODAL */}
@@ -977,6 +1089,7 @@ export default function App() {
         onToggleFavorite={handleToggleFavorite}
         onViewDetails={(song) => setDetailsSong(song)}
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
+        onUploadToCloud={handleUploadLocalSongToCloud}
       />
 
       {/* CLOUD UPLOAD MODAL */}
@@ -984,6 +1097,12 @@ export default function App() {
         isOpen={isCloudUploadOpen}
         onClose={() => setIsCloudUploadOpen(false)}
         onUploadSuccess={handleUploadSuccess}
+        onPlayCloudSong={handlePlayCloudSong}
+        onSongSavedLocally={async (savedSong) => {
+          setSongs((prev) => [savedSong, ...prev.filter((s) => s.id !== savedSong.id)]);
+          const stats = await StorageService.getStorageStats();
+          setStorageStats(stats);
+        }}
         onOpenSettings={() => {
           setIsCloudUploadOpen(false);
           setIsCloudSettingsOpen(true);

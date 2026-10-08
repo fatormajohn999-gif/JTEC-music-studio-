@@ -1,19 +1,22 @@
 import React, { useState, useRef } from 'react';
-import { Upload, X, Music, CheckCircle2, AlertCircle, FileAudio, Sparkles } from 'lucide-react';
+import { Upload, X, Music, CheckCircle2, AlertCircle, FileAudio, Sparkles, Cloud, HardDrive } from 'lucide-react';
 import { Song } from '../types/music';
 import { extractAudioMetadata } from '../services/id3Parser';
 import { StorageService } from '../services/storage';
+import { SupabaseService } from '../services/supabase';
 
 interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportComplete: (songs: Song[]) => void;
+  onOpenCloudUpload?: () => void;
 }
 
 export const ImportModal: React.FC<ImportModalProps> = ({
   isOpen,
   onClose,
   onImportComplete,
+  onOpenCloudUpload,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressText, setProgressText] = useState('');
@@ -23,6 +26,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const supabaseConfig = SupabaseService.getConfig();
+
   if (!isOpen) return null;
 
   const handleFiles = async (fileList: FileList | null) => {
@@ -31,7 +36,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     const files = Array.from(fileList);
     const audioFiles = files.filter((f) => {
       const ext = f.name.split('.').pop()?.toLowerCase() || '';
-      return f.type.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'].includes(ext);
+      return f.type.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'mp4', 'aac', 'ogg', 'oga', 'flac', 'webm'].includes(ext);
     });
 
     if (audioFiles.length === 0) {
@@ -57,7 +62,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         
         const song: Song = {
           id: `song_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-          title: meta.title || file.name,
+          title: meta.title || file.name.replace(/\.[^/.]+$/, ''),
           artist: meta.artist || 'Unknown Artist',
           album: meta.album || 'Local Library',
           duration: meta.duration || 0,
@@ -67,6 +72,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           dateAdded: Date.now(),
           isFavorite: false,
           hasStoredBlob: true,
+          isCloud: false,
           year: meta.year,
         };
 
@@ -78,16 +84,16 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     }
 
     // Save batch to IndexedDB
-    setProgressText('Saving to secure offline IndexedDB...');
+    setProgressText('Saving to local offline device storage...');
     setProgressPercent(95);
 
     try {
       await StorageService.saveMultipleSongs(itemsToSave);
       setProgressPercent(100);
-      setResultMessage(`${savedSongs.length} song${savedSongs.length === 1 ? '' : 's'} added to your library!`);
+      setResultMessage(`${savedSongs.length} local song${savedSongs.length === 1 ? '' : 's'} added to your library!`);
       setTimeout(() => {
         onImportComplete(savedSongs);
-      }, 1000);
+      }, 900);
     } catch (err) {
       console.error('IndexedDB save failed', err);
       setErrorMessage('Could not save some songs to offline storage. Check browser storage permissions.');
@@ -144,14 +150,40 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         {/* Content */}
         <div className="text-center space-y-4">
           {/* Glowing Icon */}
-          <div className="mx-auto w-20 h-20 rounded-2xl bg-gradient-to-tr from-cyan-500/20 via-purple-500/20 to-pink-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-xl shadow-cyan-500/20 group">
-            <Upload className="w-10 h-10 group-hover:scale-110 transition duration-300 animate-pulse" />
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500/20 via-purple-500/20 to-pink-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-xl shadow-cyan-500/20 group">
+            <Upload className="w-8 h-8 group-hover:scale-110 transition duration-300" />
           </div>
 
           <div>
-            <h2 className="text-xl font-bold text-white tracking-wide">Select Music Files</h2>
-            <p className="text-sm text-slate-400 mt-1">Choose music from your device to play offline</p>
+            <h2 className="text-xl font-bold text-white tracking-wide">Add Music to Library</h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Store locally or upload to Supabase cloud storage
+            </p>
           </div>
+
+          {/* Cloud Option Banner if Supabase connected */}
+          {onOpenCloudUpload && (
+            <div className="p-3 rounded-2xl bg-gradient-to-r from-cyan-500/15 to-purple-600/15 border border-cyan-500/30 flex items-center justify-between gap-3 text-left">
+              <div className="flex items-center gap-2.5">
+                <Cloud className="w-5 h-5 text-cyan-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-white">Want Cloud Persistence?</p>
+                  <p className="text-[11px] text-slate-400">
+                    Upload to JTEC CLOUD (Supabase) to keep tracks across browser data clears.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenCloudUpload();
+                }}
+                className="px-3 py-1.5 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs hover:bg-cyan-400 transition shrink-0 shadow-md shadow-cyan-500/20"
+              >
+                Cloud Upload
+              </button>
+            </div>
+          )}
 
           {/* Drag & Drop Box */}
           <div
@@ -164,7 +196,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           >
             <FileAudio className="w-8 h-8 text-cyan-400 mb-1" />
             <span className="text-sm font-medium text-slate-200">
-              Tap to browse or drop music files
+              Select files for Local Storage
             </span>
             <span className="text-xs text-slate-500">
               MP3, WAV, M4A, AAC, OGG, FLAC
@@ -174,7 +206,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           <input
             ref={fileInputRef}
             type="file"
-            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+            accept="audio/*,.mp3,.wav,.m4a,.mp4,.aac,.ogg,.flac"
             multiple
             className="hidden"
             onChange={(e) => handleFiles(e.target.files)}
@@ -182,8 +214,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
           {/* Privacy & Offline Guarantee notice */}
           <div className="flex items-center justify-center gap-1.5 text-xs text-cyan-300/80 bg-cyan-950/40 py-2 px-3 rounded-xl border border-cyan-500/20">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>100% Private • Stored securely on your device</span>
+            <HardDrive className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span>Saved directly to your device IndexedDB</span>
           </div>
 
           {/* Progress / Status Display */}
@@ -220,9 +252,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isProcessing}
-              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-semibold text-sm shadow-xl shadow-cyan-500/25 hover:opacity-95 active:scale-98 transition disabled:opacity-50"
+              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-semibold text-sm shadow-xl shadow-cyan-500/25 hover:opacity-95 active:scale-98 transition disabled:opacity-50 cursor-pointer"
             >
-              Browse Files
+              Browse Local Audio Files
             </button>
           </div>
         </div>

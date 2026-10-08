@@ -4,7 +4,7 @@ import {
   HardDrive, Wifi, RefreshCw, Trash2, Shield, BellRing, Settings2
 } from 'lucide-react';
 import { 
-  SupabaseService, SUPABASE_SQL_SETUP, CloudSettings, formatBytes 
+  SupabaseService, SUPABASE_SQL_SETUP, SUPABASE_STORAGE_FIX_SQL, CloudSettings, formatBytes 
 } from '../services/supabase';
 
 interface CloudSettingsModalProps {
@@ -44,6 +44,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     bucketsExist: boolean;
   } | null>(null);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedStorageSql, setCopiedStorageSql] = useState(false);
   const [showSql, setShowSql] = useState(false);
 
   // Cloud preferences
@@ -91,6 +92,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     navigator.clipboard.writeText(SUPABASE_SQL_SETUP);
     setCopiedSql(true);
     setTimeout(() => setCopiedSql(false), 2500);
+  };
+
+  const handleCopyStorageFixSql = () => {
+    navigator.clipboard.writeText(SUPABASE_STORAGE_FIX_SQL);
+    setCopiedStorageSql(true);
+    setTimeout(() => setCopiedStorageSql(false), 2500);
   };
 
   const handleRefresh = async () => {
@@ -422,32 +429,69 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
             {/* SQL Setup Script Helper */}
             {showSql && (
-              <div className="pt-3 border-t border-white/10 space-y-2 animate-in fade-in">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-mono text-slate-300">
-                    Run in Supabase SQL Editor:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopySql}
-                    className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[11px] flex items-center gap-1.5 hover:bg-cyan-500/30 transition"
-                  >
-                    {copiedSql ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy SQL</span>
-                      </>
-                    )}
-                  </button>
+              <div className="pt-3 border-t border-white/10 space-y-3 animate-in fade-in">
+                {/* Quick Storage RLS Fix */}
+                <div className="p-3 rounded-xl bg-black/60 border border-cyan-500/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-cyan-300">
+                        ⚡ Quick Fix: Storage "music" Bucket RLS
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        Run if upload fails with "row-level security policy"
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyStorageFixSql}
+                      className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[11px] font-bold flex items-center gap-1.5 hover:bg-cyan-500/30 transition shrink-0 cursor-pointer"
+                    >
+                      {copiedStorageSql ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Copied Quick Fix!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy Storage Fix</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre className="p-2 rounded-lg bg-slate-950/80 text-[9px] text-cyan-200/90 font-mono overflow-x-auto whitespace-pre">
+                    {SUPABASE_STORAGE_FIX_SQL}
+                  </pre>
                 </div>
-                <pre className="p-3 rounded-xl bg-black/60 border border-white/5 text-[10px] text-cyan-200 font-mono overflow-x-auto max-h-40 custom-scrollbar whitespace-pre">
-                  {SUPABASE_SQL_SETUP}
-                </pre>
+
+                {/* Full Database + Storage Schema */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-mono text-slate-300">
+                      Full Database & Storage Setup SQL:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopySql}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-white/10 text-[11px] flex items-center gap-1.5 hover:bg-slate-700 hover:text-white transition cursor-pointer"
+                    >
+                      {copiedSql ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Copied Full Schema!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy Full Schema</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre className="p-3 rounded-xl bg-black/60 border border-white/5 text-[10px] text-cyan-200 font-mono overflow-x-auto max-h-40 custom-scrollbar whitespace-pre">
+                    {SUPABASE_SQL_SETUP}
+                  </pre>
+                </div>
               </div>
             )}
           </form>

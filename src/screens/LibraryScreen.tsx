@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Music, User, Disc, Heart, Clock, ArrowUpDown, Play, MoreVertical, Plus, Upload 
+  Music, User, Disc, Heart, ArrowUpDown, Play, MoreVertical, Plus, Upload, Cloud, HardDrive, CheckCircle2 
 } from 'lucide-react';
 import { Song, Playlist } from '../types/music';
 
-type LibraryTab = 'all' | 'artists' | 'albums' | 'playlists' | 'favorites' | 'recent';
+type LibraryTab = 'all' | 'cloud' | 'local' | 'artists' | 'albums' | 'playlists' | 'favorites' | 'recent';
 type SortField = 'dateAdded' | 'title' | 'artist' | 'album' | 'duration';
 
 interface LibraryScreenProps {
@@ -17,6 +17,7 @@ interface LibraryScreenProps {
   onOpenSongOptions: (song: Song) => void;
   onToggleFavorite: (song: Song) => void;
   onOpenImport: () => void;
+  onOpenCloudUpload?: () => void;
   onOpenCreatePlaylist: () => void;
   onSelectPlaylist: (playlist: Playlist) => void;
 }
@@ -31,6 +32,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onOpenSongOptions,
   onToggleFavorite,
   onOpenImport,
+  onOpenCloudUpload,
   onOpenCreatePlaylist,
   onSelectPlaylist,
 }) => {
@@ -46,6 +48,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
+
+  const cloudSongsCount = useMemo(() => songs.filter((s) => s.isCloud).length, [songs]);
+  const localOnlyCount = useMemo(() => songs.filter((s) => !s.isCloud).length, [songs]);
 
   // Grouping for Artists
   const artistsMap = useMemo(() => {
@@ -79,6 +84,10 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
     if (activeTab === 'all') {
       list = [...songs];
+    } else if (activeTab === 'cloud') {
+      list = songs.filter((s) => s.isCloud);
+    } else if (activeTab === 'local') {
+      list = songs.filter((s) => !s.isCloud);
     } else if (activeTab === 'favorites') {
       list = songs.filter((s) => s.isFavorite);
     } else if (activeTab === 'recent') {
@@ -121,6 +130,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
         {[
           { id: 'all', label: 'All Songs', count: songs.length },
+          { id: 'cloud', label: '☁️ Cloud Music', count: cloudSongsCount },
+          { id: 'local', label: '📱 Local Only', count: localOnlyCount },
           { id: 'artists', label: 'Artists', count: artistsMap.size },
           { id: 'albums', label: 'Albums', count: albumsMap.size },
           { id: 'playlists', label: 'Playlists', count: playlists.length },
@@ -146,7 +157,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       </div>
 
       {/* Action / Sorting Bar (For Song list views) */}
-      {(activeTab === 'all' || activeTab === 'favorites' || activeTab === 'recent' || selectedArtist || selectedAlbum) && (
+      {(activeTab === 'all' || activeTab === 'cloud' || activeTab === 'local' || activeTab === 'favorites' || activeTab === 'recent' || selectedArtist || selectedAlbum) && (
         <div className="flex items-center justify-between gap-2 p-2.5 rounded-2xl bg-slate-900/40 border border-white/5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar text-slate-400">
             <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 mr-1">
@@ -167,45 +178,51 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             ))}
           </div>
 
-          <button
-            onClick={onOpenImport}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition shrink-0 font-medium"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Add</span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onOpenCloudUpload && (
+              <button
+                onClick={onOpenCloudUpload}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-400/30 text-white hover:brightness-110 transition font-medium"
+                title="Upload to Supabase Storage"
+              >
+                <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="hidden sm:inline">+ Cloud</span>
+              </button>
+            )}
+
+            <button
+              onClick={onOpenImport}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition font-medium"
+              title="Add local audio files"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">+ Local</span>
+            </button>
+          </div>
         </div>
       )}
 
       {/* Back button if drilled down into Artist / Album */}
       {(selectedArtist || selectedAlbum) && (
-        <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/60 border border-cyan-500/30">
-          <div>
-            <span className="text-[11px] text-cyan-400 font-semibold uppercase tracking-wider">
-              {selectedArtist ? 'Artist Filter' : 'Album Filter'}
-            </span>
-            <h3 className="text-sm font-bold text-white">{selectedArtist || selectedAlbum}</h3>
-          </div>
-          <button
-            onClick={() => {
-              setSelectedArtist(null);
-              setSelectedAlbum(null);
-            }}
-            className="text-xs px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white"
-          >
-            Show All {activeTab}
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            setSelectedArtist(null);
+            setSelectedAlbum(null);
+          }}
+          className="text-xs text-cyan-400 hover:underline flex items-center gap-1"
+        >
+          ← Back to all {selectedArtist ? 'artists' : 'albums'}
+        </button>
       )}
 
       {/* ARTISTS GRID */}
       {activeTab === 'artists' && !selectedArtist && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {Array.from(artistsMap.entries()).map(([artist, artistSongs]) => (
             <div
               key={artist}
               onClick={() => setSelectedArtist(artist)}
-              className="p-3.5 rounded-2xl bg-slate-900/50 border border-white/5 hover:border-cyan-500/30 cursor-pointer transition group text-center space-y-2"
+              className="p-4 rounded-2xl bg-slate-900/50 border border-white/5 hover:border-cyan-500/30 cursor-pointer text-center space-y-2 group transition"
             >
               <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-tr from-cyan-500/30 to-purple-600/30 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-md group-hover:scale-105 transition">
                 <User className="w-8 h-8" />
@@ -280,19 +297,35 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         </div>
       )}
 
-      {/* SONGS LIST (For All Songs, Favorites, Recent, or Filtered) */}
-      {(activeTab === 'all' || activeTab === 'favorites' || activeTab === 'recent' || selectedArtist || selectedAlbum) && (
+      {/* SONGS LIST */}
+      {(activeTab === 'all' || activeTab === 'cloud' || activeTab === 'local' || activeTab === 'favorites' || activeTab === 'recent' || selectedArtist || selectedAlbum) && (
         <div className="space-y-2">
           {displayedSongs.length === 0 ? (
             <div className="text-center py-12 space-y-3 text-slate-400">
               <Music className="w-10 h-10 mx-auto text-slate-600" />
-              <p className="text-sm font-semibold">No songs in this view</p>
-              <button
-                onClick={onOpenImport}
-                className="px-4 py-2 rounded-xl bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-medium"
-              >
-                Import Music Now
-              </button>
+              <p className="text-sm font-semibold">
+                {activeTab === 'cloud' 
+                  ? 'No cloud songs yet. Upload songs to Supabase storage to see them here!' 
+                  : activeTab === 'local' 
+                  ? 'No local-only songs in this view.' 
+                  : 'No songs in this view'}
+              </p>
+              <div className="flex items-center justify-center gap-2 pt-1">
+                {onOpenCloudUpload && (
+                  <button
+                    onClick={onOpenCloudUpload}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-xs font-bold shadow-md shadow-cyan-500/20"
+                  >
+                    ☁️ Upload to Cloud
+                  </button>
+                )}
+                <button
+                  onClick={onOpenImport}
+                  className="px-4 py-2 rounded-xl bg-slate-800 border border-white/10 text-slate-300 text-xs font-medium"
+                >
+                  📱 Add Local Files
+                </button>
+              </div>
             </div>
           ) : (
             displayedSongs.map((song) => {
@@ -309,7 +342,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                   {/* Artwork */}
                   <div
                     onClick={() => onPlaySong(song)}
-                    className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0"
+                    className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0 bg-slate-950"
                   >
                     <img
                       src={song.artworkUrl || './pwa-192x192.png'}
@@ -326,9 +359,33 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                     onClick={() => onPlaySong(song)}
                     className="flex-1 min-w-0 cursor-pointer"
                   >
-                    <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">
-                      {song.title}
-                    </h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">
+                        {song.title}
+                      </h4>
+
+                      {/* Explicit Distinction: CLOUD MUSIC vs LOCAL MUSIC */}
+                      {song.isCloud ? (
+                        song.hasStoredBlob ? (
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in Supabase Cloud & Cached Offline">
+                            <Cloud className="w-2.5 h-2.5" />
+                            <span>CLOUD</span>
+                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 ml-0.5" />
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in Supabase Cloud (Streamable)">
+                            <Cloud className="w-2.5 h-2.5" />
+                            <span>CLOUD</span>
+                          </span>
+                        )
+                      ) : (
+                        <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-slate-800/80 border border-white/10 text-slate-400 font-semibold font-mono flex items-center gap-0.5" title="Local device storage only">
+                          <HardDrive className="w-2.5 h-2.5" />
+                          <span>LOCAL</span>
+                        </span>
+                      )}
+                    </div>
+
                     <div className="flex items-center gap-2 text-[11px] text-slate-400 truncate mt-0.5">
                       <span className="truncate">{song.artist}</span>
                       <span>•</span>

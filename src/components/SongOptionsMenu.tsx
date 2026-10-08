@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, ListPlus, Heart, Trash2, Info, ListEnd, X, Disc } from 'lucide-react';
+import { Play, ListPlus, Heart, Trash2, Info, ListEnd, X, Disc, Cloud } from 'lucide-react';
 import { Song } from '../types/music';
 
 interface SongOptionsMenuProps {
@@ -13,6 +13,7 @@ interface SongOptionsMenuProps {
   onToggleFavorite: (song: Song) => void;
   onViewDetails: (song: Song) => void;
   onRemoveFromLibrary: (song: Song) => void;
+  onUploadToCloud?: (song: Song) => void;
 }
 
 export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
@@ -26,6 +27,7 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
   onToggleFavorite,
   onViewDetails,
   onRemoveFromLibrary,
+  onUploadToCloud,
 }) => {
   if (!isOpen || !song) return null;
 
@@ -47,7 +49,16 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
           />
           <div className="flex-1 min-w-0">
             <h4 className="text-sm font-bold text-white truncate">{song.title}</h4>
-            <p className="text-xs text-slate-400 truncate">{song.artist}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-xs text-slate-400 truncate">{song.artist}</p>
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
+                song.isCloud 
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' 
+                  : 'bg-slate-800 text-slate-400 border-white/10'
+              }`}>
+                {song.isCloud ? '☁️ Cloud' : '📱 Local'}
+              </span>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -90,6 +101,17 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
             <Disc className="w-4 h-4 text-pink-400" />
             <span>Add to Playlist</span>
           </button>
+
+          {/* Upload to Cloud option if local only */}
+          {!song.isCloud && onUploadToCloud && (
+            <button
+              onClick={() => { onUploadToCloud(song); onClose(); }}
+              className="w-full flex items-center gap-3 p-3 rounded-xl text-cyan-300 hover:bg-cyan-500/20 transition text-left"
+            >
+              <Cloud className="w-4 h-4 text-cyan-400" />
+              <span>Upload to JTEC CLOUD</span>
+            </button>
+          )}
 
           <button
             onClick={() => { onToggleFavorite(song); onClose(); }}

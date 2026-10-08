@@ -10,8 +10,6 @@ export const DEFAULT_MAX_CLOUD_BYTES = 1073741824;
 
 const LS_KEY_URL = 'jtec_supabase_url';
 const LS_KEY_KEY = 'jtec_supabase_anon_key';
-const LS_KEY_CLOUD_STORE = 'jtec_cloud_local_store';
-
 const LS_KEY_SETTINGS = 'jtec_cloud_settings';
 
 export interface CloudSettings {
@@ -34,8 +32,79 @@ export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
   maxCloudQuotaBytes: DEFAULT_MAX_CLOUD_BYTES,
 };
 
+// Singleton client cache to eliminate multiple GoTrueClient warnings
 let cachedClient: SupabaseClient | null = null;
 let currentClientConfig = { url: '', anonKey: '' };
+
+/**
+ * Structured diagnostic logger for Supabase operations.
+ * Outputs detailed error metadata in development console as required:
+ * - error message
+ * - error code
+ * - bucket
+ * - file name
+ * - upload path
+ * - HTTP status when available
+ */
+export function logSupabaseError(context: string, details: {
+  errorMessage: string;
+  errorCode?: string | number;
+  bucket?: string;
+  fileName?: string;
+  uploadPath?: string;
+  httpStatus?: number;
+  raw?: unknown;
+}) {
+  console.error(`🚨 [JTEC MUSIC - SUPABASE ERROR in ${context}]`, {
+    'error message': details.errorMessage,
+    'error code': details.errorCode || 'UNKNOWN',
+    'bucket': details.bucket || 'N/A',
+    'file name': details.fileName || 'N/A',
+    'upload path': details.uploadPath || 'N/A',
+    'HTTP status': details.httpStatus || 'N/A',
+    'raw error': details.raw,
+  });
+}
+
+/**
+ * Detects and extracts any missing column name from PostgREST / PostgreSQL error messages.
+ * Handles:
+ * - PostgREST PGRST204: "Could not find the 'artwork_url' column of 'songs' in the schema cache"
+ * - PostgreSQL 42703: "column "artwork_url" of relation "songs" does not exist"
+ * - Fallback: checks for any payload key name explicitly contained in the error message
+ */
+export function extractMissingColumn(errorMsg: string, payload: Record<string, unknown>): string | null {
+  if (!errorMsg) return null;
+
+  // Pattern 1: PostgREST code PGRST204 ("Could not find the 'column_name' column")
+  const pgrstMatch = errorMsg.match(/Could not find the ['"]([^'"]+)['"] column/i);
+  if (pgrstMatch && pgrstMatch[1] && pgrstMatch[1] in payload) {
+    return pgrstMatch[1];
+  }
+
+  // Pattern 2: PostgreSQL code 42703 ("column "column_name" does not exist")
+  const pgMatch = errorMsg.match(/column ["']([^"']+)["']/i);
+  if (pgMatch && pgMatch[1] && pgMatch[1] in payload) {
+    return pgMatch[1];
+  }
+
+  // Pattern 3: Explicit key names in quotes
+  for (const key of Object.keys(payload)) {
+    if (errorMsg.includes(`'${key}'`) || errorMsg.includes(`"${key}"`)) {
+      return key;
+    }
+  }
+
+  // Pattern 4: Case-insensitive token check
+  const lowerMsg = errorMsg.toLowerCase();
+  for (const key of Object.keys(payload)) {
+    if (lowerMsg.includes(key.toLowerCase()) && lowerMsg.includes('column')) {
+      return key;
+    }
+  }
+
+  return null;
+}
 
 export const SupabaseService = {
   /**
@@ -67,7 +136,7 @@ export const SupabaseService = {
       localStorage.setItem(LS_KEY_URL, url.trim());
       localStorage.setItem(LS_KEY_KEY, anonKey.trim());
     }
-    cachedClient = null; // force client recreation
+    cachedClient = null; // force singleton recreation
   },
 
   /**
@@ -115,6 +184,7 @@ export const SupabaseService = {
 
   /**
    * Returns a singleton SupabaseClient or null if credentials are not configured.
+   * Configures auth options to eliminate duplicate GoTrueClient initialization warnings.
    */
   getClient(): SupabaseClient | null {
     const { url, anonKey, isConfigured } = this.getConfig();
@@ -127,8 +197,9 @@ export const SupabaseService = {
     try {
       cachedClient = createClient(url, anonKey, {
         auth: {
-          persistSession: true,
-          autoRefreshToken: true,
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
         },
       });
       currentClientConfig = { url, anonKey };
@@ -141,6 +212,7 @@ export const SupabaseService = {
 
   /**
    * Tests connection to Supabase database and verifies storage bucket access.
+   * Avoids duplicate GoTrueClient instances.
    */
   async testConnection(url?: string, anonKey?: string): Promise<{
     success: boolean;
@@ -161,10 +233,17 @@ export const SupabaseService = {
     }
 
     try {
-      const client = createClient(testUrl, testKey);
+      // Create lightweight client without persistent session listeners to eliminate GoTrueClient warning
+      const client = createClient(testUrl, testKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      });
 
       // Check table query
-      const { data: tableData, error: tableError } = await client
+      const { error: tableError } = await client
         .from('songs')
         .select('id')
         .limit(1);
@@ -177,7 +256,6 @@ export const SupabaseService = {
       const bucketsExist = Boolean(!bucketError && hasMusicBucket);
 
       if (tableError && tableError.code === '42P01') {
-        // Table does not exist yet
         return {
           success: true,
           message: 'Connected to Supabase! The "songs" table has not been created yet. Run the SQL schema to create it.',
@@ -187,6 +265,11 @@ export const SupabaseService = {
       }
 
       if (tableError) {
+        logSupabaseError('testConnection.table', {
+          errorMessage: tableError.message,
+          errorCode: tableError.code,
+          raw: tableError,
+        });
         return {
           success: false,
           message: `Database error: ${tableError.message}`,
@@ -202,9 +285,14 @@ export const SupabaseService = {
         bucketsExist,
       };
     } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Connection failed.';
+      logSupabaseError('testConnection', {
+        errorMessage: msg,
+        raw: err,
+      });
       return {
         success: false,
-        message: err instanceof Error ? err.message : 'Connection failed.',
+        message: msg,
         tableExists: false,
         bucketsExist: false,
       };
@@ -214,6 +302,7 @@ export const SupabaseService = {
   /**
    * Fetches all cloud music tracks from the Supabase "songs" table.
    * Real data only: returns empty array if credentials not set or no tracks uploaded.
+   * Supports both storage_path/file_path, public_url/audio_url, artwork_url/cover_url conventions.
    */
   async fetchCloudSongs(): Promise<CloudSong[]> {
     const client = this.getClient();
@@ -228,37 +317,47 @@ export const SupabaseService = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.warn('Error fetching cloud songs from Supabase:', error.message);
+        logSupabaseError('fetchCloudSongs', {
+          errorMessage: error.message,
+          errorCode: error.code,
+          raw: error,
+        });
         return [];
       }
 
-      const songs: CloudSong[] = (data || []).map((row) => ({
-        id: row.id,
-        title: row.title || 'Untitled',
-        artist: row.artist || 'Unknown Artist',
-        album: row.album || 'Single',
-        genre: row.genre || 'Music',
-        duration: Number(row.duration) || 0,
-        file_name: row.file_name || 'track.mp3',
-        file_path: row.file_path || '',
-        file_size: Number(row.file_size) || 0,
-        audio_url: row.audio_url || '',
-        cover_url: row.cover_url || '',
-        file_hash: row.file_hash || '',
-        created_at: row.created_at || new Date().toISOString(),
-        updated_at: row.updated_at,
-      }));
+      const songs: CloudSong[] = (data || []).map((row) => {
+        const filePath = row.storage_path || row.file_path || '';
+        const audioUrl = row.public_url || row.audio_url || '';
+        const coverUrl = row.artwork_url || row.cover_url || '';
+
+        return {
+          id: String(row.id),
+          title: row.title || 'Untitled',
+          artist: row.artist || 'Unknown Artist',
+          album: row.album || 'Single',
+          genre: row.genre || 'Music',
+          duration: Number(row.duration) || 0,
+          file_name: row.file_name || 'track.mp3',
+          file_path: filePath,
+          file_size: Number(row.file_size) || 0,
+          audio_url: audioUrl,
+          cover_url: coverUrl,
+          file_hash: row.file_hash || '',
+          created_at: row.created_at || new Date().toISOString(),
+          updated_at: row.updated_at,
+        };
+      });
 
       return songs;
     } catch (err) {
-      console.warn('Network exception fetching cloud songs:', err);
+      logSupabaseError('fetchCloudSongs.exception', {
+        errorMessage: err instanceof Error ? err.message : 'Unknown exception',
+        raw: err,
+      });
       return [];
     }
   },
 
-  /**
-   * Checks whether a song with the same hash or matching metadata already exists in the cloud.
-   */
   /**
    * Checks whether a song with the same hash or matching metadata already exists in the cloud.
    */
@@ -306,9 +405,14 @@ export const SupabaseService = {
 
   /**
    * Uploads an audio file and metadata to Supabase Cloud.
-   * 1. Uploads file to "music" bucket in Supabase Storage with accurate MIME type.
-   * 2. Optionally uploads artwork to "artwork" bucket.
-   * 3. Inserts metadata row into "songs" table with real file_size in bytes.
+   * Architecture:
+   * 1. Validate file format and size.
+   * 2. Upload file to dedicated "music" bucket in Supabase Storage at safe path:
+   *    music/{userId}/{uniqueFileName} (or public/{uniqueFileName} in development mode)
+   * 3. Confirm storage upload succeeded.
+   * 4. Retrieve public/streaming URL.
+   * 5. Insert metadata into Supabase "songs" database table (all required columns).
+   * 6. Show detailed console diagnostics on any failure.
    */
   async uploadMusicFile(
     file: File,
@@ -331,73 +435,176 @@ export const SupabaseService = {
       );
     }
 
+    // 1. Validate File
+    if (!file || file.size === 0) {
+      throw new Error('Upload failed: Selected file is empty (0 bytes).');
+    }
+
+    const mimeType = getAudioMimeType(file.name, file.type);
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    
+    // Determine user ID: check active session or use explicit development-safe 'public' scope
+    let userId = 'public';
+    try {
+      const { data: userData } = await client.auth.getUser();
+      if (userData?.user?.id) {
+        userId = userData.user.id;
+      }
+    } catch {
+      userId = 'public';
+    }
+
     const uniqueId = `song_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    // Organized storage path: tracks/{songId}/{filename}
-    const storagePath = `tracks/${uniqueId}/${sanitizedFileName}`;
+    const uniqueFileName = `${Date.now()}_${sanitizedFileName}`;
+    
+    // Safe storage path: {userId}/{uniqueFileName}
+    let storagePath = `${userId}/${uniqueFileName}`;
 
     let audioUrl = '';
     let coverUrl = metadata.artworkUrl || '';
 
     if (onProgress) onProgress(15);
 
-    // Detect proper audio MIME type
-    const mimeType = getAudioMimeType(file.name, file.type);
-
-    // 1. Upload Audio File to "music" bucket
-    let { error: uploadError } = await client.storage
+    // 2. Upload Audio File to "music" bucket
+    // IMPORTANT: Use upsert: false. When upsert: true is used, Supabase Storage evaluates
+    // the UPDATE policy on storage.objects in addition to INSERT, which triggers
+    // "new row violates row-level security policy" if an UPDATE policy is not defined.
+    // Since uniqueFileName already contains Date.now(), collisions never occur.
+    let uploadRes = await client.storage
       .from(BUCKET_MUSIC)
       .upload(storagePath, file, {
         cacheControl: '3600',
-        upsert: true,
+        upsert: false,
         contentType: mimeType,
       });
 
-    // Auto-create bucket if it doesn't exist
-    if (uploadError && uploadError.message?.toLowerCase().includes('bucket not found')) {
-      try {
-        const { error: createBucketError } = await client.storage.createBucket(BUCKET_MUSIC, { public: true });
-        if (!createBucketError) {
-          const retry = await client.storage
+    let uploadError = uploadRes.error;
+
+    // Intelligent auto-recovery for Storage RLS & path constraints
+    if (uploadError) {
+      const errLower = uploadError.message?.toLowerCase() || '';
+      const isRls =
+        errLower.includes('row-level security') ||
+        errLower.includes('policy') ||
+        errLower.includes('accessdenied') ||
+        errLower.includes('permission denied') ||
+        (uploadError as { statusCode?: string | number })?.statusCode === 403 ||
+        (uploadError as { statusCode?: string | number })?.statusCode === '403';
+
+      if (isRls) {
+        // Recovery Attempt 1: Try anonymous session if enabled on the Supabase project
+        try {
+          const authRes = await client.auth.signInAnonymously();
+          if (authRes?.data?.user?.id) {
+            userId = authRes.data.user.id;
+            const authStoragePath = `${userId}/${uniqueFileName}`;
+            const retryAuth = await client.storage
+              .from(BUCKET_MUSIC)
+              .upload(authStoragePath, file, {
+                cacheControl: '3600',
+                upsert: false,
+                contentType: mimeType,
+              });
+
+            if (!retryAuth.error) {
+              uploadError = null;
+              storagePath = authStoragePath;
+            }
+          }
+        } catch {
+          // Anonymous sign-in not enabled on project, proceed to attempt 2
+        }
+
+        // Recovery Attempt 2: Try flat root path in bucket in case RLS policy restricts folder names
+        if (uploadError) {
+          const flatPath = uniqueFileName;
+          const retryFlat = await client.storage
             .from(BUCKET_MUSIC)
-            .upload(storagePath, file, {
+            .upload(flatPath, file, {
               cacheControl: '3600',
-              upsert: true,
+              upsert: false,
               contentType: mimeType,
             });
-          uploadError = retry.error;
+
+          if (!retryFlat.error) {
+            uploadError = null;
+            storagePath = flatPath;
+          }
         }
-      } catch {
-        // proceed to check uploadError below
       }
     }
 
+    // Diagnose and handle bucket creation / lookup / RLS policy error
     if (uploadError) {
-      if (uploadError.message?.toLowerCase().includes('bucket not found')) {
+      const errStatus = (uploadError as { statusCode?: number | string })?.statusCode;
+      const parsedStatus = typeof errStatus === 'string' ? parseInt(errStatus, 10) : errStatus;
+
+      logSupabaseError('uploadMusicFile.storage', {
+        errorMessage: uploadError.message,
+        errorCode: (uploadError as { error?: string })?.error || uploadError.name,
+        bucket: BUCKET_MUSIC,
+        fileName: file.name,
+        uploadPath: storagePath,
+        httpStatus: parsedStatus,
+        raw: uploadError,
+      });
+
+      const errLower = uploadError.message?.toLowerCase() || '';
+
+      if (
+        errLower.includes('exceeded the maximum allowed size') ||
+        errLower.includes('entitytoolarge') ||
+        errLower.includes('too large') ||
+        parsedStatus === 413
+      ) {
         throw new Error(
-          'Bucket "music" was not found in your Supabase project. Please create a public bucket named "music" in Supabase Storage or run the SQL setup script in Cloud Settings.'
+          `Upload failed: Audio file (${formatBytes(file.size)}) exceeds the maximum allowed upload size in Supabase Storage (HTTP 413 EntityTooLarge). Supabase Free Tier caps files at 50MB. Click "Save to Local Library Instead" to play and visualize this song immediately, or remove the bucket limit in Supabase.`
         );
       }
-      throw new Error(`Cloud storage upload failed: ${uploadError.message}`);
+
+      if (errLower.includes('bucket not found') || errLower.includes('does not exist')) {
+        throw new Error(
+          `Upload failed: Storage bucket "${BUCKET_MUSIC}" does not exist in your Supabase project. Please create a public bucket named "${BUCKET_MUSIC}" in your Supabase Dashboard -> Storage.`
+        );
+      }
+
+      if (
+        errLower.includes('row-level security') ||
+        errLower.includes('policy') ||
+        errLower.includes('permission denied') ||
+        errLower.includes('unauthorized') ||
+        parsedStatus === 403 ||
+        parsedStatus === 401
+      ) {
+        throw new Error(
+          `Upload failed: Permission denied by Supabase Storage RLS policy. The "${BUCKET_MUSIC}" bucket requires an INSERT policy for public/anon access. Run the 1-click Storage Fix SQL in Cloud Settings.`
+        );
+      }
+
+      throw new Error(`Upload failed: ${uploadError.message}`);
     }
 
     if (onProgress) onProgress(65);
 
-    // Obtain public audio URL
+    // 3. Confirm upload succeeded and obtain public URL
     const { data: publicUrlData } = client.storage
       .from(BUCKET_MUSIC)
       .getPublicUrl(storagePath);
-    audioUrl = publicUrlData?.publicUrl || '';
 
-    // 2. Upload Artwork (if a custom binary blob exists)
+    audioUrl = publicUrlData?.publicUrl || '';
+    if (!audioUrl) {
+      throw new Error('Upload failed: Could not retrieve public URL for uploaded audio file.');
+    }
+
+    // 4. Upload Artwork if present (upsert: false)
     if (metadata.artworkBlob && !metadata.artworkUrl?.startsWith('data:')) {
       try {
-        const artworkPath = `covers/${uniqueId}.jpg`;
+        const artworkPath = `${userId}/covers/${uniqueId}.jpg`;
         const { error: artError } = await client.storage
           .from(BUCKET_ARTWORK)
           .upload(artworkPath, metadata.artworkBlob, {
             cacheControl: '3600',
-            upsert: true,
+            upsert: false,
             contentType: 'image/jpeg',
           });
 
@@ -406,6 +613,14 @@ export const SupabaseService = {
             .from(BUCKET_ARTWORK)
             .getPublicUrl(artworkPath);
           coverUrl = artPublicUrl?.publicUrl || '';
+        } else {
+          logSupabaseError('uploadMusicFile.artwork', {
+            errorMessage: artError.message,
+            bucket: BUCKET_ARTWORK,
+            fileName: file.name,
+            uploadPath: artworkPath,
+            raw: artError,
+          });
         }
       } catch (err) {
         console.warn('Artwork upload skipped:', err);
@@ -414,52 +629,115 @@ export const SupabaseService = {
 
     if (onProgress) onProgress(85);
 
-    // 3. Insert into Supabase "songs" table
+    // 5. Insert metadata row into Supabase database table
+    // Accommodates both column naming conventions (storage_path & file_path, public_url & audio_url, cover_url & artwork_url, etc.)
     const songPayload: Record<string, unknown> = {
-      title: metadata.title.trim() || file.name,
+      title: metadata.title.trim() || file.name.replace(/\.[^/.]+$/, ''),
       artist: metadata.artist.trim() || 'Unknown Artist',
       album: metadata.album.trim() || 'Single',
       genre: metadata.genre.trim() || 'Music',
       duration: Math.round(metadata.duration) || 0,
       file_name: file.name,
       file_path: storagePath,
-      file_size: file.size, // Real byte count
+      storage_path: storagePath,
+      file_size: file.size,
+      file_type: mimeType,
       audio_url: audioUrl,
+      public_url: audioUrl,
       cover_url: coverUrl,
+      artwork_url: coverUrl,
       file_hash: metadata.fileHash || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     let insertedData: Record<string, unknown> | null = null;
-    const { data: dbData, error: dbError } = await client
-      .from('songs')
-      .insert(songPayload)
-      .select()
-      .single();
+    const currentPayload: Record<string, unknown> = { ...songPayload };
+    let lastDbError: { message: string; code?: string } | null = null;
 
-    if (dbError) {
-      if (dbError.code === '42P01') {
+    // Resilient schema adaptation loop:
+    // User database schemas may differ (e.g. some have cover_url but not artwork_url,
+    // or file_path but not storage_path). When PostgREST returns PGRST204 or PostgreSQL
+    // returns 42703, we detect the missing column, remove it from the payload, and retry.
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const dbRes = await client
+        .from('songs')
+        .insert(currentPayload)
+        .select()
+        .single();
+
+      if (!dbRes.error) {
+        insertedData = dbRes.data as Record<string, unknown>;
+        break;
+      }
+
+      const dbError = dbRes.error;
+      lastDbError = dbError;
+      const dbErrLower = dbError.message?.toLowerCase() || '';
+
+      // Check if table missing
+      if (dbError.code === '42P01' || dbErrLower.includes('relation "public.songs" does not exist')) {
+        logSupabaseError('uploadMusicFile.database_missing_table', {
+          errorMessage: dbError.message,
+          errorCode: dbError.code,
+          fileName: file.name,
+          uploadPath: storagePath,
+          raw: dbError,
+        });
         throw new Error(
-          'The "songs" table does not exist in your Supabase database. Please copy and run the SQL setup script from Cloud Settings in your Supabase SQL Editor.'
+          'Upload failed: Database table "songs" does not exist in your Supabase project. Please run the SQL setup script from Cloud Settings.'
         );
       }
-      if (dbError.message?.toLowerCase().includes('file_hash')) {
-        const { file_hash, ...fallbackPayload } = songPayload;
-        const retry = await client
-          .from('songs')
-          .insert(fallbackPayload)
-          .select()
-          .single();
-        if (retry.error) {
-          throw new Error(`Database record creation failed: ${retry.error.message}`);
-        }
-        insertedData = retry.data as Record<string, unknown>;
-      } else {
-        throw new Error(`Database record creation failed: ${dbError.message}`);
+
+      // Check RLS permission error
+      if (
+        dbError.code === '42501' ||
+        dbErrLower.includes('row-level security') ||
+        dbErrLower.includes('permission denied')
+      ) {
+        logSupabaseError('uploadMusicFile.database_rls', {
+          errorMessage: dbError.message,
+          errorCode: dbError.code,
+          fileName: file.name,
+          uploadPath: storagePath,
+          raw: dbError,
+        });
+        throw new Error(
+          'Upload failed: Permission denied by database RLS policy on "songs" table. Please enable public insert policy (see Cloud Settings SQL script).'
+        );
       }
-    } else {
-      insertedData = dbData as Record<string, unknown>;
+
+      // Detect missing column from error message:
+      // PostgREST: "Could not find the 'artwork_url' column of 'songs' in the schema cache" (code PGRST204)
+      // Postgres: "column "artwork_url" does not exist" (code 42703)
+      const missingColumn = extractMissingColumn(dbError.message, currentPayload);
+
+      if (missingColumn) {
+        console.warn(`[JTEC MUSIC] Adapting to user schema: column '${missingColumn}' not found in 'songs' table. Retrying...`);
+        delete currentPayload[missingColumn];
+        continue;
+      }
+
+      // If we could not identify a specific column to strip, log and break
+      logSupabaseError('uploadMusicFile.database_unhandled', {
+        errorMessage: dbError.message,
+        errorCode: dbError.code,
+        fileName: file.name,
+        uploadPath: storagePath,
+        raw: dbError,
+      });
+      break;
+    }
+
+    if (!insertedData && lastDbError) {
+      logSupabaseError('uploadMusicFile.database_failed', {
+        errorMessage: lastDbError.message,
+        errorCode: lastDbError.code,
+        fileName: file.name,
+        uploadPath: storagePath,
+        raw: lastDbError,
+      });
+      throw new Error(`Upload failed: Database record creation error: ${lastDbError.message}`);
     }
 
     if (onProgress) onProgress(100);
@@ -472,10 +750,10 @@ export const SupabaseService = {
       genre: String(insertedData?.genre || songPayload.genre),
       duration: Number(insertedData?.duration || songPayload.duration),
       file_name: String(insertedData?.file_name || songPayload.file_name),
-      file_path: String(insertedData?.file_path || songPayload.file_path),
+      file_path: String(insertedData?.storage_path || insertedData?.file_path || storagePath),
       file_size: Number(insertedData?.file_size || songPayload.file_size),
-      audio_url: String(insertedData?.audio_url || songPayload.audio_url),
-      cover_url: String(insertedData?.cover_url || songPayload.cover_url || ''),
+      audio_url: String(insertedData?.public_url || insertedData?.audio_url || audioUrl),
+      cover_url: String(insertedData?.artwork_url || insertedData?.cover_url || coverUrl),
       file_hash: String(insertedData?.file_hash || songPayload.file_hash || ''),
       created_at: String(insertedData?.created_at || songPayload.created_at),
     };
@@ -497,13 +775,23 @@ export const SupabaseService = {
       try {
         await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
       } catch (e) {
-        console.warn('Could not remove file from bucket:', e);
+        logSupabaseError('deleteSongFromCloud.storage', {
+          errorMessage: e instanceof Error ? e.message : 'Storage remove error',
+          bucket: BUCKET_MUSIC,
+          uploadPath: song.file_path,
+          raw: e,
+        });
       }
     }
 
     // 2. Delete database record
     const { error } = await client.from('songs').delete().eq('id', song.id);
     if (error) {
+      logSupabaseError('deleteSongFromCloud.database', {
+        errorMessage: error.message,
+        errorCode: error.code,
+        raw: error,
+      });
       throw new Error(`Failed to delete cloud track: ${error.message}`);
     }
   },
@@ -626,6 +914,7 @@ export async function computeFileHash(file: File | Blob): Promise<string> {
 
 /**
  * Returns accurate audio MIME type based on file extension and browser detection.
+ * Supports: audio/mpeg, audio/wav, audio/mp4, audio/aac, audio/ogg, audio/flac, audio/webm.
  */
 export function getAudioMimeType(fileName: string, detectedType?: string): string {
   if (detectedType && detectedType.startsWith('audio/')) return detectedType;
@@ -634,8 +923,10 @@ export function getAudioMimeType(fileName: string, detectedType?: string): strin
     case 'mp3': return 'audio/mpeg';
     case 'wav': return 'audio/wav';
     case 'm4a': return 'audio/mp4';
+    case 'mp4': return 'audio/mp4';
     case 'aac': return 'audio/aac';
     case 'ogg': return 'audio/ogg';
+    case 'oga': return 'audio/ogg';
     case 'flac': return 'audio/flac';
     case 'webm': return 'audio/webm';
     default: return detectedType || 'audio/mpeg';
@@ -643,13 +934,17 @@ export function getAudioMimeType(fileName: string, detectedType?: string): strin
 }
 
 /**
- * Supabase SQL setup script that users can copy to create the database table
- * and RLS policies in one click.
+ * Supabase SQL setup script with all required columns and comprehensive RLS policies.
  */
-export const SUPABASE_SQL_SETUP = `-- JTEC MUSIC: Supabase Database & Storage Complete Setup
--- Copy and run this in your Supabase SQL Editor:
+export const SUPABASE_SQL_SETUP = `-- ==============================================================================
+-- JTEC MUSIC — SUPABASE DATABASE & STORAGE INITIALIZATION SCRIPT
+-- ==============================================================================
+-- Run this script in your Supabase SQL Editor (Dashboard -> SQL Editor -> New Query).
+-- It creates the 'songs' table with all required fields, performance indexes,
+-- public Storage buckets ('music' and 'artwork'), and Row Level Security policies.
+-- ==============================================================================
 
--- 1. Create songs table
+-- 1. Create the songs table with both storage_path/file_path and public_url/audio_url support
 create table if not exists public.songs (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -658,24 +953,41 @@ create table if not exists public.songs (
   genre text default 'Music',
   duration numeric default 0,
   file_name text not null,
-  file_path text not null,
+  storage_path text not null default '',
+  file_path text not null default '',
   file_size bigint not null default 0,
-  audio_url text not null,
+  file_type text default 'audio/mpeg',
+  public_url text not null default '',
+  audio_url text not null default '',
+  artwork_url text,
   cover_url text,
   file_hash text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 2. Performance Indexes
-create index if not exists songs_file_hash_idx on public.songs (file_hash);
-create index if not exists songs_created_at_idx on public.songs (created_at desc);
-create index if not exists songs_title_idx on public.songs (title);
-create index if not exists songs_artist_idx on public.songs (artist);
+-- Safe column migrations for existing 'songs' tables (adds any missing columns without data loss)
+alter table public.songs add column if not exists storage_path text not null default '';
+alter table public.songs add column if not exists file_path text not null default '';
+alter table public.songs add column if not exists public_url text not null default '';
+alter table public.songs add column if not exists audio_url text not null default '';
+alter table public.songs add column if not exists artwork_url text;
+alter table public.songs add column if not exists cover_url text;
+alter table public.songs add column if not exists file_type text default 'audio/mpeg';
+alter table public.songs add column if not exists genre text default 'Music';
+alter table public.songs add column if not exists file_hash text;
+alter table public.songs add column if not exists updated_at timestamp with time zone default timezone('utc'::text, now()) not null;
 
--- 3. Row Level Security (RLS)
+-- 2. Indexes for fast search, duplicate detection, and chronological sorting
+create index if not exists idx_songs_file_hash on public.songs (file_hash);
+create index if not exists idx_songs_created_at on public.songs (created_at desc);
+create index if not exists idx_songs_title on public.songs (title);
+create index if not exists idx_songs_artist on public.songs (artist);
+
+-- 3. Enable Row Level Security (RLS)
 alter table public.songs enable row level security;
 
+-- 4. Define public RLS policies
 drop policy if exists "Allow public read on songs" on public.songs;
 create policy "Allow public read on songs"
   on public.songs for select
@@ -697,28 +1009,87 @@ create policy "Allow public delete on songs"
   on public.songs for delete
   using (true);
 
--- 4. Storage Buckets (creates public buckets)
-insert into storage.buckets (id, name, public)
-values ('music', 'music', true)
-on conflict (id) do nothing;
+-- 5. Storage Buckets (creates dedicated public buckets with no bucket-level size limits)
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('music', 'music', true, null)
+on conflict (id) do update set public = true, file_size_limit = null;
 
-insert into storage.buckets (id, name, public)
-values ('artwork', 'artwork', true)
-on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('artwork', 'artwork', true, null)
+on conflict (id) do update set public = true, file_size_limit = null;
 
--- 5. Storage Access Policies
+-- 6. Storage Access Policies for 'music' bucket (explicitly granted TO public)
 drop policy if exists "Public Access music" on storage.objects;
-create policy "Public Access music" on storage.objects for select using (bucket_id = 'music');
+create policy "Public Access music"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'music');
 
 drop policy if exists "Public Upload music" on storage.objects;
-create policy "Public Upload music" on storage.objects for insert with check (bucket_id = 'music');
+create policy "Public Upload music"
+  on storage.objects for insert
+  to public
+  with check (bucket_id = 'music');
+
+drop policy if exists "Public Update music" on storage.objects;
+create policy "Public Update music"
+  on storage.objects for update
+  to public
+  using (bucket_id = 'music')
+  with check (bucket_id = 'music');
 
 drop policy if exists "Public Delete music" on storage.objects;
-create policy "Public Delete music" on storage.objects for delete using (bucket_id = 'music');
+create policy "Public Delete music"
+  on storage.objects for delete
+  to public
+  using (bucket_id = 'music');
 
+-- 7. Storage Access Policies for 'artwork' bucket
 drop policy if exists "Public Access artwork" on storage.objects;
-create policy "Public Access artwork" on storage.objects for select using (bucket_id = 'artwork');
+create policy "Public Access artwork"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'artwork');
 
 drop policy if exists "Public Upload artwork" on storage.objects;
-create policy "Public Upload artwork" on storage.objects for insert with check (bucket_id = 'artwork');
+create policy "Public Upload artwork"
+  on storage.objects for insert
+  to public
+  with check (bucket_id = 'artwork');
+
+drop policy if exists "Public Update artwork" on storage.objects;
+create policy "Public Update artwork"
+  on storage.objects for update
+  to public
+  using (bucket_id = 'artwork')
+  with check (bucket_id = 'artwork');
+
+drop policy if exists "Public Delete artwork" on storage.objects;
+create policy "Public Delete artwork"
+  on storage.objects for delete
+  to public
+  using (bucket_id = 'artwork');
 `;
+
+/**
+ * 1-click SQL statement snippet to quickly resolve Supabase Storage RLS upload policy errors.
+ */
+export const SUPABASE_STORAGE_FIX_SQL = `-- Run in Supabase SQL Editor to allow music uploads to the 'music' bucket:
+insert into storage.buckets (id, name, public, file_size_limit) values ('music', 'music', true, null) on conflict (id) do update set public = true, file_size_limit = null;
+update storage.buckets set file_size_limit = null where id = 'music';
+drop policy if exists "Public Upload music" on storage.objects;
+create policy "Public Upload music" on storage.objects for insert to public with check (bucket_id = 'music');
+drop policy if exists "Public Update music" on storage.objects;
+create policy "Public Update music" on storage.objects for update to public using (bucket_id = 'music') with check (bucket_id = 'music');
+drop policy if exists "Public Access music" on storage.objects;
+create policy "Public Access music" on storage.objects for select to public using (bucket_id = 'music');
+`;
+
+/**
+ * 1-click SQL statement snippet to remove file size limits on the 'music' bucket.
+ */
+export const SUPABASE_STORAGE_SIZE_FIX_SQL = `-- Run in Supabase SQL Editor to remove file size limit on 'music' bucket:
+update storage.buckets set file_size_limit = null where id = 'music';
+`;
+
+
