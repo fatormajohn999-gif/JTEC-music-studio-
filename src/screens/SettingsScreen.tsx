@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
-  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2
+  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass
 } from 'lucide-react';
 import { AppSettings, PerformanceMode, VisualizerMode } from '../types/music';
+import { VisualWorldsModal } from '../components/VisualWorldsModal';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -21,6 +22,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onOpenCloudSettings,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isVisualWorldsModalOpen, setIsVisualWorldsModalOpen] = useState(false);
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 MB';
@@ -104,42 +106,55 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
       {/* VISUALIZER PREFERENCES */}
       <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center gap-2">
-          <Eye className="w-4 h-4 text-purple-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Audio Visualizer Mode
-          </h3>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+              Audio Visualizer & Ninja Worlds
+            </h3>
+          </div>
+          <button
+            onClick={() => setIsVisualWorldsModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-500/30 text-xs font-bold transition shadow-sm shadow-cyan-500/10 active:scale-95"
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Visual Worlds 🥷</span>
+          </button>
         </div>
         <p className="text-xs text-slate-400">
-          Render real-time frequency data synced to Web Audio API analyser.
+          Render real-time frequency data synced to Web Audio API analyser. Dark Spectrum is the default studio visualizer. Ninja themes react to frequencies with chakra explosions, energy currents, and electric lightning.
         </p>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
           {[
-            { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
-            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
+            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum (Default)', badge: 'Default' },
+            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Shadow Shinobi', badge: 'Ninja' },
+            { id: 'fire_shinobi' as VisualizerMode, label: '🔥 Flame Jutsu', badge: 'Ninja' },
+            { id: 'lightning_ninja' as VisualizerMode, label: '⚡ Storm Raikiri', badge: 'Ninja' },
+            { id: 'wind_ninja' as VisualizerMode, label: '🌪️ Gale Blade', badge: 'Ninja' },
+            { id: 'samurai' as VisualizerMode, label: '⚔️ Blood Moon Ronin', badge: 'Ninja' },
             { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
-            { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
-            { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
+            { id: 'galaxy' as VisualizerMode, label: '🌌 Cosmic Galaxy' },
             { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
-            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
-            { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
+            { id: 'fire_energy' as VisualizerMode, label: '🔥 Solar Inferno' },
             { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
             { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
             { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
+            { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
           ].map((v) => {
             const isSelected = settings.visualizerMode === v.id;
             return (
               <button
                 key={v.id}
                 onClick={() => handleVisualizerChange(v.id)}
-                className={`p-3 rounded-xl border text-xs font-bold transition ${
+                className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-between gap-1.5 ${
                   isSelected
-                    ? 'bg-purple-500/20 border-purple-400 text-purple-300'
+                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
                     : 'bg-slate-950/40 border-white/5 text-slate-400 hover:text-white'
                 }`}
               >
-                {v.label}
+                <span className="truncate">{v.label}</span>
+                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
               </button>
             );
           })}
@@ -152,20 +167,35 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           Playback Controls
         </h3>
 
-        <div className="space-y-2 text-sm text-slate-300">
-          <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
-            <div>
-              <div className="font-semibold text-white">Autoplay Next Track</div>
-              <div className="text-xs text-slate-400">Continue playing when a track finishes</div>
+        {/* Dedicated Automatic Next Track Card */}
+        <div className="p-4 rounded-2xl bg-slate-950/60 border border-cyan-500/25 flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white text-sm">Automatic Next Track</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                settings.autoplayNext 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' 
+                  : 'bg-slate-800 text-slate-400 border border-white/5'
+              }`}>
+                {settings.autoplayNext ? 'ACTIVE' : 'OFF'}
+              </span>
             </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              When a track finishes, automatically queue and play the next song from your queue, playlist, or library without interruption.
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer shrink-0">
             <input
               type="checkbox"
               checked={settings.autoplayNext}
               onChange={(e) => onUpdateSettings({ ...settings, autoplayNext: e.target.checked })}
-              className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
+              className="sr-only peer"
             />
+            <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-cyan-500 peer-checked:to-purple-600"></div>
           </label>
+        </div>
 
+        <div className="space-y-2 text-sm text-slate-300 pt-1">
           <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
             <div>
               <div className="font-semibold text-white">Remember Last Song</div>
@@ -273,6 +303,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       <div className="text-center text-xs text-slate-500 pb-6">
         JTEC MUSIC v1.0.0 • Your Music • Your Vibe • Offline
       </div>
+
+      {/* Visual Worlds Selector Modal */}
+      <VisualWorldsModal
+        isOpen={isVisualWorldsModalOpen}
+        onClose={() => setIsVisualWorldsModalOpen(false)}
+        currentScene={settings.visualizerMode}
+        onSelectScene={handleVisualizerChange}
+      />
     </div>
   );
 };

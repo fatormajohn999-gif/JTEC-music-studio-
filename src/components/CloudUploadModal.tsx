@@ -413,11 +413,16 @@ export const CloudUploadModal: React.FC<CloudUploadModalProps> = ({
               <Upload className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-black text-white flex items-center gap-2">
-                Upload to JTEC CLOUD
-              </h2>
-              <p className="text-xs text-slate-400">
-                Supabase Storage (`music` bucket) & metadata database
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-black text-white">
+                  Upload to JTEC CLOUD
+                </h2>
+                <span className="text-[10px] font-semibold tracking-normal px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  Audio Only (No Cover Photos)
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Only music files are uploaded to Supabase (`music` bucket). Cover art stays local on your device.
               </p>
             </div>
           </div>

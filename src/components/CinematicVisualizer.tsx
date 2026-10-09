@@ -82,6 +82,75 @@ interface BokehOrb {
   pulsePhase: number;
 }
 
+// 3 New Ninja Environments Structures
+interface ShadowTrailItem {
+  x: number;
+  y: number;
+  stride: number;
+  alpha: number;
+}
+
+interface ShadowSpark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  alpha: number;
+  size: number;
+  color: string;
+}
+
+interface ShurikenItem {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rot: number;
+  rotSpeed: number;
+  size: number;
+  stuck: boolean;
+  stickTime: number;
+  stickX: number;
+  stickY: number;
+  targetX: number;
+  trail: { x: number; y: number; rot: number; alpha: number }[];
+}
+
+interface DojoSparkItem {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+}
+
+interface SmokePuffItem {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  maxRadius: number;
+  alpha: number;
+  rot: number;
+  rotSpeed: number;
+  color: string;
+}
+
+interface ForestFireflyItem {
+  x: number;
+  y: number;
+  baseX: number;
+  baseY: number;
+  phase: number;
+  speed: number;
+  size: number;
+  color: string;
+}
+
 export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   scene,
   performanceMode,
@@ -124,6 +193,63 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
     y1: 0,
     x2: 0,
     y2: 0,
+  });
+
+  // Specialized state refs for 3 new ninja scenes
+  const shadowStrikeRef = useRef<{
+    ninjaX: number;
+    ninjaY: number;
+    stride: number;
+    trail: ShadowTrailItem[];
+    slashActive: boolean;
+    slashProgress: number;
+    slashX1: number;
+    slashY1: number;
+    slashX2: number;
+    slashY2: number;
+    sparks: ShadowSpark[];
+  }>({
+    ninjaX: 100,
+    ninjaY: 300,
+    stride: 0,
+    trail: [],
+    slashActive: false,
+    slashProgress: 0,
+    slashX1: 0,
+    slashY1: 0,
+    slashX2: 0,
+    slashY2: 0,
+    sparks: [],
+  });
+
+  const shurikenStormRef = useRef<{
+    shurikens: ShurikenItem[];
+    sparks: DojoSparkItem[];
+    lastThrowTime: number;
+  }>({
+    shurikens: [],
+    sparks: [],
+    lastThrowTime: 0,
+  });
+
+  const smokeVanishRef = useRef<{
+    puffs: SmokePuffItem[];
+    fireflies: ForestFireflyItem[];
+    ninjaX: number;
+    ninjaY: number;
+    ninjaAlpha: number;
+    ninjaTargetAlpha: number;
+    currentPose: 'ground' | 'branch' | 'crouch';
+    lastTeleportTime: number;
+  }>({
+    puffs: [],
+    fireflies: [],
+    ninjaX: 0,
+    ninjaY: 0,
+    ninjaAlpha: 0.85,
+    ninjaTargetAlpha: 0.85,
+    currentPose: 'ground',
+    lastTeleportTime: 0,
   });
 
   useEffect(() => {
@@ -295,11 +421,14 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         if (autoCooldownRef.current > 400) {
           let detected: CinematicScene = internalSceneRef.current;
           if (sBass > 0.65) {
-            detected = Math.random() > 0.5 ? 'fire_energy' : 'cyber_city';
+            const highBassPool: CinematicScene[] = ['fire_energy', 'cyber_city', 'shadow_strike'];
+            detected = highBassPool[Math.floor(Math.random() * highBassPool.length)];
           } else if (sBass > 0.45 && sHigh > 0.45) {
-            detected = Math.random() > 0.5 ? 'anime_ninja' : 'music_tunnel';
+            const energyPool: CinematicScene[] = ['anime_ninja', 'music_tunnel', 'shuriken_storm'];
+            detected = energyPool[Math.floor(Math.random() * energyPool.length)];
           } else if (sMid > 0.45 && sHigh > 0.4) {
-            detected = Math.random() > 0.5 ? 'galaxy' : 'samurai';
+            const midPool: CinematicScene[] = ['galaxy', 'samurai', 'smoke_vanish'];
+            detected = midPool[Math.floor(Math.random() * midPool.length)];
           } else if (sVol < 0.28 && sBass < 0.3) {
             detected = Math.random() > 0.5 ? 'minimal_pro' : 'deep_ocean';
           } else {
@@ -1361,6 +1490,927 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
         ctx.font = '10px monospace';
         ctx.fillText(`LVL: ${(sVol * 100).toFixed(0)}% | SUB: ${(sBass * 100).toFixed(0)}%`, width * 0.05, height * 0.88);
+      }
+
+      // =======================================================================
+      // 11. SHADOW STRIKE 🗡️ (Moonlit rooftops, ninja dashing with afterimages & bass blade slash)
+      // =======================================================================
+      else if (resolvedScene === 'shadow_strike') {
+        const state = shadowStrikeRef.current;
+
+        // 1. Dark moody moonlit night sky
+        const nightGrad = ctx.createLinearGradient(0, 0, 0, height);
+        nightGrad.addColorStop(0, '#02040a');
+        nightGrad.addColorStop(0.5, '#071022');
+        nightGrad.addColorStop(0.85, '#0b162c');
+        nightGrad.addColorStop(1, '#03060f');
+        ctx.fillStyle = nightGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // Stars twinkling in sky with treble glints
+        const starPool = starsRef.current;
+        for (let i = 0; i < Math.min(starPool.length, 60); i++) {
+          const s = starPool[i];
+          const sx = (s.x + 600) % width;
+          const sy = (s.y + 600) % (height * 0.55);
+          const starAlpha = (Math.sin(t * 3 + s.twinklePhase) * 0.3 + 0.7) * (0.4 + sHigh * 0.6);
+          ctx.fillStyle = `rgba(224, 242, 254, ${starAlpha})`;
+          ctx.fillRect(sx, sy, s.baseRadius, s.baseRadius);
+        }
+
+        // 2. Colossal Moon with soft ethereal bloom
+        const moonX = width * 0.75;
+        const moonY = height * 0.28;
+        const moonR = Math.min(width, height) * 0.26;
+
+        const moonHalo = ctx.createRadialGradient(moonX, moonY, moonR * 0.2, moonX, moonY, moonR * 2.2);
+        moonHalo.addColorStop(0, 'rgba(56, 189, 248, 0.28)');
+        moonHalo.addColorStop(0.5, 'rgba(30, 58, 138, 0.12)');
+        moonHalo.addColorStop(1, 'transparent');
+        ctx.fillStyle = moonHalo;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, moonR * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Moon disc with soft shading
+        const moonDisc = ctx.createRadialGradient(moonX - moonR * 0.25, moonY - moonR * 0.25, moonR * 0.1, moonX, moonY, moonR);
+        moonDisc.addColorStop(0, '#f8fafc');
+        moonDisc.addColorStop(0.6, '#e2e8f0');
+        moonDisc.addColorStop(1, '#94a3b8');
+        ctx.fillStyle = moonDisc;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Subtle lunar craters for cinematic depth
+        ctx.fillStyle = 'rgba(71, 85, 105, 0.18)';
+        ctx.beginPath();
+        ctx.arc(moonX - moonR * 0.3, moonY - moonR * 0.1, moonR * 0.25, 0, Math.PI * 2);
+        ctx.arc(moonX + moonR * 0.2, moonY + moonR * 0.25, moonR * 0.22, 0, Math.PI * 2);
+        ctx.arc(moonX - moonR * 0.1, moonY + moonR * 0.35, moonR * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 3. Volumetric Fog layers drifting across the rooftops (deep parallax)
+        for (let f = 0; f < 3; f++) {
+          const fogSpeed = (0.2 + f * 0.15);
+          const fogOffset = (t * 40 * fogSpeed) % (width + 200);
+          const fogY = height * (0.60 + f * 0.12);
+          const fogGrad = ctx.createLinearGradient(0, fogY - 40, 0, fogY + 60);
+          fogGrad.addColorStop(0, 'transparent');
+          fogGrad.addColorStop(0.5, `rgba(148, 163, 184, ${0.08 + f * 0.04 + sBass * 0.05})`);
+          fogGrad.addColorStop(1, 'transparent');
+          ctx.fillStyle = fogGrad;
+
+          ctx.beginPath();
+          ctx.moveTo(-100, fogY);
+          for (let x = -100; x <= width + 100; x += 40) {
+            const wave = Math.sin((x + fogOffset) * 0.008 + f * 2) * 22;
+            ctx.lineTo(x, fogY + wave);
+          }
+          ctx.lineTo(width + 100, height);
+          ctx.lineTo(-100, height);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // 4. Distant background rooftops (kawara ridges silhouette)
+        ctx.fillStyle = '#060a16';
+        ctx.beginPath();
+        ctx.moveTo(0, height * 0.68);
+        const bgRoofWidth = 140;
+        for (let rx = 0; rx < width + bgRoofWidth; rx += bgRoofWidth) {
+          ctx.lineTo(rx + 20, height * 0.62);
+          ctx.lineTo(rx + bgRoofWidth * 0.5, height * 0.58);
+          ctx.quadraticCurveTo(rx + bgRoofWidth * 0.8, height * 0.64, rx + bgRoofWidth, height * 0.68);
+        }
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        ctx.fill();
+
+        // 5. Main Midground Rooftops where the Ninja dashes
+        const roofYBase = height * 0.76;
+        ctx.fillStyle = '#04070f';
+        ctx.beginPath();
+        ctx.moveTo(0, roofYBase + 30);
+
+        const getRoofY = (xPos: number) => {
+          const cycle = ((xPos % 320) + 320) % 320;
+          if (cycle < 60) {
+            return roofYBase - Math.sin((cycle / 60) * Math.PI * 0.5) * 28;
+          } else if (cycle < 220) {
+            const norm = (cycle - 60) / 160;
+            return roofYBase - 28 + norm * 35;
+          } else {
+            return roofYBase + 40;
+          }
+        };
+
+        for (let x = 0; x <= width; x += 20) {
+          ctx.lineTo(x, getRoofY(x));
+        }
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        ctx.fill();
+
+        // Moonlight highlights glistening on curved roof tiles
+        ctx.strokeStyle = `rgba(186, 230, 253, ${0.28 + sHigh * 0.35})`;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        for (let x = 0; x <= width; x += 20) {
+          const ry = getRoofY(x);
+          if (x === 0) ctx.moveTo(x, ry);
+          else ctx.lineTo(x, ry);
+        }
+        ctx.stroke();
+
+        // Treble glints on roof tile dew
+        if (sHigh > 0.35) {
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 6;
+          for (let g = 0; g < 5; g++) {
+            const gx = (width * 0.22) * g + ((t * 80) % 80);
+            const gy = getRoofY(gx);
+            ctx.beginPath();
+            ctx.arc(gx, gy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.shadowBlur = 0;
+        }
+
+        // 6. Ninja Physics & Dash Motion
+        const runSpeed = 4.2 + sBass * 4.8;
+        state.ninjaX += runSpeed;
+        if (state.ninjaX > width + 80) {
+          state.ninjaX = -60;
+          state.trail = [];
+        }
+        state.stride += 0.28 + sBass * 0.2;
+
+        const baseRoofY = getRoofY(state.ninjaX);
+        const isLeaping = (state.ninjaX % 320) > 200;
+        const jumpHeight = isLeaping ? Math.sin(((state.ninjaX % 320 - 200) / 120) * Math.PI) * 55 : 0;
+        state.ninjaY = baseRoofY - 28 - jumpHeight;
+
+        // Record historical afterimages
+        state.trail.unshift({
+          x: state.ninjaX,
+          y: state.ninjaY,
+          stride: state.stride,
+          alpha: 0.55,
+        });
+        if (state.trail.length > 7) state.trail.pop();
+
+        // Helper to draw realistic ninja silhouette
+        const drawNinjaSilhouette = (nx: number, ny: number, strideVal: number, alpha: number, isGhost: boolean) => {
+          ctx.save();
+          ctx.translate(nx, ny);
+          ctx.globalAlpha = alpha;
+
+          if (isGhost) {
+            ctx.fillStyle = 'rgba(14, 165, 233, 0.25)';
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+            ctx.lineWidth = 1.2;
+          } else {
+            ctx.fillStyle = '#03050a';
+            ctx.strokeStyle = 'rgba(224, 242, 254, 0.6)';
+            ctx.lineWidth = 1;
+          }
+
+          // Flowing headband scarf
+          const scarfFlutter = Math.sin(t * 14 + strideVal) * (14 + sBass * 18);
+          ctx.beginPath();
+          ctx.moveTo(-10, -56);
+          ctx.quadraticCurveTo(-28 + scarfFlutter * 0.5, -58 + scarfFlutter * 0.4, -46 + scarfFlutter, -48 + scarfFlutter * 0.8);
+          ctx.lineTo(-44 + scarfFlutter, -42 + scarfFlutter * 0.8);
+          ctx.quadraticCurveTo(-26 + scarfFlutter * 0.5, -52 + scarfFlutter * 0.4, -10, -52);
+          ctx.closePath();
+          ctx.fillStyle = isGhost ? 'rgba(56, 189, 248, 0.4)' : '#38bdf8';
+          ctx.fill();
+
+          // Ninja Head & Cowl
+          ctx.fillStyle = isGhost ? 'rgba(14, 165, 233, 0.3)' : '#03050a';
+          ctx.beginPath();
+          ctx.arc(0, -56, 11, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Mask slit
+          if (!isGhost) {
+            ctx.fillStyle = '#e0f2fe';
+            ctx.fillRect(4, -58, 6, 2.5);
+          }
+
+          // Torso
+          ctx.beginPath();
+          ctx.moveTo(-12, -45);
+          ctx.lineTo(14, -45);
+          ctx.lineTo(8, -14);
+          ctx.lineTo(-10, -14);
+          ctx.closePath();
+          ctx.fill();
+
+          // Ninjato scabbard on back
+          ctx.strokeStyle = isGhost ? 'rgba(56, 189, 248, 0.3)' : '#475569';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(-20, -60);
+          ctx.lineTo(12, -18);
+          ctx.stroke();
+
+          // Shinobi Legs in running stride
+          const legPhase = Math.sin(strideVal);
+          const backLegPhase = -legPhase;
+
+          ctx.beginPath();
+          ctx.moveTo(2, -14);
+          ctx.lineTo(14 + legPhase * 16, -2);
+          ctx.lineTo(24 + legPhase * 24, 16);
+          ctx.lineWidth = 4.5;
+          ctx.strokeStyle = isGhost ? 'rgba(14, 165, 233, 0.3)' : '#03050a';
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(-6, -14);
+          ctx.lineTo(-16 + backLegPhase * 16, -2);
+          ctx.lineTo(-24 + backLegPhase * 24, 14);
+          ctx.lineWidth = 4.5;
+          ctx.stroke();
+
+          // Reaching arm
+          ctx.beginPath();
+          ctx.moveTo(10, -42);
+          ctx.lineTo(26, -32);
+          ctx.lineTo(36, -26);
+          ctx.lineWidth = 3.5;
+          ctx.stroke();
+
+          ctx.restore();
+        };
+
+        // Render afterimages
+        for (let i = state.trail.length - 1; i >= 1; i--) {
+          const ghost = state.trail[i];
+          const fadeAlpha = (1 - i / state.trail.length) * 0.42;
+          drawNinjaSilhouette(ghost.x, ghost.y, ghost.stride, fadeAlpha, true);
+        }
+
+        // Render main ninja
+        drawNinjaSilhouette(state.ninjaX, state.ninjaY, state.stride, 1.0, false);
+
+        // 7. Bass Hit: Fast Slash with Bright Blade Streak
+        if (isBeat || (rawBass > 0.65 && !state.slashActive)) {
+          state.slashActive = true;
+          state.slashProgress = 0;
+          state.slashX1 = state.ninjaX + 20;
+          state.slashY1 = state.ninjaY - 45;
+          state.slashX2 = state.ninjaX + 130 + sBass * 60;
+          state.slashY2 = state.ninjaY + 20;
+
+          for (let sp = 0; sp < 16; sp++) {
+            const angle = (Math.random() - 0.5) * Math.PI * 0.8 + 0.2;
+            const spSpeed = Math.random() * 8 + 6;
+            state.sparks.push({
+              x: state.slashX1 + (state.slashX2 - state.slashX1) * Math.random(),
+              y: state.slashY1 + (state.slashY2 - state.slashY1) * Math.random(),
+              vx: Math.cos(angle) * spSpeed,
+              vy: Math.sin(angle) * spSpeed,
+              alpha: 1.0,
+              size: Math.random() * 2.5 + 1.2,
+              color: Math.random() > 0.3 ? '#38bdf8' : '#ffffff',
+            });
+          }
+        }
+
+        // Render active blade streak
+        if (state.slashActive) {
+          state.slashProgress += 0.08;
+          if (state.slashProgress >= 1.0) {
+            state.slashActive = false;
+          } else {
+            const streakAlpha = Math.sin(state.slashProgress * Math.PI);
+            ctx.save();
+            ctx.globalAlpha = streakAlpha;
+
+            const midX = (state.slashX1 + state.slashX2) * 0.5 + 25;
+            const midY = (state.slashY1 + state.slashY2) * 0.5 - 35;
+
+            // Outer cyan glow
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 14 * streakAlpha;
+            ctx.shadowColor = '#38bdf8';
+            ctx.shadowBlur = 24;
+            ctx.beginPath();
+            ctx.moveTo(state.slashX1, state.slashY1);
+            ctx.quadraticCurveTo(midX, midY, state.slashX2, state.slashY2);
+            ctx.stroke();
+
+            // Inner razor white core
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4 * streakAlpha;
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+
+            ctx.restore();
+          }
+        }
+
+        // Update & render blade sparks
+        for (let i = state.sparks.length - 1; i >= 0; i--) {
+          const spk = state.sparks[i];
+          spk.x += spk.vx;
+          spk.y += spk.vy;
+          spk.vy += 0.25;
+          spk.alpha -= 0.035;
+
+          if (spk.alpha <= 0) {
+            state.sparks.splice(i, 1);
+            continue;
+          }
+
+          ctx.fillStyle = spk.color;
+          ctx.globalAlpha = spk.alpha;
+          ctx.beginPath();
+          ctx.arc(spk.x, spk.y, spk.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+      }
+
+      // =======================================================================
+      // 12. SHURIKEN STORM ⭐ (Realistic metallic shuriken, dojo lantern glow & beam impact sparks)
+      // =======================================================================
+      else if (resolvedScene === 'shuriken_storm') {
+        const storm = shurikenStormRef.current;
+
+        // 1. Dark Dojo Interior Background
+        const dojoBg = ctx.createLinearGradient(0, 0, 0, height);
+        dojoBg.addColorStop(0, '#0a0502');
+        dojoBg.addColorStop(0.5, '#160a04');
+        dojoBg.addColorStop(1, '#080302');
+        ctx.fillStyle = dojoBg;
+        ctx.fillRect(0, 0, width, height);
+
+        // Shoji paper lattice screens in the shadow backdrop
+        ctx.strokeStyle = 'rgba(68, 36, 18, 0.4)';
+        ctx.lineWidth = 1.5;
+        const shojiW = 55;
+        const shojiH = 75;
+        for (let sx = 0; sx < width * 0.75; sx += shojiW) {
+          ctx.beginPath();
+          ctx.moveTo(sx, 0);
+          ctx.lineTo(sx, height * 0.85);
+          ctx.stroke();
+        }
+        for (let sy = 30; sy < height * 0.85; sy += shojiH) {
+          ctx.beginPath();
+          ctx.moveTo(0, sy);
+          ctx.lineTo(width * 0.75, sy);
+          ctx.stroke();
+        }
+
+        // Heavy ceiling timber beams
+        ctx.fillStyle = '#0f0703';
+        ctx.fillRect(0, 0, width, 32);
+        ctx.fillStyle = '#1c0c05';
+        ctx.fillRect(0, 28, width, 5);
+
+        // Tatami floor base line
+        const floorY = height * 0.86;
+        ctx.fillStyle = '#0d0703';
+        ctx.fillRect(0, floorY, width, height - floorY);
+        ctx.strokeStyle = 'rgba(180, 83, 9, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, floorY);
+        ctx.lineTo(width, floorY);
+        ctx.stroke();
+
+        // 2. Hanging Paper Lantern with warm golden glow
+        const lanternX = width * 0.16;
+        const lanternRopeL = 40;
+        const lanternSway = Math.sin(t * 1.8) * 0.08;
+        const lanternCenterY = 32 + lanternRopeL + 35;
+
+        ctx.strokeStyle = '#29180c';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(lanternX, 32);
+        ctx.lineTo(lanternX + Math.sin(lanternSway) * 5, 32 + lanternRopeL);
+        ctx.stroke();
+
+        const lanternPulse = 1.0 + sBass * 0.4;
+        const lanternGlow = ctx.createRadialGradient(
+          lanternX, lanternCenterY, 15,
+          lanternX, lanternCenterY, 260 * lanternPulse
+        );
+        lanternGlow.addColorStop(0, 'rgba(245, 158, 11, 0.45)');
+        lanternGlow.addColorStop(0.4, 'rgba(217, 119, 6, 0.18)');
+        lanternGlow.addColorStop(1, 'transparent');
+        ctx.fillStyle = lanternGlow;
+        ctx.beginPath();
+        ctx.arc(lanternX, lanternCenterY, 260 * lanternPulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.translate(lanternX, lanternCenterY);
+        ctx.rotate(lanternSway);
+
+        const lGrad = ctx.createLinearGradient(-22, 0, 22, 0);
+        lGrad.addColorStop(0, '#d97706');
+        lGrad.addColorStop(0.5, '#fef3c7');
+        lGrad.addColorStop(1, '#b45309');
+        ctx.fillStyle = lGrad;
+        ctx.beginPath();
+        ctx.roundRect(-20, -32, 40, 64, 10);
+        ctx.fill();
+
+        ctx.fillStyle = '#1c0c05';
+        ctx.fillRect(-22, -36, 44, 7);
+        ctx.fillRect(-22, 29, 44, 7);
+
+        ctx.fillStyle = 'rgba(69, 26, 3, 0.6)';
+        ctx.font = 'bold 16px serif';
+        ctx.fillText('忍', -8, 6);
+
+        ctx.restore();
+
+        // 3. Heavy Timber Post / Wooden Beam on Right
+        const beamX = width * 0.82;
+        const beamW = width * 0.12;
+        const beamGrad = ctx.createLinearGradient(beamX, 0, beamX + beamW, 0);
+        beamGrad.addColorStop(0, '#120803');
+        beamGrad.addColorStop(0.2, '#2e1408');
+        beamGrad.addColorStop(0.8, '#1e0c05');
+        beamGrad.addColorStop(1, '#0a0402');
+        ctx.fillStyle = beamGrad;
+        ctx.fillRect(beamX, 0, beamW, height);
+
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.12)';
+        ctx.lineWidth = 1;
+        for (let gx = beamX + 6; gx < beamX + beamW; gx += 8) {
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, height);
+          ctx.stroke();
+        }
+
+        const postShadow = ctx.createLinearGradient(beamX - 40, 0, beamX, 0);
+        postShadow.addColorStop(0, 'transparent');
+        postShadow.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+        ctx.fillStyle = postShadow;
+        ctx.fillRect(beamX - 40, 0, 40, height);
+
+        // 4. Shuriken Throw Simulation (bass increases speed and spark count)
+        const now = currentTime;
+        const throwInterval = isBeat || rawBass > 0.6 ? 120 : 420;
+        if (now - storm.lastThrowTime > throwInterval) {
+          storm.lastThrowTime = now;
+          const throwY = Math.random() * (floorY - 120) + 70;
+          const throwSpeed = 16 + sBass * 22;
+          const shurikenSize = Math.random() * 8 + 22;
+
+          storm.shurikens.push({
+            x: -40,
+            y: throwY,
+            vx: throwSpeed,
+            vy: (Math.random() - 0.5) * 2.5,
+            rot: Math.random() * Math.PI * 2,
+            rotSpeed: 0.55 + sBass * 0.55,
+            size: shurikenSize,
+            stuck: false,
+            stickTime: 0,
+            stickX: beamX + Math.random() * 12 + 4,
+            stickY: throwY,
+            targetX: beamX + Math.random() * 8 + 4,
+            trail: [],
+          });
+        }
+
+        // Helper to draw metallic 4-point shuriken
+        const drawMetallicShuriken = (sx: number, sy: number, size: number, rotAngle: number, alpha: number) => {
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(rotAngle);
+          ctx.globalAlpha = alpha;
+
+          ctx.beginPath();
+          for (let p = 0; p < 4; p++) {
+            const angle = (p * Math.PI) / 2;
+            const tipX = Math.cos(angle) * size;
+            const tipY = Math.sin(angle) * size;
+            const indentAngle = angle + Math.PI / 4;
+            const indentR = size * 0.32;
+            const inX = Math.cos(indentAngle) * indentR;
+            const inY = Math.sin(indentAngle) * indentR;
+
+            if (p === 0) ctx.moveTo(tipX, tipY);
+            else ctx.lineTo(tipX, tipY);
+            ctx.quadraticCurveTo(
+              Math.cos(angle + 0.3) * size * 0.45,
+              Math.sin(angle + 0.3) * size * 0.45,
+              inX, inY
+            );
+          }
+          ctx.closePath();
+
+          const metalGrad = ctx.createLinearGradient(-size, -size, size, size);
+          metalGrad.addColorStop(0, '#f8fafc');
+          metalGrad.addColorStop(0.35, '#94a3b8');
+          metalGrad.addColorStop(0.7, '#334155');
+          metalGrad.addColorStop(1, '#0f172a');
+          ctx.fillStyle = metalGrad;
+          ctx.fill();
+
+          ctx.fillStyle = '#0a0502';
+          ctx.beginPath();
+          ctx.arc(0, 0, size * 0.22, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1;
+          for (let p = 0; p < 4; p++) {
+            const angle = (p * Math.PI) / 2;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.cos(angle) * size, Math.sin(angle) * size);
+            ctx.stroke();
+          }
+
+          // Treble light glints on blade tips
+          if (sHigh > 0.3) {
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 8;
+            for (let p = 0; p < 4; p++) {
+              const angle = (p * Math.PI) / 2;
+              const bx = Math.cos(angle) * size;
+              const by = Math.sin(angle) * size;
+              ctx.beginPath();
+              ctx.arc(bx, by, 1.8 * (1 + sHigh * 0.8), 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+          }
+
+          ctx.restore();
+        };
+
+        // Render shuriken
+        for (let i = storm.shurikens.length - 1; i >= 0; i--) {
+          const shk = storm.shurikens[i];
+
+          if (!shk.stuck) {
+            shk.x += shk.vx;
+            shk.y += shk.vy;
+            shk.rot += shk.rotSpeed;
+
+            shk.trail.unshift({ x: shk.x, y: shk.y, rot: shk.rot, alpha: 0.35 });
+            if (shk.trail.length > 3) shk.trail.pop();
+
+            for (let tIdx = 0; tIdx < shk.trail.length; tIdx++) {
+              const tr = shk.trail[tIdx];
+              drawMetallicShuriken(tr.x, tr.y, shk.size, tr.rot, tr.alpha * 0.4);
+            }
+
+            drawMetallicShuriken(shk.x, shk.y, shk.size, shk.rot, 1.0);
+
+            if (shk.x >= shk.targetX) {
+              shk.stuck = true;
+              shk.stickX = shk.targetX;
+              shk.stickY = shk.y;
+              shk.stickTime = 0;
+
+              const sparkCount = Math.floor(14 + sBass * 28);
+              for (let sp = 0; sp < sparkCount; sp++) {
+                const spAngle = Math.PI + (Math.random() - 0.5) * 1.6;
+                const spSpeed = Math.random() * 7 + 4;
+                storm.sparks.push({
+                  x: shk.stickX,
+                  y: shk.stickY,
+                  vx: Math.cos(spAngle) * spSpeed,
+                  vy: Math.sin(spAngle) * spSpeed - 1.5,
+                  life: 0,
+                  maxLife: Math.random() * 24 + 18,
+                  size: Math.random() * 2.2 + 1.2,
+                  color: Math.random() > 0.4 ? '#f59e0b' : '#fef08a',
+                });
+              }
+            }
+          } else {
+            shk.stickTime += 0.04;
+            const wobble = Math.sin(shk.stickTime * 35) * Math.exp(-shk.stickTime * 3) * 0.15;
+            drawMetallicShuriken(shk.stickX, shk.stickY, shk.size, shk.rot + wobble, Math.max(0, 1 - shk.stickTime * 0.08));
+
+            if (shk.stickTime > 12) {
+              storm.shurikens.splice(i, 1);
+            }
+          }
+        }
+
+        // Render sparks
+        for (let sIdx = storm.sparks.length - 1; sIdx >= 0; sIdx--) {
+          const spk = storm.sparks[sIdx];
+          spk.life++;
+          spk.x += spk.vx;
+          spk.y += spk.vy;
+          spk.vy += 0.28;
+          spk.vx *= 0.96;
+
+          const sparkAlpha = Math.max(0, 1 - spk.life / spk.maxLife);
+          if (sparkAlpha <= 0) {
+            storm.sparks.splice(sIdx, 1);
+            continue;
+          }
+
+          ctx.fillStyle = spk.color;
+          ctx.globalAlpha = sparkAlpha;
+          ctx.beginPath();
+          ctx.arc(spk.x, spk.y, spk.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+      }
+
+      // =======================================================================
+      // 13. SMOKE VANISH 💨 (Dark bamboo forest, fireflies, smoke bomb burst & ninja vanish)
+      // =======================================================================
+      else if (resolvedScene === 'smoke_vanish') {
+        const forest = smokeVanishRef.current;
+
+        if (forest.ninjaX === 0) {
+          forest.ninjaX = width * 0.45;
+          forest.ninjaY = height * 0.68;
+        }
+
+        if (forest.fireflies.length === 0) {
+          const flyCount = performanceMode === 'battery' ? 16 : 30;
+          forest.fireflies = Array.from({ length: flyCount }, () => ({
+            x: Math.random() * width,
+            y: Math.random() * height * 0.85,
+            baseX: Math.random() * width,
+            baseY: Math.random() * height * 0.85,
+            phase: Math.random() * Math.PI * 2,
+            speed: Math.random() * 0.8 + 0.5,
+            size: Math.random() * 2.2 + 1.4,
+            color: Math.random() > 0.35 ? '#a3e635' : '#facc15',
+          }));
+        }
+
+        // 1. Dark Misty Bamboo Forest Atmosphere
+        const forestBg = ctx.createLinearGradient(0, 0, 0, height);
+        forestBg.addColorStop(0, '#010503');
+        forestBg.addColorStop(0.5, '#04130a');
+        forestBg.addColorStop(0.85, '#071f11');
+        forestBg.addColorStop(1, '#020904');
+        ctx.fillStyle = forestBg;
+        ctx.fillRect(0, 0, width, height);
+
+        // Distant background bamboo stalks
+        ctx.fillStyle = 'rgba(6, 44, 23, 0.45)';
+        for (let bx = 15; bx < width; bx += 48) {
+          const bW = 6;
+          ctx.fillRect(bx, 0, bW, height);
+          for (let by = 30; by < height; by += 85) {
+            ctx.fillRect(bx - 1.5, by, bW + 3, 2.5);
+          }
+        }
+
+        // Midground bamboo stalks
+        ctx.fillStyle = '#062816';
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.18)';
+        ctx.lineWidth = 1;
+        const midStalks = [width * 0.12, width * 0.28, width * 0.58, width * 0.76, width * 0.92];
+        for (let ms = 0; ms < midStalks.length; ms++) {
+          const mx = midStalks[ms];
+          const mW = 16;
+          ctx.fillRect(mx, 0, mW, height);
+          ctx.strokeRect(mx, 0, mW, height);
+
+          ctx.fillStyle = '#0f4627';
+          for (let my = 50; my < height; my += 110) {
+            ctx.fillRect(mx - 2, my, mW + 4, 4);
+          }
+          ctx.fillStyle = '#062816';
+        }
+
+        // 2. Bioluminescent Fireflies (flare with treble)
+        for (let i = 0; i < forest.fireflies.length; i++) {
+          const ff = forest.fireflies[i];
+          ff.x = ff.baseX + Math.sin(t * ff.speed + ff.phase) * 35;
+          ff.y = ff.baseY + Math.cos(t * ff.speed * 0.8 + ff.phase) * 25;
+
+          const flyGlowR = ff.size * (3.5 + sHigh * 5.0);
+          const flyAlpha = (Math.sin(t * 3 + ff.phase) * 0.35 + 0.65) * (0.6 + sHigh * 0.4);
+
+          const glowGrad = ctx.createRadialGradient(ff.x, ff.y, 0, ff.x, ff.y, flyGlowR * 2.5);
+          glowGrad.addColorStop(0, ff.color);
+          glowGrad.addColorStop(0.5, 'rgba(163, 230, 53, 0.25)');
+          glowGrad.addColorStop(1, 'transparent');
+          ctx.fillStyle = glowGrad;
+          ctx.globalAlpha = flyAlpha;
+          ctx.beginPath();
+          ctx.arc(ff.x, ff.y, flyGlowR * 2.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(ff.x, ff.y, ff.size * 0.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+
+        // 3. Smoke Bomb Detonation & Vanish on Bass Hit
+        const now = currentTime;
+        const bombCooldown = 1800;
+        if ((isBeat || rawBass > 0.64) && now - forest.lastTeleportTime > bombCooldown) {
+          forest.lastTeleportTime = now;
+          forest.ninjaTargetAlpha = 0;
+
+          const burstCount = 32;
+          for (let p = 0; p < burstCount; p++) {
+            const pAngle = Math.random() * Math.PI * 2;
+            const pSpeed = Math.random() * 8.5 + 2.5;
+            forest.puffs.push({
+              x: forest.ninjaX + (Math.random() - 0.5) * 20,
+              y: forest.ninjaY - 30 + (Math.random() - 0.5) * 30,
+              vx: Math.cos(pAngle) * pSpeed,
+              vy: Math.sin(pAngle) * pSpeed - 1.2,
+              radius: Math.random() * 16 + 14,
+              maxRadius: Math.random() * 55 + 45,
+              alpha: 0.85,
+              rot: Math.random() * Math.PI * 2,
+              rotSpeed: (Math.random() - 0.5) * 0.06,
+              color: Math.random() > 0.4 ? 'rgba(148, 163, 184,' : 'rgba(71, 85, 105,',
+            });
+          }
+
+          setTimeout(() => {
+            const poses: ('ground' | 'branch' | 'crouch')[] = ['ground', 'branch', 'crouch'];
+            forest.currentPose = poses[Math.floor(Math.random() * poses.length)];
+            const availableX = [width * 0.22, width * 0.38, width * 0.65, width * 0.78];
+            forest.ninjaX = availableX[Math.floor(Math.random() * availableX.length)];
+            forest.ninjaY = forest.currentPose === 'branch' ? height * 0.48 : height * 0.72;
+            forest.ninjaTargetAlpha = 0.95;
+          }, 350);
+        }
+
+        // Ambient gentle drifting smoke continuous puff generation
+        if (Math.random() > 0.7) {
+          forest.puffs.push({
+            x: Math.random() * width,
+            y: height * 0.78 + Math.random() * 40,
+            vx: (Math.random() - 0.5) * 0.8,
+            vy: -(Math.random() * 0.9 + 0.4),
+            radius: Math.random() * 22 + 16,
+            maxRadius: Math.random() * 70 + 50,
+            alpha: 0.32,
+            rot: Math.random() * Math.PI * 2,
+            rotSpeed: (Math.random() - 0.5) * 0.02,
+            color: 'rgba(100, 116, 139,',
+          });
+        }
+
+        // Smooth ninja opacity transition
+        forest.ninjaAlpha += (forest.ninjaTargetAlpha - forest.ninjaAlpha) * 0.08;
+
+        // 4. Render Ninja Silhouette
+        if (forest.ninjaAlpha > 0.02) {
+          ctx.save();
+          ctx.translate(forest.ninjaX, forest.ninjaY);
+          ctx.globalAlpha = forest.ninjaAlpha;
+
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.beginPath();
+          ctx.ellipse(0, 8, 26, 7, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#020503';
+          ctx.strokeStyle = 'rgba(74, 222, 128, 0.4)';
+          ctx.lineWidth = 1;
+
+          if (forest.currentPose === 'crouch') {
+            ctx.beginPath();
+            ctx.arc(0, -38, 9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(-10, -28, 20, 18);
+            ctx.beginPath();
+            ctx.moveTo(-10, -12);
+            ctx.lineTo(-24, 4);
+            ctx.lineTo(-8, 6);
+            ctx.lineTo(10, -12);
+            ctx.lineTo(24, 4);
+            ctx.lineTo(8, 6);
+            ctx.closePath();
+            ctx.fill();
+          } else if (forest.currentPose === 'branch') {
+            ctx.fillStyle = '#062816';
+            ctx.fillRect(-35, 4, 70, 7);
+            ctx.fillStyle = '#020503';
+
+            ctx.beginPath();
+            ctx.arc(0, -48, 9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(-8, -38, 16, 24);
+            ctx.beginPath();
+            ctx.moveTo(-8, -14);
+            ctx.lineTo(-14, 4);
+            ctx.lineTo(8, -14);
+            ctx.lineTo(14, 4);
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            ctx.beginPath();
+            ctx.arc(0, -62, 10, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#bbf7d0';
+            ctx.fillRect(2, -64, 5, 2);
+            ctx.fillStyle = '#020503';
+
+            const scarfWobble = Math.sin(t * 5) * 6;
+            ctx.beginPath();
+            ctx.moveTo(-8, -58);
+            ctx.quadraticCurveTo(-18 + scarfWobble, -54, -28 + scarfWobble, -44);
+            ctx.lineTo(-24 + scarfWobble, -40);
+            ctx.quadraticCurveTo(-15 + scarfWobble, -52, -8, -54);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(-11, -50);
+            ctx.lineTo(11, -50);
+            ctx.lineTo(9, -16);
+            ctx.lineTo(-9, -16);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillRect(-9, -16, 7, 24);
+            ctx.fillRect(2, -16, 7, 24);
+
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(-16, -68);
+            ctx.lineTo(12, -22);
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        }
+
+        // 5. Volumetric Smoke Clouds Rendering & Billowing Simulation
+        for (let i = forest.puffs.length - 1; i >= 0; i--) {
+          const puff = forest.puffs[i];
+          puff.x += puff.vx;
+          puff.y += puff.vy;
+          puff.radius += 0.8;
+          puff.rot += puff.rotSpeed;
+          puff.alpha -= 0.012;
+
+          if (puff.alpha <= 0 || puff.radius >= puff.maxRadius) {
+            forest.puffs.splice(i, 1);
+            continue;
+          }
+
+          const smokeGrad = ctx.createRadialGradient(
+            puff.x, puff.y, puff.radius * 0.1,
+            puff.x, puff.y, puff.radius
+          );
+          smokeGrad.addColorStop(0, `${puff.color} ${puff.alpha})`);
+          smokeGrad.addColorStop(0.5, `${puff.color} ${puff.alpha * 0.5})`);
+          smokeGrad.addColorStop(1, `${puff.color} 0)`);
+
+          ctx.fillStyle = smokeGrad;
+          ctx.beginPath();
+          ctx.arc(puff.x, puff.y, puff.radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 6. Foreground framing bamboo stalks and bamboo leaves
+        ctx.fillStyle = '#031209';
+        ctx.fillRect(-10, 0, 28, height);
+        ctx.fillRect(width - 18, 0, 28, height);
+
+        ctx.fillStyle = '#082f18';
+        const leafClusters = [
+          { x: 30, y: 50, angle: 0.4 },
+          { x: 45, y: 80, angle: 0.6 },
+          { x: width - 35, y: 60, angle: -0.5 },
+          { x: width - 50, y: 95, angle: -0.7 },
+        ];
+        for (let lc = 0; lc < leafClusters.length; lc++) {
+          const lf = leafClusters[lc];
+          const sway = Math.sin(t * 2 + lc) * 0.08;
+          ctx.save();
+          ctx.translate(lf.x, lf.y);
+          ctx.rotate(lf.angle + sway);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 24, 6, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       }
 
       ctx.restore();

@@ -596,41 +596,14 @@ export const SupabaseService = {
       throw new Error('Upload failed: Could not retrieve public URL for uploaded audio file.');
     }
 
-    // 4. Upload Artwork if present (upsert: false)
-    if (metadata.artworkBlob && !metadata.artworkUrl?.startsWith('data:')) {
-      try {
-        const artworkPath = `${userId}/covers/${uniqueId}.jpg`;
-        const { error: artError } = await client.storage
-          .from(BUCKET_ARTWORK)
-          .upload(artworkPath, metadata.artworkBlob, {
-            cacheControl: '3600',
-            upsert: false,
-            contentType: 'image/jpeg',
-          });
-
-        if (!artError) {
-          const { data: artPublicUrl } = client.storage
-            .from(BUCKET_ARTWORK)
-            .getPublicUrl(artworkPath);
-          coverUrl = artPublicUrl?.publicUrl || '';
-        } else {
-          logSupabaseError('uploadMusicFile.artwork', {
-            errorMessage: artError.message,
-            bucket: BUCKET_ARTWORK,
-            fileName: file.name,
-            uploadPath: artworkPath,
-            raw: artError,
-          });
-        }
-      } catch (err) {
-        console.warn('Artwork upload skipped:', err);
-      }
-    }
+    // 4. Music only: cover photos / artwork are NOT uploaded to Supabase Storage.
+    // Local artwork URL/data is preserved in memory for local playback UI, but no storage upload is made.
+    coverUrl = metadata.artworkUrl || '';
 
     if (onProgress) onProgress(85);
 
     // 5. Insert metadata row into Supabase database table
-    // Accommodates both column naming conventions (storage_path & file_path, public_url & audio_url, cover_url & artwork_url, etc.)
+    // Audio file only: no cover image binary or artwork bucket storage
     const songPayload: Record<string, unknown> = {
       title: metadata.title.trim() || file.name.replace(/\.[^/.]+$/, ''),
       artist: metadata.artist.trim() || 'Unknown Artist',
@@ -644,8 +617,6 @@ export const SupabaseService = {
       file_type: mimeType,
       audio_url: audioUrl,
       public_url: audioUrl,
-      cover_url: coverUrl,
-      artwork_url: coverUrl,
       file_hash: metadata.fileHash || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1009,13 +980,9 @@ create policy "Allow public delete on songs"
   on public.songs for delete
   using (true);
 
--- 5. Storage Buckets (creates dedicated public buckets with no bucket-level size limits)
+-- 5. Storage Bucket for Music (creates dedicated public bucket with no bucket-level size limits)
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('music', 'music', true, null)
-on conflict (id) do update set public = true, file_size_limit = null;
-
-insert into storage.buckets (id, name, public, file_size_limit)
-values ('artwork', 'artwork', true, null)
 on conflict (id) do update set public = true, file_size_limit = null;
 
 -- 6. Storage Access Policies for 'music' bucket (explicitly granted TO public)
@@ -1043,32 +1010,6 @@ create policy "Public Delete music"
   on storage.objects for delete
   to public
   using (bucket_id = 'music');
-
--- 7. Storage Access Policies for 'artwork' bucket
-drop policy if exists "Public Access artwork" on storage.objects;
-create policy "Public Access artwork"
-  on storage.objects for select
-  to public
-  using (bucket_id = 'artwork');
-
-drop policy if exists "Public Upload artwork" on storage.objects;
-create policy "Public Upload artwork"
-  on storage.objects for insert
-  to public
-  with check (bucket_id = 'artwork');
-
-drop policy if exists "Public Update artwork" on storage.objects;
-create policy "Public Update artwork"
-  on storage.objects for update
-  to public
-  using (bucket_id = 'artwork')
-  with check (bucket_id = 'artwork');
-
-drop policy if exists "Public Delete artwork" on storage.objects;
-create policy "Public Delete artwork"
-  on storage.objects for delete
-  to public
-  using (bucket_id = 'artwork');
 `;
 
 /**

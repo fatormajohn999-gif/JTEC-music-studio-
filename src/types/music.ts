@@ -83,6 +83,9 @@ export type CinematicScene =
   | 'deep_ocean'
   | 'music_tunnel'
   | 'minimal_pro'
+  | 'shadow_strike'
+  | 'shuriken_storm'
+  | 'smoke_vanish'
   // Legacy aliases
   | 'aurora' 
   | 'neon_city' 

@@ -71,17 +71,11 @@ create policy "Allow public delete on songs"
   on public.songs for delete
   using (true);
 
--- 5. Storage Buckets (creates dedicated public buckets with no bucket-level size limits)
+-- 5. Storage Bucket for Music (creates dedicated public bucket with no bucket-level size limits)
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('music', 'music', true, null)
 on conflict (id) do update set public = true, file_size_limit = null;
 
-insert into storage.buckets (id, name, public, file_size_limit)
-values ('artwork', 'artwork', true, null)
-on conflict (id) do update set public = true, file_size_limit = null;
-
-
--- 6. Storage Access Policies for 'music' bucket
 -- 6. Storage Access Policies for 'music' bucket (explicitly granted to public)
 drop policy if exists "Public Access music" on storage.objects;
 create policy "Public Access music"
@@ -107,30 +101,4 @@ create policy "Public Delete music"
   on storage.objects for delete
   to public
   using (bucket_id = 'music');
-
--- 7. Storage Access Policies for 'artwork' bucket
-drop policy if exists "Public Access artwork" on storage.objects;
-create policy "Public Access artwork"
-  on storage.objects for select
-  to public
-  using (bucket_id = 'artwork');
-
-drop policy if exists "Public Upload artwork" on storage.objects;
-create policy "Public Upload artwork"
-  on storage.objects for insert
-  to public
-  with check (bucket_id = 'artwork');
-
-drop policy if exists "Public Update artwork" on storage.objects;
-create policy "Public Update artwork"
-  on storage.objects for update
-  to public
-  using (bucket_id = 'artwork')
-  with check (bucket_id = 'artwork');
-
-drop policy if exists "Public Delete artwork" on storage.objects;
-create policy "Public Delete artwork"
-  on storage.objects for delete
-  to public
-  using (bucket_id = 'artwork');
 

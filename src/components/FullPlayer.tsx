@@ -32,6 +32,8 @@ interface FullPlayerProps {
   onOpenEffects: () => void;
   onOpenQueue: () => void;
   onOpenSongOptions: (song: Song) => void;
+  autoplayNext?: boolean;
+  onToggleAutoplayNext?: () => void;
 }
 
 const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
@@ -46,6 +48,9 @@ const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
   { id: 'deep_ocean', label: 'Deep Ocean', icon: '🌊' },
   { id: 'music_tunnel', label: 'Music Tunnel', icon: '🌀' },
   { id: 'minimal_pro', label: 'Minimal Pro', icon: '⚡' },
+  { id: 'shadow_strike', label: 'Shadow Strike', icon: '🗡️' },
+  { id: 'shuriken_storm', label: 'Shuriken Storm', icon: '⭐' },
+  { id: 'smoke_vanish', label: 'Smoke Vanish', icon: '💨' },
 ];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
@@ -72,6 +77,8 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onOpenEffects,
   onOpenQueue,
   onOpenSongOptions,
+  autoplayNext = true,
+  onToggleAutoplayNext,
 }) => {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);
@@ -300,11 +307,11 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           </button>
         </div>
 
-        {/* Secondary Buttons: Effects & Queue */}
-        <div className="flex items-center justify-between pt-2 border-t border-white/5">
+        {/* Secondary Buttons: Effects, Auto Next & Queue */}
+        <div className="flex items-center justify-between pt-2 border-t border-white/5 gap-2">
           <button
             onClick={onOpenEffects}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
               isEffectsActive
                 ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200'
                 : 'bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white'
@@ -314,9 +321,24 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             <span>Slow + Reverb</span>
           </button>
 
+          {onToggleAutoplayNext && (
+            <button
+              onClick={onToggleAutoplayNext}
+              title={`Auto Next: ${autoplayNext ? 'ON (tracks advance automatically)' : 'OFF'}`}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95 ${
+                autoplayNext
+                  ? 'bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 shadow-sm shadow-cyan-500/20'
+                  : 'bg-slate-900/60 border border-white/10 text-slate-400 hover:text-white'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${autoplayNext ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span>Auto Next {autoplayNext ? 'ON' : 'OFF'}</span>
+            </button>
+          )}
+
           <button
             onClick={onOpenQueue}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
           >
             <ListMusic className="w-4 h-4 text-pink-400" />
             <span>Queue</span>

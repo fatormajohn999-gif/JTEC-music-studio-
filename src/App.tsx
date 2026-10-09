@@ -104,6 +104,8 @@ export default function App() {
   currentSongRef.current = currentSong;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const songsRef = useRef(songs);
+  songsRef.current = songs;
   const repeatModeRef = useRef(repeatMode);
   repeatModeRef.current = repeatMode;
   const isShuffleRef = useRef(isShuffle);
@@ -310,60 +312,77 @@ export default function App() {
     };
   }, [effects.playbackRate]);
 
-  // Handle Song Ended Flow
+  // Handle Song Ended Flow (TASK 2: Auto-Next)
   const handleSongEnded = useCallback(() => {
     const currentRepeat = repeatModeRef.current;
     const currentQueue = queueRef.current;
     const cur = currentSongRef.current;
-    const appSet = settingsRef.current;
+    const allSongs = songsRef.current;
 
-    if (!appSet.autoplayNext) {
-      setIsPlaying(false);
-      return;
-    }
-
-    if (currentRepeat === 'one') {
+    // 1. Single track repeat mode ('one')
+    if (currentRepeat === 'one' && cur) {
       audioEngine.seek(0);
-      audioEngine.play();
+      audioEngine.play().catch((err) => console.warn('Repeat one playback error:', err));
       return;
     }
 
-    if (!cur || currentQueue.length === 0) return;
-
-    const currentIndex = currentQueue.findIndex((s) => s.id === cur.id);
-    let nextIndex = currentIndex + 1;
-
-    if (isShuffleRef.current && currentQueue.length > 1) {
-      let rand = Math.floor(Math.random() * currentQueue.length);
-      while (rand === currentIndex) {
-        rand = Math.floor(Math.random() * currentQueue.length);
-      }
-      nextIndex = rand;
-    }
-
-    if (nextIndex < currentQueue.length) {
-      playSong(currentQueue[nextIndex]);
-    } else if (currentRepeat === 'all' && currentQueue.length > 0) {
-      playSong(currentQueue[0]);
-    } else {
+    // Determine active queue list (currentQueue if populated, fallback to library)
+    const activeQueue = currentQueue.length > 0 ? currentQueue : allSongs;
+    if (activeQueue.length === 0 || !cur) {
       setIsPlaying(false);
+      return;
     }
+
+    // 2. Shuffle mode with auto-next
+    if (isShuffleRef.current && activeQueue.length > 1) {
+      const curIndex = activeQueue.findIndex((s) => s.id === cur.id);
+      let rand = Math.floor(Math.random() * activeQueue.length);
+      while (rand === curIndex && activeQueue.length > 1) {
+        rand = Math.floor(Math.random() * activeQueue.length);
+      }
+      playSong(activeQueue[rand]);
+      return;
+    }
+
+    // 3. Play next song in the queue
+    const currentIndex = activeQueue.findIndex((s) => s.id === cur.id);
+    if (currentIndex !== -1 && currentIndex + 1 < activeQueue.length) {
+      playSong(activeQueue[currentIndex + 1]);
+      return;
+    }
+
+    // 4. Last song in queue: respect repeat setting!
+    // With repeat on ('all'), go back to the start. With repeat off ('off'), stop.
+    if (currentRepeat === 'all') {
+      playSong(activeQueue[0]);
+      return;
+    }
+
+    // Repeat is off: stop playback
+    setIsPlaying(false);
   }, []);
 
-  // Play a specific song
-  const playSong = async (song: Song) => {
+  // Play a specific song with optional context queue
+  const playSong = async (song: Song, contextQueue?: Song[]) => {
     try {
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
       extractPaletteFromImage(song.artworkUrl).then((pal) => setCurrentPalette(pal));
 
-      // If song not in queue, insert it
-      setQueue((prev) => {
-        if (!prev.some((s) => s.id === song.id)) {
-          return [song, ...prev];
-        }
-        return prev;
-      });
+      // Manage queue: sync with context if given, or ensure queue has songs for auto next
+      if (contextQueue && contextQueue.length > 0) {
+        setQueue(contextQueue);
+      } else {
+        setQueue((prev) => {
+          if (prev.length <= 1 && songsRef.current.length > 1) {
+            return songsRef.current;
+          }
+          if (!prev.some((s) => s.id === song.id)) {
+            return [song, ...prev];
+          }
+          return prev;
+        });
+      }
 
       // Fetch blob from IndexedDB (or stream from cloud audioUrl)
       let blob = await StorageService.getSongBlob(song.id);
@@ -441,24 +460,54 @@ export default function App() {
     }
   };
 
-  // Next Track
+  // Next Track (advances through queue or library seamlessly)
   const handleNextTrack = () => {
-    if (queue.length === 0) return;
-    const currentIndex = currentSong ? queue.findIndex((s) => s.id === currentSong.id) : -1;
-    let nextIndex = currentIndex + 1;
+    const cur = currentSong;
+    const q = queue;
+    const s = songs;
 
-    if (isShuffle && queue.length > 1) {
-      let rand = Math.floor(Math.random() * queue.length);
-      while (rand === currentIndex) {
-        rand = Math.floor(Math.random() * queue.length);
+    if (isShuffle) {
+      const pool = q.length > 1 ? q : (s.length > 1 ? s : q);
+      if (pool.length > 1) {
+        const curIdx = cur ? pool.findIndex((item) => item.id === cur.id) : -1;
+        let rand = Math.floor(Math.random() * pool.length);
+        while (rand === curIdx && pool.length > 1) {
+          rand = Math.floor(Math.random() * pool.length);
+        }
+        playSong(pool[rand]);
+        return;
       }
-      nextIndex = rand;
     }
 
-    if (nextIndex < queue.length) {
-      playSong(queue[nextIndex]);
-    } else if (repeatMode === 'all') {
-      playSong(queue[0]);
+    // 1. Next in queue
+    if (cur && q.length > 0) {
+      const qIdx = q.findIndex((item) => item.id === cur.id);
+      if (qIdx !== -1 && qIdx + 1 < q.length) {
+        playSong(q[qIdx + 1]);
+        return;
+      }
+    }
+
+    // 2. Next in library
+    if (cur && s.length > 0) {
+      const sIdx = s.findIndex((item) => item.id === cur.id);
+      if (sIdx !== -1 && sIdx + 1 < s.length) {
+        playSong(s[sIdx + 1]);
+        return;
+      } else if (s.length > 0) {
+        playSong(s[0]);
+        return;
+      }
+    }
+
+    // 3. Wrap around queue
+    if (q.length > 0) {
+      playSong(q[0]);
+      return;
+    }
+
+    if (s.length > 0) {
+      playSong(s[0]);
     }
   };
 
@@ -468,10 +517,32 @@ export default function App() {
       audioEngine.seek(0);
       return;
     }
-    if (queue.length === 0) return;
-    const currentIndex = currentSong ? queue.findIndex((s) => s.id === currentSong.id) : 0;
-    const prevIndex = currentIndex - 1 >= 0 ? currentIndex - 1 : queue.length - 1;
-    playSong(queue[prevIndex]);
+    const cur = currentSong;
+    const q = queue;
+    const s = songs;
+
+    if (cur && q.length > 0) {
+      const qIdx = q.findIndex((item) => item.id === cur.id);
+      if (qIdx > 0) {
+        playSong(q[qIdx - 1]);
+        return;
+      }
+    }
+
+    if (cur && s.length > 0) {
+      const sIdx = s.findIndex((item) => item.id === cur.id);
+      if (sIdx > 0) {
+        playSong(s[sIdx - 1]);
+        return;
+      } else if (s.length > 0) {
+        playSong(s[s.length - 1]);
+        return;
+      }
+    }
+
+    if (q.length > 0) {
+      playSong(q[q.length - 1]);
+    }
   };
 
   // Seek
@@ -888,7 +959,7 @@ export default function App() {
             recentlyPlayed={recentlyPlayedSongs}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={playSong}
+            onPlaySong={(song) => playSong(song, songs)}
             onOpenImport={() => setIsImportOpen(true)}
             onOpenPlaylists={() => setCurrentTab('playlists')}
             onSelectPlaylist={handlePlayPlaylist}
@@ -906,7 +977,7 @@ export default function App() {
             recentlyPlayed={recentlyPlayedSongs}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={playSong}
+            onPlaySong={(song) => playSong(song, songs)}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenImport={() => setIsImportOpen(true)}
@@ -964,7 +1035,7 @@ export default function App() {
             playlists={playlists}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={playSong}
+            onPlaySong={(song) => playSong(song, songs)}
             onSelectPlaylist={handlePlayPlaylist}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
@@ -1021,6 +1092,8 @@ export default function App() {
         onOpenEffects={() => setIsEffectsModalOpen(true)}
         onOpenQueue={() => setIsQueueOpen(true)}
         onOpenSongOptions={(song) => setOptionsMenuSong(song)}
+        autoplayNext={settings.autoplayNext}
+        onToggleAutoplayNext={() => handleUpdateSettings({ ...settings, autoplayNext: !settings.autoplayNext })}
       />
 
       {/* SLOW + REVERB AUDIO EFFECTS MODAL */}
@@ -1037,6 +1110,8 @@ export default function App() {
         onClose={() => setIsQueueOpen(false)}
         queue={queue}
         currentSong={currentSong}
+        autoplayNext={settings.autoplayNext}
+        onToggleAutoplayNext={() => handleUpdateSettings({ ...settings, autoplayNext: !settings.autoplayNext })}
         onSelectSong={(song) => playSong(song)}
         onRemoveFromQueue={handleRemoveFromQueue}
         onClearQueue={handleClearQueue}
