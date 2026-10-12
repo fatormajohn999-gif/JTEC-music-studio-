@@ -54,11 +54,13 @@ export interface CloudStorageStats {
 }
 
 export interface ArtworkPalette {
-  primary: string;    // dominant color e.g. '#00f0ff'
+  main: string;       // primary / dominant color e.g. '#00f0ff'
+  primary: string;    // dominant color e.g. '#00f0ff' (alias to main)
   secondary: string;  // supporting harmonic e.g. '#a855f7'
   accent: string;     // high-energy accent e.g. '#ec4899'
   glow: string;       // ambient rgba string
   darkBg: string;     // deep ambient background hex
+  hasCover?: boolean; // whether extracted from actual album artwork
 }
 
 export interface Playlist {
@@ -135,4 +137,14 @@ export interface AudioBands {
   volume: number;      // 0 to 1 (RMS energy)
   rawFrequency: Uint8Array;
   rawTimeDomain: Uint8Array;
+}
+
+export interface PlaybackSessionState {
+  songId: string;
+  position: number;
+  queueSongIds: string[];
+  isShuffle: boolean;
+  repeatMode: RepeatMode;
+  visualizerTheme: CinematicScene;
+  updatedAt: number;
 }

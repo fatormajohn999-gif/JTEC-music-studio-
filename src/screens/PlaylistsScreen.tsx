@@ -9,7 +9,7 @@ interface PlaylistsScreenProps {
   songs: Song[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, contextQueue?: Song[]) => void;
   onPlayPlaylist: (playlist: Playlist) => void;
   onOpenCreatePlaylist: () => void;
   onRenamePlaylist: (playlistId: string, newName: string) => void;
@@ -141,7 +141,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
                     </div>
 
                     <div
-                      onClick={() => onPlaySong(song)}
+                      onClick={() => onPlaySong(song, playlistSongs)}
                       className="relative w-11 h-11 rounded-xl overflow-hidden cursor-pointer shrink-0"
                     >
                       <img
@@ -155,7 +155,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
                     </div>
 
                     <div
-                      onClick={() => onPlaySong(song)}
+                      onClick={() => onPlaySong(song, playlistSongs)}
                       className="flex-1 min-w-0 cursor-pointer"
                     >
                       <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">

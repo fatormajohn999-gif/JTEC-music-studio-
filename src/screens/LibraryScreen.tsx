@@ -13,7 +13,7 @@ interface LibraryScreenProps {
   recentlyPlayed: Song[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, contextQueue?: Song[]) => void;
   onOpenSongOptions: (song: Song) => void;
   onToggleFavorite: (song: Song) => void;
   onOpenImport: () => void;
@@ -341,7 +341,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                 >
                   {/* Artwork */}
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, displayedSongs)}
                     className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0 bg-slate-950"
                   >
                     <img
@@ -356,7 +356,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
                   {/* Info */}
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, displayedSongs)}
                     className="flex-1 min-w-0 cursor-pointer"
                   >
                     <div className="flex items-center gap-2">

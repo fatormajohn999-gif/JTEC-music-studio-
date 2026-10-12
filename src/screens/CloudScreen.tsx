@@ -14,8 +14,8 @@ interface CloudScreenProps {
   playlists: Playlist[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
-  onPlayCloudSong: (cloudSong: CloudSong) => void;
+  onPlaySong: (song: Song, contextQueue?: Song[]) => void;
+  onPlayCloudSong: (cloudSong: CloudSong, contextQueue?: Song[]) => void;
   onDownloadSong: (cloudSong: CloudSong) => Promise<void>;
   onRemoveOfflineSong: (songId: string) => Promise<void>;
   onDeleteCloudSong: (cloudSong: CloudSong, deleteOfflineCopy?: boolean) => Promise<void>;
@@ -158,6 +158,31 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
     return list;
   }, [cloudSongs, activeTab, searchQuery, sortOption, offlineMap]);
+
+  // Map filtered tracks into Song queue items so top-to-bottom playback flows seamlessly
+  const cloudQueueSongs = useMemo(() => {
+    return filteredTracks.map((cs) => {
+      const match = getOfflineMatch(cs);
+      if (match) return match;
+      return {
+        id: `cloud_${cs.id}`,
+        title: cs.title,
+        artist: cs.artist,
+        album: cs.album,
+        duration: cs.duration,
+        genre: cs.genre,
+        artworkUrl: cs.cover_url,
+        format: (cs.file_name.split('.').pop() || 'mp3').toLowerCase(),
+        size: cs.file_size,
+        dateAdded: new Date(cs.created_at).getTime() || Date.now(),
+        hasStoredBlob: false,
+        cloudId: cs.id,
+        isCloud: true,
+        audioUrl: cs.audio_url,
+        fileHash: cs.file_hash,
+      } as Song;
+    });
+  }, [filteredTracks, offlineMap]);
 
   // Handle Download
   const handleDownload = async (cs: CloudSong) => {
@@ -565,9 +590,9 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                       <button
                         onClick={() => {
                           if (offlineMatch && offlineMatch.hasStoredBlob) {
-                            onPlaySong(offlineMatch);
+                            onPlaySong(offlineMatch, cloudQueueSongs);
                           } else {
-                            onPlayCloudSong(song);
+                            onPlayCloudSong(song, cloudQueueSongs);
                           }
                         }}
                         className={`absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center transition ${
@@ -625,9 +650,9 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     <button
                       onClick={() => {
                         if (offlineMatch && offlineMatch.hasStoredBlob) {
-                          onPlaySong(offlineMatch);
+                          onPlaySong(offlineMatch, cloudQueueSongs);
                         } else {
-                          onPlayCloudSong(song);
+                          onPlayCloudSong(song, cloudQueueSongs);
                         }
                       }}
                       title="Play track"

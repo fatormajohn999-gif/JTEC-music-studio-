@@ -7,6 +7,8 @@ interface QueueDrawerProps {
   onClose: () => void;
   queue: Song[];
   currentSong: Song | null;
+  autoplayNext?: boolean;
+  onToggleAutoplayNext?: () => void;
   onSelectSong: (song: Song, index: number) => void;
   onRemoveFromQueue: (index: number) => void;
   onClearQueue: () => void;
@@ -18,6 +20,8 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
   onClose,
   queue,
   currentSong,
+  autoplayNext,
+  onToggleAutoplayNext,
   onSelectSong,
   onRemoveFromQueue,
   onClearQueue,

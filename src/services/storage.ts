@@ -1,4 +1,4 @@
-import { Song, Playlist, AppSettings } from '../types/music';
+import { Song, Playlist, AppSettings, ArtworkPalette, PlaybackSessionState } from '../types/music';
 
 const DB_NAME = 'jtec_music_database';
 const DB_VERSION = 1;
@@ -192,6 +192,43 @@ export const StorageService = {
     });
   },
 
+  async updateSongCover(songId: string, artworkUrl: string, palette?: ArtworkPalette): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('songs', 'readwrite');
+      const store = tx.objectStore('songs');
+      const req = store.get(songId);
+      req.onsuccess = () => {
+        const song: Song = req.result;
+        if (song) {
+          song.artworkUrl = artworkUrl || undefined;
+          song.palette = palette || undefined;
+          store.put(song);
+        }
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  async updateSongPalette(songId: string, palette: ArtworkPalette): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('songs', 'readwrite');
+      const store = tx.objectStore('songs');
+      const req = store.get(songId);
+      req.onsuccess = () => {
+        const song: Song = req.result;
+        if (song) {
+          song.palette = palette;
+          store.put(song);
+        }
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+
   // PLAYLISTS
   async getAllPlaylists(): Promise<Playlist[]> {
     const db = await getDB();
@@ -294,6 +331,54 @@ export const StorageService = {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
+  },
+
+  // PLAYBACK SESSION PERSISTENCE (Remember where user stopped)
+  async savePlaybackSession(session: PlaybackSessionState): Promise<void> {
+    try {
+      // Also cache in localStorage for fast synchronous fallback / immediate reads
+      try {
+        localStorage.setItem('jtec_playback_session', JSON.stringify(session));
+      } catch {
+        // quota or disabled
+      }
+      const db = await getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('kv_store', 'readwrite');
+        const store = tx.objectStore('kv_store');
+        store.put(session, 'playback_session');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {
+      // ignore
+    }
+  },
+
+  async getPlaybackSession(): Promise<PlaybackSessionState | null> {
+    try {
+      const db = await getDB();
+      const sessionFromDb = await new Promise<PlaybackSessionState | null>((resolve) => {
+        const tx = db.transaction('kv_store', 'readonly');
+        const store = tx.objectStore('kv_store');
+        const req = store.get('playback_session');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+      if (sessionFromDb) return sessionFromDb;
+    } catch {
+      // fallback to localStorage
+    }
+
+    try {
+      const raw = localStorage.getItem('jtec_playback_session');
+      if (raw) {
+        return JSON.parse(raw) as PlaybackSessionState;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   },
 
   async requestPersistentStorage(): Promise<boolean> {

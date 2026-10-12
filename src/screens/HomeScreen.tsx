@@ -11,7 +11,7 @@ interface HomeScreenProps {
   recentlyPlayed: Song[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, contextQueue?: Song[]) => void;
   onOpenImport: () => void;
   onOpenPlaylists: () => void;
   onSelectPlaylist: (playlist: Playlist) => void;
@@ -135,7 +135,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               return (
                 <div
                   key={song.id}
-                  onClick={() => onPlaySong(song)}
+                  onClick={() => onPlaySong(song, recentlyPlayed)}
                   className="w-36 shrink-0 group cursor-pointer space-y-2 p-2.5 rounded-2xl bg-slate-900/50 border border-white/5 hover:border-cyan-500/30 transition"
                 >
                   <div className="relative aspect-square rounded-xl overflow-hidden bg-slate-950">
@@ -190,7 +190,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   }`}
                 >
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, favoriteSongs)}
                     className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0"
                   >
                     <img
@@ -204,7 +204,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </div>
 
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, favoriteSongs)}
                     className="flex-1 min-w-0 cursor-pointer"
                   >
                     <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">
@@ -276,7 +276,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   }`}
                 >
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, recentlyAdded)}
                     className="relative w-12 h-12 rounded-xl overflow-hidden cursor-pointer shrink-0"
                   >
                     <img
@@ -290,7 +290,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </div>
 
                   <div
-                    onClick={() => onPlaySong(song)}
+                    onClick={() => onPlaySong(song, recentlyAdded)}
                     className="flex-1 min-w-0 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5">

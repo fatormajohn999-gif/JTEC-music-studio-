@@ -4,7 +4,6 @@ import {
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass
 } from 'lucide-react';
 import { AppSettings, PerformanceMode, VisualizerMode } from '../types/music';
-import { VisualWorldsModal } from '../components/VisualWorldsModal';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -22,7 +21,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onOpenCloudSettings,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [isVisualWorldsModalOpen, setIsVisualWorldsModalOpen] = useState(false);
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 MB';
@@ -106,37 +104,28 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
       {/* VISUALIZER PREFERENCES */}
       <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Eye className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-              Audio Visualizer & Ninja Worlds
-            </h3>
-          </div>
-          <button
-            onClick={() => setIsVisualWorldsModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-500/30 text-xs font-bold transition shadow-sm shadow-cyan-500/10 active:scale-95"
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span>Visual Worlds 🥷</span>
-          </button>
+        <div className="flex items-center gap-2">
+          <Eye className="w-4 h-4 text-cyan-400" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+            Audio Visualizer Themes
+          </h3>
         </div>
         <p className="text-xs text-slate-400">
-          Render real-time frequency data synced to Web Audio API analyser. Dark Spectrum is the default studio visualizer. Ninja themes react to frequencies with chakra explosions, energy currents, and electric lightning.
+          Render real-time frequency data synced to Web Audio API analyser. Choose your visual theme:
         </p>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
           {[
-            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum (Default)', badge: 'Default' },
-            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Shadow Shinobi', badge: 'Ninja' },
-            { id: 'fire_shinobi' as VisualizerMode, label: '🔥 Flame Jutsu', badge: 'Ninja' },
-            { id: 'lightning_ninja' as VisualizerMode, label: '⚡ Storm Raikiri', badge: 'Ninja' },
-            { id: 'wind_ninja' as VisualizerMode, label: '🌪️ Gale Blade', badge: 'Ninja' },
-            { id: 'samurai' as VisualizerMode, label: '⚔️ Blood Moon Ronin', badge: 'Ninja' },
+            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
+            { id: 'shadow_strike' as VisualizerMode, label: '🗡️ Shadow Strike' },
+            { id: 'shuriken_storm' as VisualizerMode, label: '⭐ Shuriken Storm' },
+            { id: 'smoke_vanish' as VisualizerMode, label: '💨 Smoke Vanish' },
+            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
+            { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
             { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
-            { id: 'galaxy' as VisualizerMode, label: '🌌 Cosmic Galaxy' },
+            { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
+            { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
             { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
-            { id: 'fire_energy' as VisualizerMode, label: '🔥 Solar Inferno' },
             { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
             { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
             { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
@@ -304,13 +293,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         JTEC MUSIC v1.0.0 • Your Music • Your Vibe • Offline
       </div>
 
-      {/* Visual Worlds Selector Modal */}
-      <VisualWorldsModal
-        isOpen={isVisualWorldsModalOpen}
-        onClose={() => setIsVisualWorldsModalOpen(false)}
-        currentScene={settings.visualizerMode}
-        onSelectScene={handleVisualizerChange}
-      />
     </div>
   );
 };

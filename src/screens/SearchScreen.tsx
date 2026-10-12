@@ -7,7 +7,7 @@ interface SearchScreenProps {
   playlists: Playlist[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, contextQueue?: Song[]) => void;
   onSelectPlaylist: (playlist: Playlist) => void;
   onOpenSongOptions: (song: Song) => void;
   onToggleFavorite: (song: Song) => void;
@@ -157,7 +157,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                       }`}
                     >
                       <div
-                        onClick={() => onPlaySong(song)}
+                        onClick={() => onPlaySong(song, matchingSongs)}
                         className="relative w-11 h-11 rounded-xl overflow-hidden cursor-pointer shrink-0"
                       >
                         <img
@@ -171,7 +171,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                       </div>
 
                       <div
-                        onClick={() => onPlaySong(song)}
+                        onClick={() => onPlaySong(song, matchingSongs)}
                         className="flex-1 min-w-0 cursor-pointer"
                       >
                         <h5 className="text-xs font-bold text-white truncate group-hover:text-cyan-300">

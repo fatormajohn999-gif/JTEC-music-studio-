@@ -278,7 +278,7 @@ class AudioEngine {
    * Loads an audio track cleanly without destroying or recreating
    * the persistent MediaElementAudioSourceNode or AudioContext.
    */
-  public async loadAudio(blobOrUrl: Blob | string): Promise<void> {
+  public async loadAudio(blobOrUrl: Blob | string, initialPosition?: number): Promise<void> {
     this.init();
     this.setupWebAudioNodes();
     await this.resumeContext();
@@ -310,6 +310,16 @@ class AudioEngine {
     this.audioElement.load();
     // Ensure the current active effects are applied cleanly to the new audio source
     this.applyEffects(this.currentEffectsConfig);
+
+    if (typeof initialPosition === 'number' && initialPosition > 0) {
+      const applyPos = () => {
+        if (this.audioElement) {
+          this.audioElement.currentTime = initialPosition;
+          this.currentTime = initialPosition;
+        }
+      };
+      this.audioElement.addEventListener('loadedmetadata', applyPos, { once: true });
+    }
   }
 
   public async play(): Promise<void> {

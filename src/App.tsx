@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Song, Playlist, AudioEffectsConfig, VisualizerMode, PerformanceMode, RepeatMode, AppSettings, 
-  ArtworkPalette, CinematicScene, CloudSong 
+  ArtworkPalette, CinematicScene, CloudSong, PlaybackSessionState 
 } from './types/music';
 import { StorageService } from './services/storage';
 import { SupabaseService } from './services/supabase';
@@ -60,11 +60,13 @@ export default function App() {
 
   // Dynamic Cinematic Artwork Palette
   const [currentPalette, setCurrentPalette] = useState<ArtworkPalette>({
+    main: '#00f0ff',
     primary: '#00f0ff',
     secondary: '#a855f7',
     accent: '#ec4899',
     glow: 'rgba(0, 240, 255, 0.45)',
     darkBg: '#070b18',
+    hasCover: false,
   });
 
   // Audio Effects State
@@ -102,8 +104,11 @@ export default function App() {
   // References to keep callbacks fresh
   const currentSongRef = useRef(currentSong);
   currentSongRef.current = currentSong;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const originalQueueRef = useRef<Song[]>([]);
   const songsRef = useRef(songs);
   songsRef.current = songs;
   const repeatModeRef = useRef(repeatMode);
@@ -112,6 +117,8 @@ export default function App() {
   isShuffleRef.current = isShuffle;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
 
   // Synchronize cloud songs with local state & IndexedDB cache
   const syncCloudWithLocalSongs = async (cloudList: CloudSong[]) => {
@@ -250,9 +257,89 @@ export default function App() {
         setRecentlyPlayedIds(storedRecents);
         setQueue(storedSongs);
 
-        if (storedSongs.length > 0 && storedSettings.rememberLastSong) {
-          setCurrentSong(storedSongs[0]);
-          extractPaletteFromImage(storedSongs[0].artworkUrl).then(setCurrentPalette);
+        // Check saved playback session to restore exact song, position, queue, shuffle, repeat & theme
+        const savedSession = await StorageService.getPlaybackSession();
+        let targetSong: Song | null = null;
+        let restoredPosition = 0;
+
+        if (savedSession && savedSession.songId) {
+          const match = storedSongs.find((s) => s.id === savedSession.songId);
+          if (match) {
+            targetSong = match;
+            restoredPosition = Math.max(0, savedSession.position || 0);
+
+            // Restore queue if valid
+            if (savedSession.queueSongIds && savedSession.queueSongIds.length > 0) {
+              const restoredQueue = savedSession.queueSongIds
+                .map((id) => storedSongs.find((s) => s.id === id))
+                .filter((s): s is Song => Boolean(s));
+              if (restoredQueue.length > 0) {
+                setQueue(restoredQueue);
+              }
+            }
+
+            // Restore shuffle, repeat, and visualizer theme
+            if (typeof savedSession.isShuffle === 'boolean') {
+              setIsShuffle(savedSession.isShuffle);
+            }
+            if (savedSession.repeatMode) {
+              setRepeatMode(savedSession.repeatMode);
+            }
+            if (savedSession.visualizerTheme) {
+              setSettings((prev) => ({ ...prev, visualizerMode: savedSession.visualizerTheme }));
+            }
+          }
+        }
+
+        // Fallback to first song if no saved session or saved song no longer exists
+        if (!targetSong && storedSongs.length > 0 && storedSettings.rememberLastSong) {
+          targetSong = storedSongs[0];
+          restoredPosition = 0;
+        }
+
+        if (targetSong) {
+          setCurrentSong(targetSong);
+          setCurrentTime(restoredPosition);
+          MediaSessionManager.updateMetadata(targetSong);
+          MediaSessionManager.updatePositionState(restoredPosition, targetSong.duration || 0);
+          MediaSessionManager.updatePlaybackState(false);
+
+          // Prepare audio engine at exact second, PAUSED (Do NOT auto-play)
+          let blob = await StorageService.getSongBlob(targetSong.id);
+          if (!blob && targetSong.cloudId) {
+            blob = await StorageService.getSongBlob(`cloud_${targetSong.cloudId}`);
+            if (!blob) blob = await StorageService.getSongBlob(targetSong.cloudId);
+          }
+          if (blob) {
+            await audioEngine.loadAudio(blob, restoredPosition);
+          } else if (targetSong.audioUrl) {
+            try {
+              await audioEngine.loadAudio(targetSong.audioUrl, restoredPosition);
+            } catch {
+              // ignore
+            }
+          }
+
+          if (targetSong.artworkUrl) {
+            if (targetSong.palette) {
+              setCurrentPalette({ ...targetSong.palette, hasCover: true });
+            } else {
+              extractPaletteFromImage(targetSong.artworkUrl).then((pal) => {
+                setCurrentPalette(pal);
+                StorageService.updateSongPalette(targetSong!.id, pal);
+              });
+            }
+          } else {
+            setCurrentPalette({
+              main: '#00f0ff',
+              primary: '#00f0ff',
+              secondary: '#a855f7',
+              accent: '#ec4899',
+              glow: 'rgba(0, 240, 255, 0.45)',
+              darkBg: '#070b18',
+              hasCover: false,
+            });
+          }
         }
 
         StorageService.requestPersistentStorage();
@@ -312,6 +399,50 @@ export default function App() {
     };
   }, [effects.playbackRate]);
 
+  // Save current playback session (song, position in seconds, queue order, shuffle, repeat, theme)
+  const persistSessionNow = useCallback(() => {
+    const cur = currentSongRef.current;
+    if (!cur) return;
+    const session: PlaybackSessionState = {
+      songId: cur.id,
+      position: Math.round(currentTimeRef.current || 0),
+      queueSongIds: queueRef.current.map((s) => s.id),
+      isShuffle: isShuffleRef.current,
+      repeatMode: repeatModeRef.current,
+      visualizerTheme: settingsRef.current.visualizerMode,
+      updatedAt: Date.now(),
+    };
+    StorageService.savePlaybackSession(session);
+  }, []);
+
+  // Periodic session saving while playing (every 3 seconds), and immediately on pause / visibilitychange / beforeunload
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isPlaying) {
+      interval = setInterval(() => {
+        persistSessionNow();
+      }, 3000);
+    } else {
+      // Save on pause immediately
+      persistSessionNow();
+    }
+
+    const handleVisibilityOrUnload = () => {
+      persistSessionNow();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrUnload);
+    window.addEventListener('beforeunload', handleVisibilityOrUnload);
+    window.addEventListener('pagehide', handleVisibilityOrUnload);
+
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityOrUnload);
+      window.removeEventListener('beforeunload', handleVisibilityOrUnload);
+      window.removeEventListener('pagehide', handleVisibilityOrUnload);
+    };
+  }, [isPlaying, persistSessionNow]);
+
   // Handle Song Ended Flow (TASK 2: Auto-Next)
   const handleSongEnded = useCallback(() => {
     const currentRepeat = repeatModeRef.current;
@@ -323,6 +454,13 @@ export default function App() {
     if (currentRepeat === 'one' && cur) {
       audioEngine.seek(0);
       audioEngine.play().catch((err) => console.warn('Repeat one playback error:', err));
+      return;
+    }
+
+    // 2. Check if Auto Next is enabled in Settings
+    const isAutoNextEnabled = settingsRef.current.autoplayNext ?? true;
+    if (!isAutoNextEnabled) {
+      setIsPlaying(false);
       return;
     }
 
@@ -367,18 +505,55 @@ export default function App() {
     try {
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
-      extractPaletteFromImage(song.artworkUrl).then((pal) => setCurrentPalette(pal));
+
+      // Cover-based color extraction: check cache first, or extract once and save to IndexedDB
+      if (song.artworkUrl) {
+        if (song.palette) {
+          setCurrentPalette({ ...song.palette, hasCover: true });
+        } else {
+          extractPaletteFromImage(song.artworkUrl).then((pal) => {
+            setCurrentPalette(pal);
+            StorageService.updateSongPalette(song.id, pal);
+            setSongs((prev) => prev.map((s) => (s.id === song.id ? { ...s, palette: pal } : s)));
+          });
+        }
+      } else {
+        // No cover: visualizer effects use their own original default colors
+        setCurrentPalette({
+          main: '#00f0ff',
+          primary: '#00f0ff',
+          secondary: '#a855f7',
+          accent: '#ec4899',
+          glow: 'rgba(0, 240, 255, 0.45)',
+          darkBg: '#070b18',
+          hasCover: false,
+        });
+      }
 
       // Manage queue: sync with context if given, or ensure queue has songs for auto next
       if (contextQueue && contextQueue.length > 0) {
-        setQueue(contextQueue);
+        originalQueueRef.current = contextQueue;
+        if (isShuffleRef.current) {
+          // Keep current song first, shuffle the remainder
+          const others = contextQueue.filter((s) => s.id !== song.id);
+          for (let i = others.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [others[i], others[j]] = [others[j], others[i]];
+          }
+          setQueue([song, ...others]);
+        } else {
+          setQueue(contextQueue);
+        }
       } else {
         setQueue((prev) => {
           if (prev.length <= 1 && songsRef.current.length > 1) {
+            originalQueueRef.current = songsRef.current;
             return songsRef.current;
           }
           if (!prev.some((s) => s.id === song.id)) {
-            return [song, ...prev];
+            const nextQ = [song, ...prev];
+            originalQueueRef.current = nextQ;
+            return nextQ;
           }
           return prev;
         });
@@ -460,95 +635,110 @@ export default function App() {
     }
   };
 
-  // Next Track (advances through queue or library seamlessly)
+  // Next Track (advances strictly top-to-bottom through the active queue/list)
   const handleNextTrack = () => {
     const cur = currentSong;
-    const q = queue;
-    const s = songs;
+    const q = queue.length > 0 ? queue : songs;
+    if (q.length === 0) return;
 
-    if (isShuffle) {
-      const pool = q.length > 1 ? q : (s.length > 1 ? s : q);
-      if (pool.length > 1) {
-        const curIdx = cur ? pool.findIndex((item) => item.id === cur.id) : -1;
-        let rand = Math.floor(Math.random() * pool.length);
-        while (rand === curIdx && pool.length > 1) {
-          rand = Math.floor(Math.random() * pool.length);
-        }
-        playSong(pool[rand]);
-        return;
+    if (isShuffle && q.length > 1) {
+      const curIdx = cur ? q.findIndex((item) => item.id === cur.id) : -1;
+      let rand = Math.floor(Math.random() * q.length);
+      while (rand === curIdx && q.length > 1) {
+        rand = Math.floor(Math.random() * q.length);
       }
+      playSong(q[rand]);
+      return;
     }
 
-    // 1. Next in queue
-    if (cur && q.length > 0) {
-      const qIdx = q.findIndex((item) => item.id === cur.id);
-      if (qIdx !== -1 && qIdx + 1 < q.length) {
-        playSong(q[qIdx + 1]);
-        return;
-      }
-    }
-
-    // 2. Next in library
-    if (cur && s.length > 0) {
-      const sIdx = s.findIndex((item) => item.id === cur.id);
-      if (sIdx !== -1 && sIdx + 1 < s.length) {
-        playSong(s[sIdx + 1]);
-        return;
-      } else if (s.length > 0) {
-        playSong(s[0]);
-        return;
-      }
-    }
-
-    // 3. Wrap around queue
-    if (q.length > 0) {
+    if (!cur) {
       playSong(q[0]);
       return;
     }
 
-    if (s.length > 0) {
-      playSong(s[0]);
+    const curIdx = q.findIndex((item) => item.id === cur.id);
+    if (curIdx !== -1 && curIdx + 1 < q.length) {
+      // Next goes to the song below
+      playSong(q[curIdx + 1]);
+      return;
+    }
+
+    // At the last song, respect repeat: repeat ON goes back to first song, repeat OFF stops/rewinds
+    if (repeatMode === 'all') {
+      playSong(q[0]);
+    } else {
+      // Repeat off: stop playback or do not advance past the bottom
+      audioEngine.pause();
+      setIsPlaying(false);
     }
   };
 
-  // Previous Track
+  // Previous Track (goes to the song above in top-to-bottom order)
   const handlePreviousTrack = () => {
     if (currentTime > 3) {
       audioEngine.seek(0);
       return;
     }
+
     const cur = currentSong;
-    const q = queue;
-    const s = songs;
+    const q = queue.length > 0 ? queue : songs;
+    if (q.length === 0) return;
 
-    if (cur && q.length > 0) {
-      const qIdx = q.findIndex((item) => item.id === cur.id);
-      if (qIdx > 0) {
-        playSong(q[qIdx - 1]);
-        return;
-      }
+    if (!cur) {
+      playSong(q[0]);
+      return;
     }
 
-    if (cur && s.length > 0) {
-      const sIdx = s.findIndex((item) => item.id === cur.id);
-      if (sIdx > 0) {
-        playSong(s[sIdx - 1]);
-        return;
-      } else if (s.length > 0) {
-        playSong(s[s.length - 1]);
-        return;
-      }
+    const curIdx = q.findIndex((item) => item.id === cur.id);
+    if (curIdx > 0) {
+      // Previous goes to the song above
+      playSong(q[curIdx - 1]);
+      return;
     }
 
-    if (q.length > 0) {
+    // At the top song
+    if (repeatMode === 'all') {
       playSong(q[q.length - 1]);
+    } else {
+      audioEngine.seek(0);
     }
+  };
+
+  // Toggle Shuffle with top-to-bottom restoration from current song
+  const handleToggleShuffle = () => {
+    setIsShuffle((prevShuffle) => {
+      const nextShuffle = !prevShuffle;
+      if (nextShuffle) {
+        // Turning shuffle ON: create randomized order
+        const cur = currentSong;
+        const base = queue.length > 0 ? [...queue] : [...songs];
+        if (base.length > 1) {
+          const others = cur ? base.filter((s) => s.id !== cur.id) : base;
+          for (let i = others.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [others[i], others[j]] = [others[j], others[i]];
+          }
+          setQueue(cur ? [cur, ...others] : others);
+        }
+      } else {
+        // Turning shuffle OFF: go back to top-to-bottom from the current song
+        const base = originalQueueRef.current.length > 0
+          ? originalQueueRef.current
+          : songsRef.current;
+        if (base.length > 0) {
+          setQueue(base);
+        }
+      }
+      return nextShuffle;
+    });
   };
 
   // Seek
   const handleSeek = (seconds: number) => {
     audioEngine.seek(seconds);
     setCurrentTime(seconds);
+    currentTimeRef.current = seconds;
+    persistSessionNow();
   };
 
   // Register Media Session callbacks
@@ -597,6 +787,44 @@ export default function App() {
       await StorageService.savePlaylist(updatedPl);
       setPlaylists((prev) => prev.map((p) => (p.id === updatedPl.id ? updatedPl : p)));
     }
+  };
+
+  // Cover management
+  const handleUpdateSongCover = async (song: Song, artworkUrl: string) => {
+    let newPalette: ArtworkPalette | undefined = undefined;
+    if (artworkUrl) {
+      newPalette = await extractPaletteFromImage(artworkUrl);
+    }
+
+    await StorageService.updateSongCover(song.id, artworkUrl, newPalette);
+
+    setSongs((prev) =>
+      prev.map((s) => (s.id === song.id ? { ...s, artworkUrl: artworkUrl || undefined, palette: newPalette } : s))
+    );
+    setQueue((prev) =>
+      prev.map((s) => (s.id === song.id ? { ...s, artworkUrl: artworkUrl || undefined, palette: newPalette } : s))
+    );
+
+    if (currentSong?.id === song.id) {
+      setCurrentSong((prev) => prev ? { ...prev, artworkUrl: artworkUrl || undefined, palette: newPalette } : null);
+      if (newPalette) {
+        setCurrentPalette({ ...newPalette, hasCover: true });
+      } else {
+        setCurrentPalette({
+          main: '#00f0ff',
+          primary: '#00f0ff',
+          secondary: '#a855f7',
+          accent: '#ec4899',
+          glow: 'rgba(0, 240, 255, 0.45)',
+          darkBg: '#070b18',
+          hasCover: false,
+        });
+      }
+    }
+  };
+
+  const handleRemoveSongCover = async (song: Song) => {
+    await handleUpdateSongCover(song, '');
   };
 
   // Queue actions
@@ -1047,8 +1275,6 @@ export default function App() {
       <MiniPlayer
         currentSong={currentSong}
         isPlaying={isPlaying}
-        currentTime={currentTime}
-        duration={duration}
         effects={effects}
         onTogglePlay={handleTogglePlay}
         onNext={handleNextTrack}
@@ -1071,8 +1297,6 @@ export default function App() {
         onClose={() => setIsFullPlayerOpen(false)}
         currentSong={currentSong}
         isPlaying={isPlaying}
-        currentTime={currentTime}
-        duration={duration}
         effects={effects}
         visualizerMode={settings.visualizerMode}
         performanceMode={settings.performanceMode}
@@ -1082,18 +1306,24 @@ export default function App() {
         onTogglePlay={handleTogglePlay}
         onPrevious={handlePreviousTrack}
         onNext={handleNextTrack}
-        onSeek={handleSeek}
         onToggleFavorite={handleToggleFavorite}
-        onToggleShuffle={() => setIsShuffle((prev) => !prev)}
-        onCycleRepeat={() =>
-          setRepeatMode((prev) => (prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off'))
-        }
-        onSelectScene={(scene) => handleUpdateSettings({ ...settings, visualizerMode: scene })}
+        onToggleShuffle={handleToggleShuffle}
+        onCycleRepeat={() => {
+          setRepeatMode((prev) => {
+            const next = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';
+            repeatModeRef.current = next;
+            persistSessionNow();
+            return next;
+          });
+        }}
+        onSelectScene={(scene) => {
+          handleUpdateSettings({ ...settings, visualizerMode: scene });
+          settingsRef.current = { ...settings, visualizerMode: scene };
+          persistSessionNow();
+        }}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
         onOpenQueue={() => setIsQueueOpen(true)}
         onOpenSongOptions={(song) => setOptionsMenuSong(song)}
-        autoplayNext={settings.autoplayNext}
-        onToggleAutoplayNext={() => handleUpdateSettings({ ...settings, autoplayNext: !settings.autoplayNext })}
       />
 
       {/* SLOW + REVERB AUDIO EFFECTS MODAL */}
@@ -1165,6 +1395,8 @@ export default function App() {
         onViewDetails={(song) => setDetailsSong(song)}
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
         onUploadToCloud={handleUploadLocalSongToCloud}
+        onUpdateCover={handleUpdateSongCover}
+        onRemoveCover={handleRemoveSongCover}
       />
 
       {/* CLOUD UPLOAD MODAL */}

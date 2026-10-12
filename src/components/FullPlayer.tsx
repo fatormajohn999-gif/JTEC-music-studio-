@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   ChevronDown, Heart, Shuffle, Repeat, Repeat1, SkipBack, SkipForward, 
-  Play, Pause, Sliders, ListMusic, Sparkles, Wand2, Eye, Compass, MoreVertical 
+  Play, Pause, Sliders, ListMusic, Compass, MoreVertical 
 } from 'lucide-react';
 import { 
   Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette 
@@ -13,8 +13,8 @@ interface FullPlayerProps {
   onClose: () => void;
   currentSong: Song | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   effects: AudioEffectsConfig;
   visualizerMode: CinematicScene;
   performanceMode: PerformanceMode;
@@ -24,7 +24,7 @@ interface FullPlayerProps {
   onTogglePlay: () => void;
   onPrevious: () => void;
   onNext: () => void;
-  onSeek: (seconds: number) => void;
+  onSeek?: (seconds: number) => void;
   onToggleFavorite: (song: Song) => void;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
@@ -58,8 +58,6 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onClose,
   currentSong,
   isPlaying,
-  currentTime,
-  duration,
   effects,
   visualizerMode,
   performanceMode,
@@ -69,7 +67,6 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onTogglePlay,
   onPrevious,
   onNext,
-  onSeek,
   onToggleFavorite,
   onToggleShuffle,
   onCycleRepeat,
@@ -77,25 +74,11 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onOpenEffects,
   onOpenQueue,
   onOpenSongOptions,
-  autoplayNext = true,
-  onToggleAutoplayNext,
 }) => {
-  const [isSeeking, setIsSeeking] = useState(false);
-  const [seekValue, setSeekValue] = useState(0);
   const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('dark_spectrum');
   const [showSceneSelector, setShowSceneSelector] = useState(false);
 
   if (!isOpen || !currentSong) return null;
-
-  const activeTime = isSeeking ? seekValue : currentTime;
-  const remainingTime = Math.max(0, duration - activeTime);
-
-  const formatTime = (secs: number) => {
-    if (!isFinite(secs) || isNaN(secs)) return '0:00';
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
 
   const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
 
@@ -125,7 +108,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           <ChevronDown className="w-5 h-5" />
         </button>
 
-        {/* Scene Pill Selector */}
+        {/* Scene Dropdown Selector */}
         <div className="relative">
           <button
             onClick={() => setShowSceneSelector(!showSceneSelector)}
@@ -190,55 +173,11 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
         </div>
       </div>
 
-      {/* 3. CENTER: UNOBSTRUCTED CINEMATIC ANIMATION SPACE */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 py-2 min-h-0 pointer-events-none">
-        {/* DSP Effects Badge Pill */}
-        {isEffectsActive && (
-          <div className="pointer-events-auto flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md border border-purple-500/40 text-purple-300 text-xs font-semibold shadow-lg animate-in fade-in">
-            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span>{effects.presetName} ({effects.playbackRate.toFixed(2)}x)</span>
-          </div>
-        )}
-      </div>
+      {/* 3. CENTER: UNOBSTRUCTED CINEMATIC ANIMATION SPACE (Clean, purely visual effects) */}
+      <div className="relative z-10 flex-1 min-h-0 pointer-events-none" />
 
       {/* 4. BOTTOM PLAYBACK CONTROLS */}
       <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-4">
-        {/* Scrubber Progress Bar */}
-        <div className="space-y-1.5">
-          <div className="relative flex items-center">
-            <input
-              type="range"
-              min="0"
-              max={duration || 100}
-              step="0.5"
-              value={activeTime}
-              onChange={(e) => setSeekValue(parseFloat(e.target.value))}
-              onMouseDown={() => {
-                setIsSeeking(true);
-                setSeekValue(currentTime);
-              }}
-              onMouseUp={() => {
-                setIsSeeking(false);
-                onSeek(seekValue);
-              }}
-              onTouchStart={() => {
-                setIsSeeking(true);
-                setSeekValue(currentTime);
-              }}
-              onTouchEnd={() => {
-                setIsSeeking(false);
-                onSeek(seekValue);
-              }}
-              className="w-full cursor-pointer"
-            />
-          </div>
-
-          <div className="flex justify-between text-xs font-mono text-slate-400">
-            <span>{formatTime(activeTime)}</span>
-            <span>-{formatTime(remainingTime)}</span>
-          </div>
-        </div>
-
         {/* Main Controls Bar */}
         <div className="flex items-center justify-between pt-1">
           {/* Shuffle */}
@@ -307,11 +246,11 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           </button>
         </div>
 
-        {/* Secondary Buttons: Effects, Auto Next & Queue */}
-        <div className="flex items-center justify-between pt-2 border-t border-white/5 gap-2">
+        {/* Secondary Buttons: ONLY "Slow + Reverb" and "Queue" */}
+        <div className="flex items-center justify-between pt-2 border-t border-white/5 gap-3">
           <button
             onClick={onOpenEffects}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
+            className={`flex items-center justify-center gap-2 flex-1 py-2.5 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
               isEffectsActive
                 ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200'
                 : 'bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white'
@@ -321,24 +260,9 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             <span>Slow + Reverb</span>
           </button>
 
-          {onToggleAutoplayNext && (
-            <button
-              onClick={onToggleAutoplayNext}
-              title={`Auto Next: ${autoplayNext ? 'ON (tracks advance automatically)' : 'OFF'}`}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95 ${
-                autoplayNext
-                  ? 'bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 shadow-sm shadow-cyan-500/20'
-                  : 'bg-slate-900/60 border border-white/10 text-slate-400 hover:text-white'
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${autoplayNext ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
-              <span>Auto Next {autoplayNext ? 'ON' : 'OFF'}</span>
-            </button>
-          )}
-
           <button
             onClick={onOpenQueue}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
+            className="flex items-center justify-center gap-2 flex-1 py-2.5 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
           >
             <ListMusic className="w-4 h-4 text-pink-400" />
             <span>Queue</span>

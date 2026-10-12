@@ -1,12 +1,10 @@
 import React from 'react';
-import { Play, Pause, SkipForward, Sliders, Waves } from 'lucide-react';
+import { Play, Pause, SkipForward, Sliders } from 'lucide-react';
 import { Song, AudioEffectsConfig } from '../types/music';
 
 interface MiniPlayerProps {
   currentSong: Song | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   effects: AudioEffectsConfig;
   onTogglePlay: () => void;
   onNext: () => void;
@@ -17,8 +15,6 @@ interface MiniPlayerProps {
 export const MiniPlayer: React.FC<MiniPlayerProps> = ({
   currentSong,
   isPlaying,
-  currentTime,
-  duration,
   effects,
   onTogglePlay,
   onNext,
@@ -27,7 +23,6 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
 }) => {
   if (!currentSong) return null;
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
   const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
 
   return (
@@ -36,15 +31,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
         onClick={onOpenFullPlayer}
         className="pointer-events-auto relative overflow-hidden rounded-2xl glass-panel-elevated border border-cyan-500/30 p-2.5 flex items-center gap-3 cursor-pointer shadow-2xl active:scale-[0.99] transition duration-200 group"
       >
-        {/* Top Progress bar indicator */}
-        <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-white/10">
-          <div
-            className="h-full bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 transition-all duration-150"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-
-        {/* Circular Artwork Profile */}
+        {/* Circular Artwork Profile / Default Cover */}
         <div className="relative shrink-0">
           <img
             src={currentSong.artworkUrl || './pwa-192x192.png'}
