@@ -1,0 +1,31 @@
+{
+  "id": "./",
+  "name": "JTEC MUSIC",
+  "short_name": "JTEC MUSIC",
+  "description": "Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management.",
+  "theme_color": "#070913",
+  "background_color": "#070913",
+  "display": "standalone",
+  "start_url": "./",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "./pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

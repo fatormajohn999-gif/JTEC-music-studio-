@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
+import { APP_VERSION, BUILD_DATE } from '../version';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -359,8 +360,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         )}
       </div>
 
-      <div className="text-center text-xs text-slate-500 pb-6">
-        JTEC MUSIC v1.0.0 • Your Music • Your Vibe • Offline
+      <div className="text-center text-xs text-slate-500 pb-8 space-y-1.5">
+        <p className="font-semibold text-slate-300">JTEC MUSIC • Your Music • Your Vibe • Offline</p>
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11px]">
+          <span className="font-mono text-cyan-400">Version: {APP_VERSION}</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-slate-400">Build: {BUILD_DATE}</span>
+        </div>
       </div>
 
     </div>

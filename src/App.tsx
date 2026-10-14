@@ -23,6 +23,7 @@ import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { CloudUploadModal } from './components/CloudUploadModal';
+import { PWAUpdateBanner } from './components/PWAUpdateBanner';
 
 // Screens
 import { HomeScreen } from './screens/HomeScreen';
@@ -32,12 +33,20 @@ import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
 import { useSleepTimer } from './hooks/useSleepTimer';
+import { usePWAUpdate } from './hooks/usePWAUpdate';
 
 export default function App() {
   // Navigation & Screen state
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
   const [isSettingsView, setIsSettingsView] = useState(false);
   const [showStartup, setShowStartup] = useState(true);
+
+  // PWA Automatic Updates Controller
+  const {
+    updateAvailable,
+    isUpdating: isPWAUpdating,
+    updateApp: handleUpdateApp,
+  } = usePWAUpdate();
 
   // Sleep Timer Controller
   const {
@@ -1464,6 +1473,15 @@ export default function App() {
         onClearOfflineDownloads={handleClearOfflineDownloads}
         onConfigChanged={handleRefreshCloud}
       />
+
+      {/* PWA AUTOMATIC UPDATE BANNER */}
+      {updateAvailable && (
+        <PWAUpdateBanner
+          onUpdate={handleUpdateApp}
+          isUpdating={isPWAUpdating}
+          hasMiniPlayer={Boolean(currentSong)}
+        />
+      )}
 
       {/* STARTUP / SPLASH SCREEN */}
       {showStartup && <StartupScreen onComplete={() => setShowStartup(false)} />}

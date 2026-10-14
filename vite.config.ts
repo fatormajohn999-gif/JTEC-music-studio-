@@ -1,8 +1,60 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
-import {VitePWA} from 'vite-plugin-pwa';
+import { defineConfig, Plugin } from 'vite';
+
+const APP_BASE_VERSION = '1.0.1';
+const buildTimestamp = Date.now();
+const FULL_VERSION = `${APP_BASE_VERSION}.${buildTimestamp}`;
+const now = new Date();
+const BUILD_DATE = now.toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function pwaServiceWorkerPlugin(): Plugin {
+  return {
+    name: 'pwa-service-worker-plugin',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const parsedUrl = req.url?.split('?')[0];
+        if (parsedUrl === '/sw.js' || parsedUrl === './sw.js') {
+          const swPath = path.resolve(import.meta.dirname, 'public/sw.js');
+          if (fs.existsSync(swPath)) {
+            let content = fs.readFileSync(swPath, 'utf-8');
+            content = content.replace(
+              /const VERSION = ['"].*?['"];/,
+              `const VERSION = '${FULL_VERSION}';`
+            );
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            return res.end(content);
+          }
+        }
+        next();
+      });
+    },
+    closeBundle() {
+      // In production build, write sw.js with the build-unique version
+      const distDir = path.resolve(import.meta.dirname, 'dist');
+      const distSwPath = path.resolve(distDir, 'sw.js');
+      const publicSwPath = path.resolve(import.meta.dirname, 'public/sw.js');
+      
+      if (fs.existsSync(distDir) && fs.existsSync(publicSwPath)) {
+        let content = fs.readFileSync(publicSwPath, 'utf-8');
+        content = content.replace(
+          /const VERSION = ['"].*?['"];/,
+          `const VERSION = '${FULL_VERSION}';`
+        );
+        fs.writeFileSync(distSwPath, content, 'utf-8');
+      }
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
@@ -10,49 +62,21 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
-      VitePWA({
-        registerType: 'autoUpdate',
-        injectRegister: false,
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
-        manifest: {
-          id: './',
-          name: 'JTEC MUSIC',
-          short_name: 'JTEC MUSIC',
-          description: 'Premium mobile-first offline music player with real-time effects and visualizer.',
-          theme_color: '#070913',
-          background_color: '#070913',
-          display: 'standalone',
-          start_url: './',
-          scope: './',
-          icons: [
-            {
-              src: 'pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: 'pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: 'pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
-        workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-        },
-        devOptions: {
-          enabled: false,
-        },
-      }),
+      pwaServiceWorkerPlugin(),
     ],
+    define: {
+      __APP_VERSION__: JSON.stringify(FULL_VERSION),
+      __BUILD_DATE__: JSON.stringify(BUILD_DATE),
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: 'assets/[name]-[hash].js',
+          chunkFileNames: 'assets/[name]-[hash].js',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),
