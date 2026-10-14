@@ -49,13 +49,19 @@ function isCacheFirstAsset(url, request) {
   );
 }
 
-// Helper: Check if request is for the service worker itself
-function isServiceWorkerFile(url) {
-  return url.pathname.endsWith('/sw.js') || url.pathname.endsWith('sw.js');
+// Helper: Check if request is for sw.js or version.json
+function isNoCacheFile(url) {
+  const p = url.pathname;
+  return (
+    p.endsWith('/sw.js') ||
+    p.endsWith('sw.js') ||
+    p.endsWith('/version.json') ||
+    p.endsWith('version.json')
+  );
 }
 
 // 3. Fetch event:
-// - Never cache the service worker itself
+// - Never cache the service worker itself or version.json
 // - Cache-first for images, fonts, and audio/cover files
 // - Network-first for index.html, main JS, CSS files, and other resources (with cache fallback when offline)
 self.addEventListener('fetch', (event) => {
@@ -72,8 +78,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Never cache the service worker file itself
-  if (isServiceWorkerFile(url)) {
+  // Never cache the service worker or version.json files
+  if (isNoCacheFile(url)) {
     return;
   }
 
