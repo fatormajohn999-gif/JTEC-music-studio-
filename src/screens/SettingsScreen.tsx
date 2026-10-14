@@ -3,7 +3,8 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass
 } from 'lucide-react';
-import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength } from '../types/music';
+import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
+import { SleepTimerSection } from '../components/SleepTimerSection';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -11,6 +12,10 @@ interface SettingsScreenProps {
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClearLibrary: () => void;
   onOpenCloudSettings?: () => void;
+  sleepTimer: SleepTimerState;
+  onStartSleepTimer: (minutes: number) => void;
+  onCancelSleepTimer: () => void;
+  onExtendSleepTimer: (minutes?: number) => void;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
@@ -19,6 +24,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onUpdateSettings,
   onClearLibrary,
   onOpenCloudSettings,
+  sleepTimer,
+  onStartSleepTimer,
+  onCancelSleepTimer,
+  onExtendSleepTimer,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -202,6 +211,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           })}
         </div>
       </div>
+
+      {/* SLEEP TIMER */}
+      <SleepTimerSection
+        timerState={sleepTimer}
+        onStart={onStartSleepTimer}
+        onCancel={onCancelSleepTimer}
+        onExtend={onExtendSleepTimer}
+      />
 
       {/* PLAYBACK PREFERENCES */}
       <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">

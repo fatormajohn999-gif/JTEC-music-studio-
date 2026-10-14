@@ -32,6 +32,8 @@ class AudioEngine {
 
   private isInitialized = false;
   private currentObjectUrl: string | null = null;
+  private currentSource: string | Blob | null = null;
+  private hasRetriedWithoutCors = false;
   private currentEffectsConfig: AudioEffectsConfig = {
     playbackRate: 1.0,
     reverbWet: 0.0,
@@ -55,6 +57,18 @@ class AudioEngine {
 
   constructor() {
     // Initialized lazily on first user interaction
+  }
+
+  public hasSource(): boolean {
+    if (!this.audioElement) return false;
+    const src = this.audioElement.currentSrc || this.audioElement.src;
+    return Boolean(
+      src &&
+      src !== window.location.href &&
+      src !== 'about:blank' &&
+      !src.endsWith('/') &&
+      !src.endsWith('#')
+    );
   }
 
   public init() {
@@ -93,12 +107,43 @@ class AudioEngine {
       this.endedCallbacks.forEach((cb) => cb());
     });
 
-    this.audioElement.addEventListener('error', (e) => {
-      console.error('Audio element playback error', e);
+    this.audioElement.addEventListener('error', () => {
+      const mediaError = this.audioElement?.error;
+
+      // 1. Ignore user-aborted loads (code 1 = MEDIA_ERR_ABORTED) when switching tracks or pausing
+      if (mediaError?.code === 1) {
+        return;
+      }
+
+      // 2. Ignore empty / unset source
+      if (!this.hasSource()) {
+        return;
+      }
+
+      // 3. Fallback for CORS restriction on external stream URLs: retry once without crossOrigin
+      if (
+        this.audioElement?.crossOrigin &&
+        typeof this.currentSource === 'string' &&
+        !this.hasRetriedWithoutCors
+      ) {
+        this.hasRetriedWithoutCors = true;
+        this.audioElement.crossOrigin = null;
+        this.audioElement.removeAttribute('crossorigin');
+        this.audioElement.src = this.currentSource;
+        this.audioElement.load();
+        return;
+      }
+
+      const currentSrc = this.audioElement?.currentSrc || this.audioElement?.src;
+      console.warn('Audio element playback warning:', {
+        code: mediaError?.code,
+        message: mediaError?.message,
+        src: currentSrc ? currentSrc.substring(0, 100) : 'none',
+      });
       this.isPlaying = false;
       this.playStateCallbacks.forEach((cb) => cb(false));
       this.errorCallbacks.forEach((cb) =>
-        cb("JTEC MUSIC couldn't play this file. The format may not be supported by your browser.")
+        cb("JTEC MUSIC couldn't play this track. The audio format may not be supported or the file is unavailable.")
       );
     });
 
@@ -279,16 +324,25 @@ class AudioEngine {
    * the persistent MediaElementAudioSourceNode or AudioContext.
    */
   public async loadAudio(blobOrUrl: Blob | string, initialPosition?: number): Promise<void> {
+    if (!blobOrUrl) return;
+    if (blobOrUrl instanceof Blob && blobOrUrl.size === 0) {
+      console.warn('Cannot load empty audio blob (0 bytes)');
+      return;
+    }
+    if (typeof blobOrUrl === 'string' && (!blobOrUrl.trim() || blobOrUrl === 'about:blank')) {
+      return;
+    }
+
     this.init();
     this.setupWebAudioNodes();
     await this.resumeContext();
 
-    if (this.currentObjectUrl) {
-      URL.revokeObjectURL(this.currentObjectUrl);
-      this.currentObjectUrl = null;
-    }
-
     if (!this.audioElement) return;
+
+    this.currentSource = blobOrUrl;
+    this.hasRetriedWithoutCors = false;
+
+    const oldUrl = this.currentObjectUrl;
 
     if (blobOrUrl instanceof Blob) {
       this.currentObjectUrl = URL.createObjectURL(blobOrUrl);
@@ -297,6 +351,7 @@ class AudioEngine {
       this.audioElement.removeAttribute('crossorigin');
       this.audioElement.src = this.currentObjectUrl;
     } else {
+      this.currentObjectUrl = null;
       // Only set crossOrigin if loading from an external http(s) origin
       if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('http') && !blobOrUrl.startsWith(window.location.origin)) {
         this.audioElement.crossOrigin = 'anonymous';
@@ -305,6 +360,14 @@ class AudioEngine {
         this.audioElement.removeAttribute('crossorigin');
       }
       this.audioElement.src = blobOrUrl;
+    }
+
+    if (oldUrl) {
+      try {
+        URL.revokeObjectURL(oldUrl);
+      } catch {
+        // ignore
+      }
     }
 
     this.audioElement.load();
@@ -328,6 +391,10 @@ class AudioEngine {
     await this.resumeContext();
 
     if (this.audioElement) {
+      if (!this.hasSource()) {
+        this.isPlaying = false;
+        throw new Error('The element has no supported sources.');
+      }
       try {
         await this.audioElement.play();
         this.isPlaying = true;
@@ -359,13 +426,31 @@ class AudioEngine {
     }
   }
 
+  private fadeMultiplier = 1.0;
+
+  public setFadeMultiplier(multiplier: number): void {
+    const clamped = Math.max(0, Math.min(1, multiplier));
+    this.fadeMultiplier = clamped;
+    if (this.masterGain && this.audioCtx) {
+      const now = this.audioCtx.currentTime;
+      const baseVol = typeof this.currentEffectsConfig.volume === 'number' ? this.currentEffectsConfig.volume : 1.0;
+      const targetVol = baseVol * this.fadeMultiplier;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setTargetAtTime(targetVol, now, 0.05);
+    }
+  }
+
+  public resetFadeMultiplier(): void {
+    this.setFadeMultiplier(1.0);
+  }
+
   public setVolume(val: number): void {
     const clamped = Math.max(0, Math.min(1, val));
     this.currentEffectsConfig.volume = clamped;
     if (this.masterGain && this.audioCtx) {
       const now = this.audioCtx.currentTime;
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setValueAtTime(clamped, now);
+      this.masterGain.gain.setValueAtTime(clamped * this.fadeMultiplier, now);
     }
   }
 
@@ -465,7 +550,7 @@ class AudioEngine {
     if (this.masterGain) {
       const vol = Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0));
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setTargetAtTime(vol, now, 0.02);
+      this.masterGain.gain.setTargetAtTime(vol * this.fadeMultiplier, now, 0.02);
     }
   }
 

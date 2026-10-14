@@ -137,6 +137,14 @@ export interface AppSettings {
   reducedMotion: boolean;
 }
 
+export interface SleepTimerState {
+  isActive: boolean;
+  totalDurationMinutes: number;
+  endTime: number | null;
+  remainingSeconds: number;
+  isFading: boolean;
+}
+
 export interface AudioBands {
   bass: number;        // 0 to 1 (20-160Hz)
   low: number;         // 0 to 1 (160-500Hz)

@@ -1,12 +1,17 @@
 import React from 'react';
 import { X, RotateCcw, Sparkles, Sliders, Waves, Zap, Moon, Music2, Wind, Disc } from 'lucide-react';
-import { AudioEffectsConfig } from '../types/music';
+import { AudioEffectsConfig, SleepTimerState } from '../types/music';
+import { SleepTimerSection } from './SleepTimerSection';
 
 interface AudioEffectsModalProps {
   isOpen: boolean;
   onClose: () => void;
   effects: AudioEffectsConfig;
   onChange: (effects: AudioEffectsConfig) => void;
+  sleepTimer: SleepTimerState;
+  onStartSleepTimer: (minutes: number) => void;
+  onCancelSleepTimer: () => void;
+  onExtendSleepTimer: (minutes?: number) => void;
 }
 
 const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConfig>> = {
@@ -67,6 +72,10 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
   onClose,
   effects,
   onChange,
+  sleepTimer,
+  onStartSleepTimer,
+  onCancelSleepTimer,
+  onExtendSleepTimer,
 }) => {
   if (!isOpen) return null;
 
@@ -334,6 +343,15 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
               className="w-full"
             />
           </div>
+
+          {/* Sleep Timer */}
+          <SleepTimerSection
+            timerState={sleepTimer}
+            onStart={onStartSleepTimer}
+            onCancel={onCancelSleepTimer}
+            onExtend={onExtendSleepTimer}
+            compact={true}
+          />
         </div>
 
         {/* Footer */}

@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for the sleep timer feature in JTEC MUSIC. Adds preset durations (15m, 30m, 45m, 60m) and custom minute inputs to SettingsScreen and AudioEffectsModal with a live countdown, cancel, and +5 min controls, plus smooth 30-second volume fade-out before pausing playback. Does not display timer widgets in the player screen as requested.",
+  "updatedAt": "2026-10-14T21:23:59.448364287Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

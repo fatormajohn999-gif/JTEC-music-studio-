@@ -31,12 +31,21 @@ import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
+import { useSleepTimer } from './hooks/useSleepTimer';
 
 export default function App() {
   // Navigation & Screen state
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
   const [isSettingsView, setIsSettingsView] = useState(false);
   const [showStartup, setShowStartup] = useState(true);
+
+  // Sleep Timer Controller
+  const {
+    timerState: sleepTimer,
+    startTimer: handleStartSleepTimer,
+    cancelTimer: handleCancelSleepTimer,
+    extendTimer: handleExtendSleepTimer,
+  } = useSleepTimer();
 
   // Music & Library State
   const [songs, setSongs] = useState<Song[]>([]);
@@ -311,9 +320,9 @@ export default function App() {
             blob = await StorageService.getSongBlob(`cloud_${targetSong.cloudId}`);
             if (!blob) blob = await StorageService.getSongBlob(targetSong.cloudId);
           }
-          if (blob) {
+          if (blob && blob.size > 0) {
             await audioEngine.loadAudio(blob, restoredPosition);
-          } else if (targetSong.audioUrl) {
+          } else if (targetSong.audioUrl && !targetSong.audioUrl.startsWith('blob:')) {
             try {
               await audioEngine.loadAudio(targetSong.audioUrl, restoredPosition);
             } catch {
@@ -501,8 +510,8 @@ export default function App() {
     setIsPlaying(false);
   }, []);
 
-  // Play a specific song with optional context queue
-  const playSong = async (song: Song, contextQueue?: Song[]) => {
+  // Play a specific song with optional context queue and optional start position
+  const playSong = async (song: Song, contextQueue?: Song[], startPosition?: number) => {
     try {
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
@@ -576,19 +585,30 @@ export default function App() {
         }
       }
 
-      if (blob) {
-        await audioEngine.loadAudio(blob);
-      } else if (song.audioUrl) {
+      if (blob && blob.size > 0) {
+        await audioEngine.loadAudio(blob, startPosition);
+      } else if (song.audioUrl && !song.audioUrl.startsWith('blob:')) {
         try {
-          await audioEngine.loadAudio(song.audioUrl);
+          await audioEngine.loadAudio(song.audioUrl, startPosition);
         } catch (streamErr) {
           console.warn('Direct audio stream failed, falling back to fetch blob:', streamErr);
-          const resp = await fetch(song.audioUrl);
-          if (resp.ok) {
-            const fetchedBlob = await resp.blob();
-            await audioEngine.loadAudio(fetchedBlob);
-          } else {
-            throw new Error(`Failed to stream audio (HTTP ${resp.status})`);
+          try {
+            const resp = await fetch(song.audioUrl);
+            if (resp.ok) {
+              const fetchedBlob = await resp.blob();
+              if (fetchedBlob.size > 0) {
+                await audioEngine.loadAudio(fetchedBlob, startPosition);
+              } else {
+                throw new Error('Downloaded audio blob was empty');
+              }
+            } else {
+              throw new Error(`Failed to stream audio (HTTP ${resp.status})`);
+            }
+          } catch (fetchErr) {
+            console.warn('Audio fetch fallback error:', fetchErr);
+            setGlobalError("JTEC MUSIC couldn't load this audio track. Please check your connection or re-import it.");
+            setTimeout(() => setGlobalError(null), 5000);
+            return;
           }
         }
       } else {
@@ -624,14 +644,21 @@ export default function App() {
     if (isPlaying) {
       audioEngine.pause();
     } else {
+      if (!currentSong) return;
+
       try {
-        if (currentSong && currentTime === 0) {
-          await playSong(currentSong);
+        if (!audioEngine.hasSource()) {
+          await playSong(currentSong, undefined, currentTime);
         } else {
           await audioEngine.play();
         }
       } catch (err) {
-        console.error('Play resume error', err);
+        console.warn('Direct resume notice, reloading song track:', err);
+        try {
+          await playSong(currentSong, undefined, currentTime);
+        } catch (fallbackErr) {
+          console.warn('Play reload fallback error:', fallbackErr);
+        }
       }
     }
   };
@@ -1180,6 +1207,10 @@ export default function App() {
             onUpdateSettings={handleUpdateSettings}
             onClearLibrary={handleClearEntireLibrary}
             onOpenCloudSettings={() => setIsCloudSettingsOpen(true)}
+            sleepTimer={sleepTimer}
+            onStartSleepTimer={handleStartSleepTimer}
+            onCancelSleepTimer={handleCancelSleepTimer}
+            onExtendSleepTimer={handleExtendSleepTimer}
           />
         ) : currentTab === 'home' ? (
           <HomeScreen
@@ -1337,6 +1368,10 @@ export default function App() {
         onClose={() => setIsEffectsModalOpen(false)}
         effects={effects}
         onChange={handleEffectsChange}
+        sleepTimer={sleepTimer}
+        onStartSleepTimer={handleStartSleepTimer}
+        onCancelSleepTimer={handleCancelSleepTimer}
+        onExtendSleepTimer={handleExtendSleepTimer}
       />
 
       {/* QUEUE DRAWER */}
