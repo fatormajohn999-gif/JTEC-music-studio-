@@ -303,6 +303,7 @@ export const StorageService = {
     const defaultSettings: AppSettings = {
       performanceMode: 'balanced',
       visualizerMode: 'auto',
+      reactionStrength: 'medium',
       autoplayNext: true,
       rememberLastSong: true,
       neonGlow: true,

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { 
   ChevronDown, Heart, Shuffle, Repeat, Repeat1, SkipBack, SkipForward, 
   Play, Pause, Sliders, ListMusic, Compass, MoreVertical 
 } from 'lucide-react';
 import { 
-  Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette 
+  Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette, ReactionStrength 
 } from '../types/music';
 import { CinematicVisualizer } from './CinematicVisualizer';
 
@@ -18,6 +18,7 @@ interface FullPlayerProps {
   effects: AudioEffectsConfig;
   visualizerMode: CinematicScene;
   performanceMode: PerformanceMode;
+  reactionStrength?: ReactionStrength;
   repeatMode: RepeatMode;
   isShuffle: boolean;
   palette: ArtworkPalette;
@@ -51,6 +52,11 @@ const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
   { id: 'shadow_strike', label: 'Shadow Strike', icon: '🗡️' },
   { id: 'shuriken_storm', label: 'Shuriken Storm', icon: '⭐' },
   { id: 'smoke_vanish', label: 'Smoke Vanish', icon: '💨' },
+  { id: 'aurora_skies', label: 'Aurora Skies', icon: '🌌' },
+  { id: 'thunder_storm', label: 'Thunder Storm', icon: '⚡' },
+  { id: 'dragon_spirit', label: 'Dragon Spirit', icon: '🐉' },
+  { id: 'hyperspace_warp', label: 'Hyperspace Warp', icon: '🚀' },
+  { id: 'night_walk', label: 'Night Walk', icon: '🚶' },
 ];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
@@ -58,15 +64,19 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onClose,
   currentSong,
   isPlaying,
+  currentTime = 0,
+  duration = 0,
   effects,
   visualizerMode,
   performanceMode,
+  reactionStrength = 'medium',
   repeatMode,
   isShuffle,
   palette,
   onTogglePlay,
   onPrevious,
   onNext,
+  onSeek,
   onToggleFavorite,
   onToggleShuffle,
   onCycleRepeat,
@@ -77,6 +87,62 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 }) => {
   const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('dark_spectrum');
   const [showSceneSelector, setShowSceneSelector] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekTime, setSeekTime] = useState<number | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+
+  // Time format helper: "0:42", "2:52"
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const totalDuration = duration > 0 ? duration : (currentSong?.duration || 0);
+  const effectiveCurrentTime = isSeeking && seekTime !== null ? seekTime : currentTime;
+  const timeRemaining = Math.max(0, totalDuration - effectiveCurrentTime);
+  const progressPercent = totalDuration > 0 ? (effectiveCurrentTime / totalDuration) * 100 : 0;
+  const clampedPercent = Math.min(100, Math.max(0, progressPercent));
+
+  // Determine progress bar fill color (cover's main color or theme main color)
+  const progressColor = palette.primary || palette.main || '#00f0ff';
+
+  // Pointer/Touch seeking handlers for smooth tap or drag
+  const calculateSeekTime = useCallback((clientX: number) => {
+    if (!progressBarRef.current || totalDuration <= 0) return 0;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * totalDuration;
+  }, [totalDuration]);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsSeeking(true);
+    const newTime = calculateSeekTime(e.clientX);
+    setSeekTime(newTime);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSeeking) return;
+    const newTime = calculateSeekTime(e.clientX);
+    setSeekTime(newTime);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSeeking) return;
+    const newTime = calculateSeekTime(e.clientX);
+    setIsSeeking(false);
+    setSeekTime(null);
+    if (onSeek) {
+      onSeek(newTime);
+    }
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
 
   if (!isOpen || !currentSong) return null;
 
@@ -90,6 +156,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           <CinematicVisualizer
             scene={visualizerMode}
             performanceMode={performanceMode}
+            reactionStrength={reactionStrength}
             palette={palette}
             isActive={isPlaying}
             className="w-full h-full"
@@ -177,9 +244,49 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
       <div className="relative z-10 flex-1 min-h-0 pointer-events-none" />
 
       {/* 4. BOTTOM PLAYBACK CONTROLS */}
-      <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-4">
+      <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-3">
+        {/* ONE Simple Progress Bar */}
+        <div className="w-full space-y-1.5 select-none">
+          <div
+            ref={progressBarRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            className="group relative h-5 flex items-center cursor-pointer touch-none"
+          >
+            {/* Background Track (faint white line) */}
+            <div className="relative w-full h-1 rounded-full bg-white/15 overflow-hidden">
+              {/* Filled Track (Cover's main color / theme main color) */}
+              <div
+                className="h-full rounded-full transition-[width] duration-75"
+                style={{
+                  width: `${clampedPercent}%`,
+                  backgroundColor: progressColor,
+                  boxShadow: `0 0 10px ${palette.glow || progressColor}`,
+                }}
+              />
+            </div>
+
+            {/* Small Round Indicator Dot showing current position */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-md pointer-events-none transition-transform group-hover:scale-125"
+              style={{
+                left: `${clampedPercent}%`,
+                boxShadow: `0 0 8px ${progressColor}, 0 2px 4px rgba(0,0,0,0.5)`,
+              }}
+            />
+          </div>
+
+          {/* Time Displays: Elapsed on left ("0:42"), Remaining on right ("-2:52") */}
+          <div className="flex items-center justify-between text-[11px] font-medium text-white/50 px-0.5 tracking-wider">
+            <span>{formatTime(effectiveCurrentTime)}</span>
+            <span>-{formatTime(timeRemaining)}</span>
+          </div>
+        </div>
+
         {/* Main Controls Bar */}
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex items-center justify-between pt-0.5">
           {/* Shuffle */}
           <button
             onClick={onToggleShuffle}

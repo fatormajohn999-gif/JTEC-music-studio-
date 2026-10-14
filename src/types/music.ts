@@ -88,6 +88,11 @@ export type CinematicScene =
   | 'shadow_strike'
   | 'shuriken_storm'
   | 'smoke_vanish'
+  | 'aurora_skies'
+  | 'thunder_storm'
+  | 'dragon_spirit'
+  | 'hyperspace_warp'
+  | 'night_walk'
   // Legacy aliases
   | 'aurora' 
   | 'neon_city' 
@@ -120,9 +125,12 @@ export interface AudioEffectsConfig {
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
+export type ReactionStrength = 'low' | 'medium' | 'high';
+
 export interface AppSettings {
   performanceMode: PerformanceMode;
   visualizerMode: VisualizerMode;
+  reactionStrength: ReactionStrength;
   autoplayNext: boolean;
   rememberLastSong: boolean;
   neonGlow: boolean;

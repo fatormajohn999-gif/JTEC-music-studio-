@@ -84,6 +84,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>({
     performanceMode: 'balanced',
     visualizerMode: 'auto',
+    reactionStrength: 'medium',
     autoplayNext: true,
     rememberLastSong: true,
     neonGlow: true,
@@ -1297,12 +1298,16 @@ export default function App() {
         onClose={() => setIsFullPlayerOpen(false)}
         currentSong={currentSong}
         isPlaying={isPlaying}
+        currentTime={currentTime}
+        duration={duration}
         effects={effects}
         visualizerMode={settings.visualizerMode}
         performanceMode={settings.performanceMode}
+        reactionStrength={settings.reactionStrength}
         repeatMode={repeatMode}
         isShuffle={isShuffle}
         palette={currentPalette}
+        onSeek={handleSeek}
         onTogglePlay={handleTogglePlay}
         onPrevious={handlePreviousTrack}
         onNext={handleNextTrack}

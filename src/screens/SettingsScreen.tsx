@@ -3,7 +3,7 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass
 } from 'lucide-react';
-import { AppSettings, PerformanceMode, VisualizerMode } from '../types/music';
+import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength } from '../types/music';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -129,6 +129,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
             { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
             { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
+            { id: 'aurora_skies' as VisualizerMode, label: '🌌 Aurora Skies' },
+            { id: 'thunder_storm' as VisualizerMode, label: '⚡ Thunder Storm' },
+            { id: 'dragon_spirit' as VisualizerMode, label: '🐉 Dragon Spirit' },
+            { id: 'hyperspace_warp' as VisualizerMode, label: '🚀 Hyperspace Warp' },
             { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
           ].map((v) => {
             const isSelected = settings.visualizerMode === v.id;
@@ -144,6 +148,55 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               >
                 <span className="truncate">{v.label}</span>
                 {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* REACTION STRENGTH SETTING */}
+      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
+        <div className="flex items-center gap-2">
+          <Sliders className="w-4 h-4 text-cyan-400" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+            Reaction Strength
+          </h3>
+        </div>
+        <p className="text-xs text-slate-400">
+          Scale how dynamically visualizer effects react to audio frequencies, bass hits, and beats (0.6x, 1x, 1.5x).
+        </p>
+
+        <div className="grid grid-cols-3 gap-2.5 pt-1">
+          {[
+            {
+              id: 'low' as ReactionStrength,
+              label: 'Low',
+              desc: '0.6x reaction',
+            },
+            {
+              id: 'medium' as ReactionStrength,
+              label: 'Medium',
+              desc: '1.0x (default)',
+            },
+            {
+              id: 'high' as ReactionStrength,
+              label: 'High',
+              desc: '1.5x intense',
+            },
+          ].map((item) => {
+            const isSelected = (settings.reactionStrength || 'medium') === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onUpdateSettings({ ...settings, reactionStrength: item.id })}
+                className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 ${
+                  isSelected
+                    ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
+                    : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
+                }`}
+              >
+                <span className="text-xs font-bold">{item.label}</span>
+                <span className="text-[10px] text-slate-500 mt-0.5">{item.desc}</span>
               </button>
             );
           })}
