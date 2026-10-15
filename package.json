@@ -13,6 +13,7 @@
   "dependencies": {
     "@capacitor/android": "^8.5.3",
     "@capacitor/core": "^8.5.3",
+    "@capacitor/local-notifications": "^8.3.1",
     "@google/genai": "^2.4.0",
     "@jofr/capacitor-media-session": "^4.0.0",
     "@supabase/supabase-js": "^2.117.2",

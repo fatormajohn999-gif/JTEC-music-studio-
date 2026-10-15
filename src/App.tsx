@@ -7,6 +7,7 @@ import { StorageService } from './services/storage';
 import { SupabaseService } from './services/supabase';
 import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
+import { NotificationPermissionManager } from './services/notificationPermission';
 import { extractPaletteFromImage } from './services/colorExtractor';
 
 // UI Components
@@ -576,6 +577,7 @@ export default function App() {
   // Play a specific song with optional context queue and optional start position
   const playSong = async (song: Song, contextQueue?: Song[], startPosition?: number) => {
     try {
+      NotificationPermissionManager.checkAndRequestOnFirstPlay();
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
 
@@ -708,6 +710,7 @@ export default function App() {
       audioEngine.pause();
     } else {
       if (!currentSong) return;
+      NotificationPermissionManager.checkAndRequestOnFirstPlay();
 
       try {
         if (!audioEngine.hasSource()) {

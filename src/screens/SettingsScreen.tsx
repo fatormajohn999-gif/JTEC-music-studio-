@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
-  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass
+  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass,
+  BellOff, Bell, X
 } from 'lucide-react';
+import { NotificationPermissionManager } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
@@ -32,6 +34,28 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onExtendSleepTimer,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [notificationDenied, setNotificationDenied] = useState(false);
+  const [showHowToModal, setShowHowToModal] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkStatus = () => {
+      NotificationPermissionManager.isPermissionDenied().then((denied) => {
+        if (mounted) setNotificationDenied(denied);
+      });
+    };
+
+    checkStatus();
+
+    window.addEventListener('focus', checkStatus);
+    document.addEventListener('visibilitychange', checkStatus);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener('focus', checkStatus);
+      document.removeEventListener('visibilitychange', checkStatus);
+    };
+  }, []);
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 MB';
@@ -58,6 +82,81 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <p className="text-xs text-slate-400">Audio DSP, Visualizer, Performance & Storage</p>
         </div>
       </div>
+
+      {/* NOTIFICATIONS DENIED MESSAGE (NATIVE ANDROID) */}
+      {notificationDenied && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200">
+          <div className="flex items-center gap-2.5">
+            <BellOff className="w-5 h-5 text-amber-400 shrink-0" />
+            <p className="text-xs font-medium leading-relaxed">
+              Notifications are off. Turn them on to see music controls.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowHowToModal(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold whitespace-nowrap transition cursor-pointer self-start sm:self-auto"
+          >
+            How to enable
+          </button>
+        </div>
+      )}
+
+      {/* HOW TO ENABLE NOTIFICATIONS MODAL */}
+      {showHowToModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => {
+                setShowHowToModal(false);
+                NotificationPermissionManager.isPermissionDenied().then(setNotificationDenied);
+              }}
+              className="absolute top-5 right-5 p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Enable Notifications</h3>
+                <p className="text-xs text-slate-400">Lock screen & media controls</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-300 bg-slate-950/60 p-4 rounded-2xl border border-white/5">
+              <div className="flex items-start gap-2.5">
+                <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[11px] font-bold shrink-0">1</span>
+                <span>Open your phone's <strong>Settings</strong> app.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[11px] font-bold shrink-0">2</span>
+                <span>Go to <strong>Apps</strong> (or <strong>App Management</strong>) &rarr; <strong>JTEC MUSIC</strong>.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[11px] font-bold shrink-0">3</span>
+                <span>Tap <strong>Notifications</strong> and turn them <strong>ON</strong>.</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Enabling notifications allows JTEC MUSIC to show media playback controls, track details, and album artwork on your lock screen and notification bar.
+            </p>
+
+            <button
+              onClick={() => {
+                setShowHowToModal(false);
+                NotificationPermissionManager.isPermissionDenied().then(setNotificationDenied);
+              }}
+              className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* PERFORMANCE & BATTERY SAVER MODE */}
       <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
