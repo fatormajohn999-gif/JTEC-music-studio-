@@ -24,7 +24,7 @@ jobs:
           java-version: 21
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build web app
         run: npm run build
@@ -32,6 +32,35 @@ jobs:
       - name: Add Android project if missing
         run: |
           if [ ! -d android ]; then npx cap add android; fi
+
+      - name: Set app icon
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          import os
+          src = Image.open('resources/icon.png').convert('RGB')
+          res = 'android/app/src/main/res'
+          sizes = {'mdpi': (48, 108), 'hdpi': (72, 162), 'xhdpi': (96, 216), 'xxhdpi': (144, 324), 'xxxhdpi': (192, 432)}
+          for d, (legacy, fg) in sizes.items():
+              folder = res + '/mipmap-' + d
+              os.makedirs(folder, exist_ok=True)
+              icon = src.resize((legacy, legacy), Image.LANCZOS)
+              icon.save(folder + '/ic_launcher.png')
+              mask = Image.new('L', (legacy, legacy), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, legacy - 1, legacy - 1), fill=255)
+              round_icon = icon.convert('RGBA')
+              round_icon.putalpha(mask)
+              round_icon.save(folder + '/ic_launcher_round.png')
+              canvas = Image.new('RGBA', (fg, fg), (0, 0, 0, 0))
+              inner = int(fg * 0.72)
+              logo = src.resize((inner, inner), Image.LANCZOS).convert('RGBA')
+              off = (fg - inner) // 2
+              canvas.paste(logo, (off, off))
+              canvas.save(folder + '/ic_launcher_foreground.png')
+          os.makedirs(res + '/values', exist_ok=True)
+          open(res + '/values/ic_launcher_background.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n')
+          PY
 
       - name: Sync web files into Android
         run: npx cap sync android
