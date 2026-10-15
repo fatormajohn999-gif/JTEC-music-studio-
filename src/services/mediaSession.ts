@@ -1,3 +1,4 @@
+import { MediaSession } from '@jofr/capacitor-media-session';
 import { Song } from '../types/music';
 
 export interface MediaSessionCallbacks {
@@ -6,50 +7,223 @@ export interface MediaSessionCallbacks {
   onPrevious: () => void;
   onNext: () => void;
   onSeek: (seconds: number) => void;
+  onSeekBackward?: (offset?: number) => void;
+  onSeekForward?: (offset?: number) => void;
+  onStop?: () => void;
+}
+
+// In-memory cache for resized 512x512 artwork data URLs to avoid repeated recomputation
+const artworkCache = new Map<string, string>();
+
+let activeSongId: string | null = null;
+let currentCallbacks: MediaSessionCallbacks | null = null;
+let actionHandlersInitialized = false;
+
+// Position throttling state
+let lastPositionTime = 0;
+let lastReportedPos = -1;
+
+function getFallbackIconUrl(): string {
+  try {
+    return new URL('icons/icon-512.png', window.location.href).href;
+  } catch {
+    return '/icons/icon-512.png';
+  }
+}
+
+/**
+ * Resizes any image (blob URL, data URL, or remote HTTP URL) to a 512x512 square PNG data URL.
+ * Falls back to the app icon if resizing fails or is rejected.
+ */
+export async function resizeImageTo512DataUrl(src: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    const timer = setTimeout(() => {
+      reject(new Error('Image resize timed out'));
+    }, 4000);
+
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(src);
+          return;
+        }
+
+        const nw = img.naturalWidth || img.width || 512;
+        const nh = img.naturalHeight || img.height || 512;
+        const minDim = Math.min(nw, nh);
+        const sx = (nw - minDim) / 2;
+        const sy = (nh - minDim) / 2;
+
+        ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 512, 512);
+        const dataUrl = canvas.toDataURL('image/png', 0.85);
+        resolve(dataUrl);
+      } catch (err) {
+        // If canvas is tainted due to CORS on remote URL, return original http URL if valid
+        if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
+          resolve(src);
+        } else {
+          reject(err);
+        }
+      }
+    };
+
+    img.onerror = (e) => {
+      clearTimeout(timer);
+      reject(e);
+    };
+
+    img.src = src;
+  });
+}
+
+/**
+ * Prepares artwork URL for MediaSession:
+ * - If cover exists: resizes to 512x512 data URL
+ * - If cover missing or fails: falls back to app icon
+ */
+export async function prepareArtworkUrl(coverUrl?: string): Promise<string> {
+  const fallback = getFallbackIconUrl();
+  if (!coverUrl) return fallback;
+
+  const cached = artworkCache.get(coverUrl);
+  if (cached) return cached;
+
+  try {
+    const resized = await resizeImageTo512DataUrl(coverUrl);
+    artworkCache.set(coverUrl, resized);
+    return resized;
+  } catch {
+    return fallback;
+  }
 }
 
 export const MediaSessionManager = {
-  updateMetadata(song: Song | null) {
-    if (!('mediaSession' in navigator) || !song) return;
+  /**
+   * Updates track metadata (title, artist, album, artwork).
+   * Artwork is resized to ~512x512 data URL for native Android notification compatibility.
+   */
+  async updateMetadata(song: Song | null) {
+    if (!song) {
+      activeSongId = null;
+      try {
+        await MediaSession.setMetadata({
+          title: '',
+          artist: '',
+          album: '',
+          artwork: [],
+        });
+      } catch {
+        // ignore
+      }
+      return;
+    }
 
+    activeSongId = song.id;
+    const thisSongId = song.id;
+    const coverSource = song.artworkUrl || song.coverUrl;
+    const cachedArtwork = coverSource ? artworkCache.get(coverSource) : undefined;
+    const initialArtworkUrl = cachedArtwork || getFallbackIconUrl();
+
+    // 1. Set metadata immediately with cached artwork or fallback so notifications respond with zero latency
     try {
-      const artwork = song.artworkUrl
-        ? [
-            { src: song.artworkUrl, sizes: '96x96', type: 'image/png' },
-            { src: song.artworkUrl, sizes: '128x128', type: 'image/png' },
-            { src: song.artworkUrl, sizes: '192x192', type: 'image/png' },
-            { src: song.artworkUrl, sizes: '512x512', type: 'image/png' },
-          ]
-        : [{ src: './pwa-192x192.png', sizes: '192x192', type: 'image/png' }];
-
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: song.title,
-        artist: song.artist,
+      await MediaSession.setMetadata({
+        title: song.title || 'Unknown Title',
+        artist: song.artist || 'Unknown Artist',
         album: song.album || 'JTEC MUSIC',
-        artwork,
+        artwork: [
+          { src: initialArtworkUrl, sizes: '512x512', type: 'image/png' },
+          { src: initialArtworkUrl, sizes: '192x192', type: 'image/png' },
+          { src: initialArtworkUrl, sizes: '96x96', type: 'image/png' },
+        ],
       });
-    } catch (e) {
-      console.warn('Could not update MediaSession metadata', e);
+    } catch (err) {
+      console.warn('Could not set initial MediaSession metadata', err);
+    }
+
+    // 2. If artwork was not already cached and a cover exists, prepare 512x512 resized data URL in background
+    if (!cachedArtwork && coverSource) {
+      try {
+        const finalArtworkUrl = await prepareArtworkUrl(coverSource);
+        // Only update if this song is still the active one
+        if (activeSongId === thisSongId && finalArtworkUrl !== initialArtworkUrl) {
+          await MediaSession.setMetadata({
+            title: song.title || 'Unknown Title',
+            artist: song.artist || 'Unknown Artist',
+            album: song.album || 'JTEC MUSIC',
+            artwork: [
+              { src: finalArtworkUrl, sizes: '512x512', type: 'image/png' },
+              { src: finalArtworkUrl, sizes: '192x192', type: 'image/png' },
+              { src: finalArtworkUrl, sizes: '96x96', type: 'image/png' },
+            ],
+          });
+        }
+      } catch (err) {
+        console.warn('Could not update refined MediaSession artwork', err);
+      }
     }
   },
 
-  updatePlaybackState(isPlaying: boolean) {
-    if (!('mediaSession' in navigator)) return;
+  /**
+   * Updates playback state ("playing", "paused", or "none")
+   */
+  async updatePlaybackState(state: 'playing' | 'paused' | 'none' | boolean) {
+    let playbackState: 'playing' | 'paused' | 'none';
+    if (typeof state === 'boolean') {
+      playbackState = state ? 'playing' : 'paused';
+    } else {
+      playbackState = state;
+    }
+
     try {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      await MediaSession.setPlaybackState({ playbackState });
     } catch {
       // ignore
     }
   },
 
-  updatePositionState(position: number, duration: number, playbackRate: number = 1.0) {
-    if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return;
+  /**
+   * Updates playback position, duration, and playbackRate (including Slow + Reverb rates).
+   * Position updates are throttled to ~800ms to keep lock screen seek bar accurate without flooding IPC.
+   */
+  async updatePositionState(
+    position: number,
+    duration: number,
+    playbackRate: number = 1.0,
+    force: boolean = false
+  ) {
     try {
-      if (duration > 0 && isFinite(position) && position <= duration) {
-        navigator.mediaSession.setPositionState({
+      if (
+        typeof duration === 'number' &&
+        duration > 0 &&
+        isFinite(duration) &&
+        typeof position === 'number' &&
+        isFinite(position) &&
+        position >= 0 &&
+        position <= duration
+      ) {
+        const now = Date.now();
+        const posJump = Math.abs(position - lastReportedPos);
+        // Throttle updates unless forced, significant jump (seek), or >800ms has elapsed
+        if (!force && posJump < 2 && now - lastPositionTime < 800) {
+          return;
+        }
+
+        lastPositionTime = now;
+        lastReportedPos = position;
+
+        const rate = Math.max(0.25, Math.min(3.0, playbackRate || 1.0));
+        await MediaSession.setPositionState({
           duration,
-          playbackRate: Math.max(0.5, Math.min(2.0, playbackRate)),
           position,
+          playbackRate: rate,
         });
       }
     } catch {
@@ -57,44 +231,82 @@ export const MediaSessionManager = {
     }
   },
 
-  registerActionHandlers(callbacks: MediaSessionCallbacks) {
-    if (!('mediaSession' in navigator)) return;
+  /**
+   * Registers media action handlers for:
+   * play, pause, previoustrack, nexttrack, seekto, seekbackward, seekforward, and stop.
+   * Delegates dynamically to the latest callbacks to honor current queue, shuffle, and repeat modes.
+   */
+  async registerActionHandlers(callbacks: MediaSessionCallbacks) {
+    currentCallbacks = callbacks;
 
-    const actionMap: [MediaSessionAction, (details: MediaSessionActionDetails) => void][] = [
-      ['play', () => callbacks.onPlay()],
-      ['pause', () => callbacks.onPause()],
-      ['previoustrack', () => callbacks.onPrevious()],
-      ['nexttrack', () => callbacks.onNext()],
-      [
-        'seekto',
-        (details) => {
-          if (details.seekTime !== undefined) {
-            callbacks.onSeek(details.seekTime);
-          }
-        },
-      ],
-      [
-        'seekbackward',
-        (details) => {
-          const skip = details.seekOffset || 10;
-          callbacks.onSeek(Math.max(0, -skip));
-        },
-      ],
-      [
-        'seekforward',
-        (details) => {
-          const skip = details.seekOffset || 10;
-          callbacks.onSeek(skip);
-        },
-      ],
+    if (actionHandlersInitialized) return;
+    actionHandlersInitialized = true;
+
+    const actions: MediaSessionAction[] = [
+      'play',
+      'pause',
+      'previoustrack',
+      'nexttrack',
+      'seekto',
+      'seekbackward',
+      'seekforward',
+      'stop',
     ];
 
-    actionMap.forEach(([action, handler]) => {
+    for (const action of actions) {
       try {
-        navigator.mediaSession.setActionHandler(action, handler);
+        await MediaSession.setActionHandler({ action }, (details) => {
+          if (!currentCallbacks) return;
+
+          switch (action) {
+            case 'play':
+              currentCallbacks.onPlay();
+              break;
+            case 'pause':
+              currentCallbacks.onPause();
+              break;
+            case 'previoustrack':
+              currentCallbacks.onPrevious();
+              break;
+            case 'nexttrack':
+              currentCallbacks.onNext();
+              break;
+            case 'seekto':
+              if (typeof details?.seekTime === 'number' && !isNaN(details.seekTime)) {
+                currentCallbacks.onSeek(details.seekTime);
+              }
+              break;
+            case 'seekbackward': {
+              const offset = (details as any)?.seekOffset || 10;
+              if (currentCallbacks.onSeekBackward) {
+                currentCallbacks.onSeekBackward(offset);
+              } else {
+                currentCallbacks.onSeek(-offset);
+              }
+              break;
+            }
+            case 'seekforward': {
+              const offset = (details as any)?.seekOffset || 10;
+              if (currentCallbacks.onSeekForward) {
+                currentCallbacks.onSeekForward(offset);
+              } else {
+                currentCallbacks.onSeek(offset);
+              }
+              break;
+            }
+            case 'stop':
+              if (currentCallbacks.onStop) {
+                currentCallbacks.onStop();
+              } else {
+                currentCallbacks.onPause();
+              }
+              break;
+          }
+        });
       } catch (err) {
-        // Some actions might not be supported on all browsers
+        // Some actions might not be supported on all browsers or platforms
+        console.warn(`Could not register MediaSession action: ${action}`, err);
       }
-    });
+    }
   },
 };

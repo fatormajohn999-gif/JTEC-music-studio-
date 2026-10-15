@@ -829,6 +829,7 @@ export default function App() {
     audioEngine.seek(seconds);
     setCurrentTime(seconds);
     currentTimeRef.current = seconds;
+    MediaSessionManager.updatePositionState(seconds, duration, effects.playbackRate, true);
     persistSessionNow();
   };
 
@@ -840,14 +841,23 @@ export default function App() {
       onPrevious: () => handlePreviousTrack(),
       onNext: () => handleNextTrack(),
       onSeek: (seconds) => {
-        if (seconds < 0) {
-          handleSeek(Math.max(0, currentTime + seconds));
-        } else {
-          handleSeek(seconds);
-        }
+        handleSeek(seconds);
+      },
+      onSeekBackward: (offset = 10) => {
+        handleSeek(Math.max(0, currentTimeRef.current - offset));
+      },
+      onSeekForward: (offset = 10) => {
+        handleSeek(Math.min(duration || 0, currentTimeRef.current + offset));
+      },
+      onStop: () => {
+        audioEngine.pause();
+        audioEngine.seek(0);
+        setCurrentTime(0);
+        currentTimeRef.current = 0;
+        MediaSessionManager.updatePlaybackState('none');
       },
     });
-  }, [currentSong, queue, isShuffle, repeatMode, currentTime]);
+  }, [currentSong, queue, songs, isShuffle, repeatMode, currentTime, duration, effects.playbackRate]);
 
   // Effects handler
   const handleEffectsChange = (newEffects: AudioEffectsConfig) => {
