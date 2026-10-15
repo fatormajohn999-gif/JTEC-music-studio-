@@ -3,19 +3,19 @@
 const VERSION = '1.0.1-dev';
 const CACHE_NAME = `jtec-music-${VERSION}`;
 
-// Core assets to pre-cache on install for instant offline support
+// Core assets to pre-cache on install using relative paths for sub-folder and GitHub Pages support
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/manifest.json',
-  '/icons/icon-48.png',
-  '/icons/icon-72.png',
-  '/icons/icon-96.png',
-  '/icons/icon-144.png',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png',
+  './',
+  './index.html',
+  'manifest.webmanifest',
+  'manifest.json',
+  'icons/icon-48.png',
+  'icons/icon-72.png',
+  'icons/icon-96.png',
+  'icons/icon-144.png',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
+  'icons/icon-maskable-512.png',
 ];
 
 // Helper: Open the IndexedDB database matching StorageService
@@ -106,16 +106,19 @@ self.addEventListener('install', (event) => {
     (async () => {
       try {
         const cache = await caches.open(CACHE_NAME);
+        const baseScope = self.registration?.scope || self.location.href;
         await Promise.allSettled(
-          PRECACHE_ASSETS.map((url) =>
-            fetch(url, { cache: 'no-cache' })
+          PRECACHE_ASSETS.map((assetPath) => {
+            const resolvedUrl = new URL(assetPath, baseScope).href;
+            return fetch(resolvedUrl, { cache: 'no-cache' })
               .then((res) => {
                 if (res && res.status === 200) {
-                  return cache.put(url, res);
+                  cache.put(resolvedUrl, res.clone());
+                  return cache.put(assetPath, res);
                 }
               })
-              .catch(() => {})
-          )
+              .catch(() => {});
+          })
         );
       } catch (err) {
         // Continue even if initial precaching is partial
@@ -176,7 +179,9 @@ self.addEventListener('periodicsync', (event) => {
     event.waitUntil(
       (async () => {
         try {
-          const res = await fetch('/version.json?t=' + Date.now(), { cache: 'no-store' });
+          const baseScope = self.registration?.scope || self.location.href;
+          const versionUrl = new URL('version.json?t=' + Date.now(), baseScope).href;
+          const res = await fetch(versionUrl, { cache: 'no-store' });
           if (res.ok) {
             const data = await res.json();
             if (data && data.version && data.version !== VERSION) {
@@ -220,17 +225,21 @@ function isNoCacheFile(url) {
 }
 
 // 5. Fetch event:
-// - Handle Share Target POST /share-target
+// - Handle Share Target POST ./share-target
 // - Never cache the service worker itself or version.json
 // - Cache-first for icons, images, and fonts
-// - Network-first for index.html, main JS, CSS files, and routes (with cache fallback when offline)
+// - Network-first for index.html, JS, CSS, and navigation documents (cache fallback when offline)
 // - Never intercept or disturb blob: or data: URLs (used by IndexedDB for local music/covers)
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
   // Handle Share Target: receive audio files shared from external apps
-  if (request.method === 'POST' && url.pathname === '/share-target') {
+  const isShareTarget =
+    request.method === 'POST' &&
+    (url.pathname.endsWith('/share-target') || url.pathname.endsWith('share-target'));
+
+  if (isShareTarget) {
     event.respondWith(
       (async () => {
         try {
@@ -242,8 +251,10 @@ self.addEventListener('fetch', (event) => {
         } catch (err) {
           console.error('[SW] Failed to process shared audio files:', err);
         }
-        // Redirect to open the app on the library screen showing the newly added songs
-        return Response.redirect('/?tab=library&shared=1', 303);
+        // Redirect to open the app on the library screen inside the relative sub-folder scope
+        const baseScope = self.registration?.scope || self.location.href;
+        const redirectUrl = new URL('./?tab=library&shared=1', baseScope).href;
+        return Response.redirect(redirectUrl, 303);
       })()
     );
     return;
@@ -311,10 +322,13 @@ self.addEventListener('fetch', (event) => {
 
         // For navigation requests when offline, fallback to cached index.html or root
         if (request.mode === 'navigate') {
+          const baseScope = self.registration?.scope || self.location.href;
+          const resolvedIndex = new URL('index.html', baseScope).href;
           const fallback =
-            (await cache.match('/index.html')) ||
+            (await cache.match(resolvedIndex)) ||
             (await cache.match('./index.html')) ||
-            (await cache.match('/')) ||
+            (await cache.match('index.html')) ||
+            (await cache.match(baseScope)) ||
             (await cache.match('./'));
           if (fallback) {
             return fallback;

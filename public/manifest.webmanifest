@@ -1,12 +1,12 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "JTEC MUSIC",
   "short_name": "JTEC",
   "description": "Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management.",
   "lang": "en",
   "dir": "ltr",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#070913",
@@ -17,43 +17,43 @@
   ],
   "icons": [
     {
-      "src": "/icons/icon-48.png",
+      "src": "icons/icon-48.png",
       "sizes": "48x48",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-72.png",
+      "src": "icons/icon-72.png",
       "sizes": "72x72",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-96.png",
+      "src": "icons/icon-96.png",
       "sizes": "96x96",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-144.png",
+      "src": "icons/icon-144.png",
       "sizes": "144x144",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-192.png",
+      "src": "icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-maskable-512.png",
+      "src": "icons/icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -64,10 +64,10 @@
       "name": "Library",
       "short_name": "Library",
       "description": "Open your local music library",
-      "url": "/?tab=library",
+      "url": "./?tab=library",
       "icons": [
         {
-          "src": "/icons/icon-96.png",
+          "src": "icons/icon-96.png",
           "sizes": "96x96",
           "type": "image/png"
         }
@@ -75,7 +75,7 @@
     }
   ],
   "share_target": {
-    "action": "/share-target",
+    "action": "./share-target",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {

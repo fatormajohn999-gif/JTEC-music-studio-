@@ -49,15 +49,15 @@ export const CheckForUpdatesButton: React.FC = () => {
     setStatus('checking');
 
     try {
-      // 1. Fetch /version.json from site with cache: "no-store"
+      // 1. Fetch ./version.json from site with cache: "no-store"
       let res: Response;
       try {
-        res = await fetch('/version.json?t=' + Date.now(), { cache: 'no-store' });
+        res = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
         if (!res.ok) {
-          res = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+          res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
         }
       } catch {
-        res = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+        res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
       }
 
       if (!res.ok) {

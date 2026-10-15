@@ -122,7 +122,7 @@ function pwaServiceWorkerPlugin(): Plugin {
           const files = fs.readdirSync(assetsDir);
           builtAssetPaths = files
             .filter((f) => f.endsWith('.js') || f.endsWith('.css'))
-            .map((f) => `/assets/${f}`);
+            .map((f) => `assets/${f}`);
         }
 
         // Write dist/sw.js with dynamic VERSION and precached asset bundles

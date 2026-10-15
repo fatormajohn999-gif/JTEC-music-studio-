@@ -25,12 +25,12 @@ export function usePWAUpdate() {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let handleVisibilityChange: (() => void) | null = null;
 
-    // Register service worker and configure update detection at root scope
+    // Register service worker with relative path for sub-folder and GitHub Pages support
     const registerWorker = async () => {
       try {
-        return await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        return await navigator.serviceWorker.register('./sw.js', { scope: './' });
       } catch {
-        return await navigator.serviceWorker.register('./sw.js');
+        return await navigator.serviceWorker.register('sw.js');
       }
     };
 
