@@ -23,12 +23,42 @@ let actionHandlersInitialized = false;
 let lastPositionTime = 0;
 let lastReportedPos = -1;
 
-function getFallbackIconUrl(): string {
+// Default 1x1 transparent PNG data URL to ensure native Android never fails on empty/http icon
+const DEFAULT_BLANK_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+let cachedFallbackDataUrl = DEFAULT_BLANK_ICON_DATA_URL;
+
+// Preload the app icon into a base64 data URL so native Android never makes network requests for fallback artwork
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   try {
-    return new URL('icons/icon-512.png', window.location.href).href;
+    const fallbackImg = new Image();
+    fallbackImg.crossOrigin = 'anonymous';
+    fallbackImg.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 192;
+        canvas.height = 192;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(fallbackImg, 0, 0, 192, 192);
+          cachedFallbackDataUrl = canvas.toDataURL('image/png');
+        }
+      } catch {
+        // use DEFAULT_BLANK_ICON_DATA_URL
+      }
+    };
+    fallbackImg.onerror = () => {
+      // Keep DEFAULT_BLANK_ICON_DATA_URL
+    };
+    fallbackImg.src = 'icons/icon-192.png';
   } catch {
-    return '/icons/icon-512.png';
+    // ignore
   }
+}
+
+export function getFallbackIconUrl(): string {
+  return cachedFallbackDataUrl || DEFAULT_BLANK_ICON_DATA_URL;
 }
 
 /**
@@ -52,7 +82,7 @@ export async function resizeImageTo512DataUrl(src: string): Promise<string> {
         canvas.height = 512;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          resolve(src);
+          resolve(src.startsWith('data:') ? src : getFallbackIconUrl());
           return;
         }
 
@@ -66,18 +96,17 @@ export async function resizeImageTo512DataUrl(src: string): Promise<string> {
         const dataUrl = canvas.toDataURL('image/png', 0.85);
         resolve(dataUrl);
       } catch (err) {
-        // If canvas is tainted due to CORS on remote URL, return original http URL if valid
-        if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
+        if (src.startsWith('data:')) {
           resolve(src);
         } else {
-          reject(err);
+          resolve(getFallbackIconUrl());
         }
       }
     };
 
-    img.onerror = (e) => {
+    img.onerror = () => {
       clearTimeout(timer);
-      reject(e);
+      resolve(getFallbackIconUrl());
     };
 
     img.src = src;
@@ -87,7 +116,7 @@ export async function resizeImageTo512DataUrl(src: string): Promise<string> {
 /**
  * Prepares artwork URL for MediaSession:
  * - If cover exists: resizes to 512x512 data URL
- * - If cover missing or fails: falls back to app icon
+ * - If cover missing or fails: falls back to app icon data URL
  */
 export async function prepareArtworkUrl(coverUrl?: string): Promise<string> {
   const fallback = getFallbackIconUrl();
@@ -108,7 +137,7 @@ export async function prepareArtworkUrl(coverUrl?: string): Promise<string> {
 export const MediaSessionManager = {
   /**
    * Updates track metadata (title, artist, album, artwork).
-   * Artwork is resized to ~512x512 data URL for native Android notification compatibility.
+   * Artwork is always provided as a self-contained data URL so native Android never throws network errors on main thread.
    */
   async updateMetadata(song: Song | null) {
     if (!song) {
@@ -118,7 +147,7 @@ export const MediaSessionManager = {
           title: '',
           artist: '',
           album: '',
-          artwork: [],
+          artwork: [{ src: getFallbackIconUrl(), sizes: '512x512', type: 'image/png' }],
         });
       } catch {
         // ignore
@@ -132,7 +161,7 @@ export const MediaSessionManager = {
     const cachedArtwork = coverSource ? artworkCache.get(coverSource) : undefined;
     const initialArtworkUrl = cachedArtwork || getFallbackIconUrl();
 
-    // 1. Set metadata immediately with cached artwork or fallback so notifications respond with zero latency
+    // 1. Set metadata immediately with cached artwork or fallback data URL for zero latency
     try {
       await MediaSession.setMetadata({
         title: song.title || 'Unknown Title',
@@ -140,8 +169,6 @@ export const MediaSessionManager = {
         album: song.album || 'JTEC MUSIC',
         artwork: [
           { src: initialArtworkUrl, sizes: '512x512', type: 'image/png' },
-          { src: initialArtworkUrl, sizes: '192x192', type: 'image/png' },
-          { src: initialArtworkUrl, sizes: '96x96', type: 'image/png' },
         ],
       });
     } catch (err) {
@@ -160,8 +187,6 @@ export const MediaSessionManager = {
             album: song.album || 'JTEC MUSIC',
             artwork: [
               { src: finalArtworkUrl, sizes: '512x512', type: 'image/png' },
-              { src: finalArtworkUrl, sizes: '192x192', type: 'image/png' },
-              { src: finalArtworkUrl, sizes: '96x96', type: 'image/png' },
             ],
           });
         }
@@ -184,8 +209,8 @@ export const MediaSessionManager = {
 
     try {
       await MediaSession.setPlaybackState({ playbackState });
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('Could not set MediaSession playbackState', err);
     }
   },
 

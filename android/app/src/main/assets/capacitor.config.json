@@ -1,0 +1,8 @@
+{
+	"appId": "com.jtec.music",
+	"appName": "JTEC MUSIC",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}
