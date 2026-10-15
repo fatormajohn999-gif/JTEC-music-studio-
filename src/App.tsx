@@ -32,6 +32,7 @@ import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
+import { Capacitor } from '@capacitor/core';
 import { useSleepTimer } from './hooks/useSleepTimer';
 import { usePWAUpdate } from './hooks/usePWAUpdate';
 
@@ -422,13 +423,13 @@ export default function App() {
       }
     };
 
-    if ('serviceWorker' in navigator) {
+    if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', handleSWMessage);
     }
 
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      if ('serviceWorker' in navigator) {
+      if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       }
     };

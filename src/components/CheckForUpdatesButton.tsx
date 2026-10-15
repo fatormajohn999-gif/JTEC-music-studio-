@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RefreshCw, Loader2, Check, AlertCircle } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { APP_VERSION, BUILD_DATE } from '../version';
 
 type UpdateCheckStatus = 'idle' | 'checking' | 'updating' | 'up-to-date' | 'error';
@@ -44,6 +45,16 @@ export const CheckForUpdatesButton: React.FC = () => {
 
     if (timerRef.current) {
       clearTimeout(timerRef.current);
+    }
+
+    // On native Capacitor app, files are bundled natively inside the app:
+    // skip PWA update-check logic and show up to date immediately.
+    if (Capacitor.isNativePlatform()) {
+      setStatus('up-to-date');
+      timerRef.current = setTimeout(() => {
+        setStatus('idle');
+      }, 3000);
+      return;
     }
 
     setStatus('checking');

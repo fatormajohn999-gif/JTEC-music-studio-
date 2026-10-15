@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { useEffect, useState, useCallback, useRef } from 'react';
 
 export function usePWAUpdate() {
@@ -6,7 +7,9 @@ export function usePWAUpdate() {
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator)) {
+    // When running inside a native Capacitor app, files are bundled natively:
+    // do NOT register the service worker and do NOT run PWA update-check logic.
+    if (Capacitor.isNativePlatform() || !('serviceWorker' in navigator)) {
       return;
     }
 
