@@ -73,6 +73,16 @@ function pwaServiceWorkerPlugin(): Plugin {
             return res.end(content);
           }
         }
+        // Serve web manifest with proper content type
+        if (parsedUrl === '/manifest.webmanifest' || parsedUrl === '/manifest.json') {
+          const manifestFile = parsedUrl.endsWith('.webmanifest') ? 'public/manifest.webmanifest' : 'public/manifest.json';
+          const manifestPath = path.resolve(import.meta.dirname, manifestFile);
+          if (fs.existsSync(manifestPath)) {
+            res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            return res.end(fs.readFileSync(manifestPath, 'utf-8'));
+          }
+        }
         next();
       });
     },
@@ -107,6 +117,15 @@ function pwaServiceWorkerPlugin(): Plugin {
           );
           fs.writeFileSync(distSwPath, content, 'utf-8');
         }
+
+        // Ensure manifest files are present in dist
+        ['manifest.webmanifest', 'manifest.json'].forEach((filename) => {
+          const src = path.resolve(import.meta.dirname, 'public', filename);
+          const dest = path.resolve(distDir, filename);
+          if (fs.existsSync(src)) {
+            fs.copyFileSync(src, dest);
+          }
+        });
       }
     },
   };

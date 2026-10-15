@@ -25,9 +25,16 @@ export function usePWAUpdate() {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let handleVisibilityChange: (() => void) | null = null;
 
-    // Register service worker and configure update detection
-    navigator.serviceWorker
-      .register('./sw.js', { scope: './' })
+    // Register service worker and configure update detection at root scope
+    const registerWorker = async () => {
+      try {
+        return await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      } catch {
+        return await navigator.serviceWorker.register('./sw.js');
+      }
+    };
+
+    registerWorker()
       .then((registration) => {
         // 1. Initial check when app opens
         registration.update().catch(() => {});
