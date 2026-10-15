@@ -37,7 +37,18 @@ import { usePWAUpdate } from './hooks/usePWAUpdate';
 
 export default function App() {
   // Navigation & Screen state
-  const [currentTab, setCurrentTab] = useState<NavTab>('home');
+  const [currentTab, setCurrentTab] = useState<NavTab>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const tab = searchParams.get('tab');
+      if (tab === 'library' || tab === 'cloud' || tab === 'playlists' || tab === 'search' || tab === 'home') {
+        return tab as NavTab;
+      }
+    } catch {
+      // ignore
+    }
+    return 'home';
+  });
   const [isSettingsView, setIsSettingsView] = useState(false);
   const [showStartup, setShowStartup] = useState(true);
 
@@ -379,6 +390,48 @@ export default function App() {
     }
 
     initApp();
+  }, []);
+
+  // Listen for shared audio files from Service Worker Share Target or shortcut navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const tab = searchParams.get('tab');
+        if (tab === 'library' || tab === 'cloud' || tab === 'playlists' || tab === 'search' || tab === 'home') {
+          setCurrentTab(tab as NavTab);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    const handleSWMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'SHARED_SONGS_ADDED') {
+        setCurrentTab('library');
+        try {
+          const freshSongs = await StorageService.getAllSongs();
+          setSongs(freshSongs);
+          const stats = await StorageService.getStorageStats();
+          setStorageStats(stats);
+        } catch (err) {
+          console.warn('Failed to refresh songs following share event:', err);
+        }
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSWMessage);
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSWMessage);
+      }
+    };
   }, []);
 
   // Sync cloud tracks when user opens Cloud tab

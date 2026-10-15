@@ -83,6 +83,13 @@ function pwaServiceWorkerPlugin(): Plugin {
             return res.end(fs.readFileSync(manifestPath, 'utf-8'));
           }
         }
+
+        // Development fallback for share-target if invoked before SW controls
+        if (req.method === 'POST' && parsedUrl === '/share-target') {
+          res.writeHead(303, { Location: '/?tab=library&shared=1' });
+          return res.end();
+        }
+
         next();
       });
     },

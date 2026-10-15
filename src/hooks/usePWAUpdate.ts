@@ -35,7 +35,7 @@ export function usePWAUpdate() {
     };
 
     registerWorker()
-      .then((registration) => {
+      .then(async (registration) => {
         // 1. Initial check when app opens
         registration.update().catch(() => {});
 
@@ -74,13 +74,47 @@ export function usePWAUpdate() {
         intervalId = setInterval(() => {
           registration.update().catch(() => {});
         }, THIRTY_MINUTES_MS);
+
+        // 4. Periodic background sync for update check (feature-detect & fail silently)
+        if ('periodicSync' in registration) {
+          try {
+            const status = await (navigator.permissions as any)?.query({
+              name: 'periodic-background-sync',
+            });
+            if (status && (status.state === 'granted' || status.state === 'prompt')) {
+              await (registration as any).periodicSync.register('jtec-update-check', {
+                minInterval: 12 * 60 * 60 * 1000,
+              });
+            }
+          } catch {
+            // Fail silently if not supported or permission denied
+          }
+        }
+
+        // 5. Background sync for retrying network operations (feature-detect & fail silently)
+        if ('sync' in registration) {
+          try {
+            await (registration as any).sync.register('jtec-sync');
+          } catch {
+            // Fail silently if not supported
+          }
+        }
       })
       .catch((err) => {
         console.warn('[PWA] Service worker registration error:', err);
       });
 
+    // Listen for update notification messages from service worker
+    const handleSWMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'UPDATE_AVAILABLE') {
+        setUpdateAvailable(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSWMessage);
+
     return () => {
       navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+      navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       if (handleVisibilityChange) {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
