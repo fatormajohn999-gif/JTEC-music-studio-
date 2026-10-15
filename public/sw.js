@@ -10,6 +10,10 @@ const PRECACHE_ASSETS = [
   '/manifest.webmanifest',
   '/manifest.json',
   '/favicon.ico',
+  '/icons/icon-96.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
   '/pwa-maskable-512x512.png',
@@ -24,11 +28,13 @@ self.addEventListener('install', (event) => {
         const cache = await caches.open(CACHE_NAME);
         await Promise.allSettled(
           PRECACHE_ASSETS.map((url) =>
-            fetch(url, { cache: 'no-cache' }).then((res) => {
-              if (res && res.status === 200) {
-                return cache.put(url, res);
-              }
-            }).catch(() => {})
+            fetch(url, { cache: 'no-cache' })
+              .then((res) => {
+                if (res && res.status === 200) {
+                  return cache.put(url, res);
+                }
+              })
+              .catch(() => {})
           )
         );
       } catch (err) {

@@ -108,13 +108,30 @@ function pwaServiceWorkerPlugin(): Plugin {
           'utf-8'
         );
 
-        // Write dist/sw.js with dynamic VERSION
+        // Find built assets (JS and CSS) in dist/assets to precache on install
+        const assetsDir = path.resolve(distDir, 'assets');
+        let builtAssetPaths: string[] = [];
+        if (fs.existsSync(assetsDir)) {
+          const files = fs.readdirSync(assetsDir);
+          builtAssetPaths = files
+            .filter((f) => f.endsWith('.js') || f.endsWith('.css'))
+            .map((f) => `/assets/${f}`);
+        }
+
+        // Write dist/sw.js with dynamic VERSION and precached asset bundles
         if (fs.existsSync(publicSwPath)) {
           let content = fs.readFileSync(publicSwPath, 'utf-8');
           content = content.replace(
             /const VERSION = ['"].*?['"];/,
             `const VERSION = '${FULL_VERSION}';`
           );
+          if (builtAssetPaths.length > 0) {
+            const extraAssetsStr = builtAssetPaths.map((p) => `  '${p}',`).join('\n');
+            content = content.replace(
+              /const PRECACHE_ASSETS = \[\n/,
+              `const PRECACHE_ASSETS = [\n${extraAssetsStr}\n`
+            );
+          }
           fs.writeFileSync(distSwPath, content, 'utf-8');
         }
 
@@ -126,6 +143,21 @@ function pwaServiceWorkerPlugin(): Plugin {
             fs.copyFileSync(src, dest);
           }
         });
+
+        // Ensure icons directory is present in dist
+        const publicIconsDir = path.resolve(import.meta.dirname, 'public/icons');
+        const distIconsDir = path.resolve(distDir, 'icons');
+        if (fs.existsSync(publicIconsDir)) {
+          if (!fs.existsSync(distIconsDir)) {
+            fs.mkdirSync(distIconsDir, { recursive: true });
+          }
+          fs.readdirSync(publicIconsDir).forEach((file) => {
+            fs.copyFileSync(
+              path.resolve(publicIconsDir, file),
+              path.resolve(distIconsDir, file)
+            );
+          });
+        }
       }
     },
   };
