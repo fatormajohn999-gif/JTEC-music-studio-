@@ -284,6 +284,15 @@ export default function App() {
           storedPlaylists = starterPlaylists;
         }
 
+        // Only keep songs that have actual confirmed stored blobs in local storage
+        const offlineOnly = storedSongs.filter((s) => s.hasStoredBlob);
+        for (const s of storedSongs) {
+          if (!s.hasStoredBlob) {
+            await StorageService.deleteSong(s.id);
+          }
+        }
+        storedSongs = offlineOnly;
+
         setSongs(storedSongs);
         setPlaylists(storedPlaylists);
         setRecentlyPlayedIds(storedRecents);
@@ -378,14 +387,6 @@ export default function App() {
 
         const stats = await StorageService.getStorageStats();
         setStorageStats(stats);
-
-        // Fetch Supabase cloud songs (real data only) and merge into library
-        const initialCloud = await SupabaseService.fetchCloudSongs();
-        if (initialCloud.length > 0) {
-          await syncCloudWithLocalSongs(initialCloud);
-        } else {
-          setCloudSongs([]);
-        }
       } catch (err) {
         console.error('Initialization error:', err);
       }
@@ -435,13 +436,6 @@ export default function App() {
       }
     };
   }, []);
-
-  // Sync cloud tracks when user opens Cloud tab
-  useEffect(() => {
-    if (currentTab === 'cloud') {
-      SupabaseService.fetchCloudSongs().then((cs) => syncCloudWithLocalSongs(cs));
-    }
-  }, [currentTab]);
 
   // Hook Audio Engine events
   useEffect(() => {
@@ -1105,9 +1099,12 @@ export default function App() {
     await playSong(streamedSong);
   };
 
-  const handleDownloadCloudSong = async (cloudSong: CloudSong) => {
+  const handleDownloadCloudSong = async (
+    cloudSong: CloudSong,
+    onProgress?: (percent: number) => void
+  ) => {
     try {
-      const { song, blob } = await SupabaseService.downloadForOffline(cloudSong);
+      const { song, blob } = await SupabaseService.downloadForOffline(cloudSong, onProgress);
       await StorageService.saveSong(song, blob);
 
       setSongs((prev) => {
@@ -1126,8 +1123,8 @@ export default function App() {
       setStorageStats(stats);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not download song';
-      setGlobalError(msg);
-      setTimeout(() => setGlobalError(null), 5000);
+      console.error('Failed to download cloud song:', err);
+      throw new Error(msg);
     }
   };
 
@@ -1317,7 +1314,7 @@ export default function App() {
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenImport={() => setIsImportOpen(true)}
-            onOpenCloudUpload={() => setIsCloudUploadOpen(true)}
+            onOpenCloud={() => setCurrentTab('cloud')}
             onOpenCreatePlaylist={() => {
               setSongToAddPlaylist(null);
               setIsPlaylistModalOpen(true);
@@ -1326,26 +1323,12 @@ export default function App() {
           />
         ) : currentTab === 'cloud' ? (
           <CloudScreen
-            cloudSongs={cloudSongs}
             offlineSongs={songs.filter((s) => s.hasStoredBlob)}
-            playlists={playlists}
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={playSong}
             onPlayCloudSong={handlePlayCloudSong}
             onDownloadSong={handleDownloadCloudSong}
-            onRemoveOfflineSong={handleRemoveOfflineSong}
-            onDeleteCloudSong={handleDeleteCloudSong}
-            onToggleFavorite={handleToggleFavorite}
-            onOpenUpload={() => setIsCloudUploadOpen(true)}
-            onOpenSettings={() => setIsCloudSettingsOpen(true)}
-            onRefresh={handleRefreshCloud}
-            onAddToPlaylist={(song) => {
-              setSongToAddPlaylist(song);
-              setIsPlaylistModalOpen(true);
-            }}
-            onAddToQueue={handleAddToQueue}
-            onPlayNext={handlePlayNext}
           />
         ) : currentTab === 'playlists' ? (
           <PlaylistsScreen

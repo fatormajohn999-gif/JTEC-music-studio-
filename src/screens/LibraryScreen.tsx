@@ -17,7 +17,7 @@ interface LibraryScreenProps {
   onOpenSongOptions: (song: Song) => void;
   onToggleFavorite: (song: Song) => void;
   onOpenImport: () => void;
-  onOpenCloudUpload?: () => void;
+  onOpenCloud?: () => void;
   onOpenCreatePlaylist: () => void;
   onSelectPlaylist: (playlist: Playlist) => void;
 }
@@ -32,7 +32,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onOpenSongOptions,
   onToggleFavorite,
   onOpenImport,
-  onOpenCloudUpload,
+  onOpenCloud,
   onOpenCreatePlaylist,
   onSelectPlaylist,
 }) => {
@@ -49,24 +49,27 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const cloudSongsCount = useMemo(() => songs.filter((s) => s.isCloud).length, [songs]);
-  const localOnlyCount = useMemo(() => songs.filter((s) => !s.isCloud).length, [songs]);
+  // Ensure library strictly shows only songs with confirmed local storage blobs
+  const validSongs = useMemo(() => songs.filter((s) => s.hasStoredBlob), [songs]);
+
+  const cloudSongsCount = useMemo(() => validSongs.filter((s) => s.isCloud).length, [validSongs]);
+  const localOnlyCount = useMemo(() => validSongs.filter((s) => !s.isCloud).length, [validSongs]);
 
   // Grouping for Artists
   const artistsMap = useMemo(() => {
     const map = new Map<string, Song[]>();
-    songs.forEach((s) => {
+    validSongs.forEach((s) => {
       const list = map.get(s.artist) || [];
       list.push(s);
       map.set(s.artist, list);
     });
     return map;
-  }, [songs]);
+  }, [validSongs]);
 
   // Grouping for Albums
   const albumsMap = useMemo(() => {
     const map = new Map<string, { songs: Song[]; artist: string; artworkUrl?: string }>();
-    songs.forEach((s) => {
+    validSongs.forEach((s) => {
       const alb = s.album || 'Unknown Album';
       const existing = map.get(alb);
       if (existing) {
@@ -76,22 +79,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       }
     });
     return map;
-  }, [songs]);
+  }, [validSongs]);
 
   // Filtered & Sorted Songs
   const displayedSongs = useMemo(() => {
     let list: Song[] = [];
 
     if (activeTab === 'all') {
-      list = [...songs];
+      list = [...validSongs];
     } else if (activeTab === 'cloud') {
-      list = songs.filter((s) => s.isCloud);
+      list = validSongs.filter((s) => s.isCloud);
     } else if (activeTab === 'local') {
-      list = songs.filter((s) => !s.isCloud);
+      list = validSongs.filter((s) => !s.isCloud);
     } else if (activeTab === 'favorites') {
-      list = songs.filter((s) => s.isFavorite);
+      list = validSongs.filter((s) => s.isFavorite);
     } else if (activeTab === 'recent') {
-      list = [...recentlyPlayed];
+      list = [...recentlyPlayed].filter((s) => s.hasStoredBlob);
     } else if (activeTab === 'artists' && selectedArtist) {
       list = artistsMap.get(selectedArtist) || [];
     } else if (activeTab === 'albums' && selectedAlbum) {
@@ -113,7 +116,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       }
       return sortAsc ? comparison : -comparison;
     });
-  }, [songs, activeTab, sortField, sortAsc, selectedArtist, selectedAlbum, artistsMap, albumsMap, recentlyPlayed]);
+  }, [validSongs, activeTab, sortField, sortAsc, selectedArtist, selectedAlbum, artistsMap, albumsMap, recentlyPlayed]);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -129,14 +132,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       {/* Category Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
         {[
-          { id: 'all', label: 'All Songs', count: songs.length },
-          { id: 'cloud', label: '☁️ Cloud Music', count: cloudSongsCount },
-          { id: 'local', label: '📱 Local Only', count: localOnlyCount },
+          { id: 'all', label: 'All Songs', count: validSongs.length },
+          { id: 'cloud', label: 'Downloaded', count: cloudSongsCount },
+          { id: 'local', label: 'Imported', count: localOnlyCount },
           { id: 'artists', label: 'Artists', count: artistsMap.size },
           { id: 'albums', label: 'Albums', count: albumsMap.size },
           { id: 'playlists', label: 'Playlists', count: playlists.length },
-          { id: 'favorites', label: 'Favorites', count: songs.filter((s) => s.isFavorite).length },
-          { id: 'recent', label: 'Recently Played', count: recentlyPlayed.length },
+          { id: 'favorites', label: 'Favorites', count: validSongs.filter((s) => s.isFavorite).length },
+          { id: 'recent', label: 'Recently Played', count: recentlyPlayed.filter((s) => s.hasStoredBlob).length },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -179,24 +182,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {onOpenCloudUpload && (
-              <button
-                onClick={onOpenCloudUpload}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-400/30 text-white hover:brightness-110 transition font-medium"
-                title="Upload to Supabase Storage"
-              >
-                <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="hidden sm:inline">+ Cloud</span>
-              </button>
-            )}
-
             <button
               onClick={onOpenImport}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition font-medium"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition font-semibold text-xs cursor-pointer"
               title="Add local audio files"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">+ Local</span>
+              <span>+ Import Audio</span>
             </button>
           </div>
         </div>
@@ -305,25 +297,27 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
               <Music className="w-10 h-10 mx-auto text-slate-600" />
               <p className="text-sm font-semibold">
                 {activeTab === 'cloud' 
-                  ? 'No cloud songs yet. Upload songs to Supabase storage to see them here!' 
+                  ? 'No downloaded songs yet. Visit the Cloud tab to stream and download tracks for offline listening.' 
                   : activeTab === 'local' 
-                  ? 'No local-only songs in this view.' 
-                  : 'No songs in this view'}
+                  ? 'No imported audio files in local library.' 
+                  : 'No songs in your local library.'}
               </p>
               <div className="flex items-center justify-center gap-2 pt-1">
-                {onOpenCloudUpload && (
+                {onOpenCloud && (
                   <button
-                    onClick={onOpenCloudUpload}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-xs font-bold shadow-md shadow-cyan-500/20"
+                    onClick={onOpenCloud}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-bold shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition cursor-pointer"
                   >
-                    ☁️ Upload to Cloud
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span>Discover Cloud Music</span>
                   </button>
                 )}
                 <button
                   onClick={onOpenImport}
-                  className="px-4 py-2 rounded-xl bg-slate-800 border border-white/10 text-slate-300 text-xs font-medium"
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
                 >
-                  📱 Add Local Files
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Import Audio</span>
                 </button>
               </div>
             </div>

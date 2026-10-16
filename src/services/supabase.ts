@@ -1,239 +1,386 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { CloudSong, CloudStorageStats, Song } from '../types/music';
+import { CloudSong, Song } from '../types/music';
 
 // Storage Bucket Names
 export const BUCKET_MUSIC = 'music';
 export const BUCKET_ARTWORK = 'artwork';
 
-// Default free tier cloud storage quota (1 GB = 1073741824 bytes)
-export const DEFAULT_MAX_CLOUD_BYTES = 1073741824;
+// Three Category Keys
+export type CloudCategoryKey = 'nasheed' | 'love_chill' | 'jtec_main';
 
-const LS_KEY_URL = 'jtec_supabase_url';
-const LS_KEY_KEY = 'jtec_supabase_anon_key';
-const LS_KEY_SETTINGS = 'jtec_cloud_settings';
-
-export interface CloudSettings {
-  cloudSync: boolean;
-  autoDownloadFavorites: boolean;
-  wifiOnly: boolean;
-  autoSyncPlaylists: boolean;
-  storageWarnings: boolean;
-  warningThreshold: 75 | 90;
-  maxCloudQuotaBytes: number;
+export interface CategoryMetadata {
+  key: CloudCategoryKey;
+  title: string;
+  subtitle: string;
+  description: string;
+  badge: string;
+  themeColor: string;
+  accentBg: string;
+  borderColor: string;
+  glowColor: string;
+  iconName: 'Moon' | 'Heart' | 'Zap';
 }
 
-export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
-  cloudSync: true,
-  autoDownloadFavorites: false,
-  wifiOnly: false,
-  autoSyncPlaylists: true,
-  storageWarnings: true,
-  warningThreshold: 75,
-  maxCloudQuotaBytes: DEFAULT_MAX_CLOUD_BYTES,
-};
+export const CLOUD_CATEGORIES: CategoryMetadata[] = [
+  {
+    key: 'nasheed',
+    title: 'NASHEED',
+    subtitle: 'Nasheed & Spiritual Audio',
+    description: 'Acoustic vocals, spiritual anthems, calming recitations and peaceful melodies.',
+    badge: 'Spiritual & Vocals',
+    themeColor: '#10b981', // emerald
+    accentBg: 'from-emerald-950/60 via-slate-900/90 to-slate-950',
+    borderColor: 'border-emerald-500/30 hover:border-emerald-400/60',
+    glowColor: 'shadow-emerald-500/10 hover:shadow-emerald-500/25',
+    iconName: 'Moon',
+  },
+  {
+    key: 'love_chill',
+    title: 'LOVE & CHILL',
+    subtitle: 'Love Songs, Melodic & Chill Beats',
+    description: 'Romantic acoustics, lofi vibes, warm melodic ballads and late-night relaxation.',
+    badge: 'Melodic & Chill',
+    themeColor: '#ec4899', // pink/rose
+    accentBg: 'from-pink-950/60 via-slate-900/90 to-slate-950',
+    borderColor: 'border-pink-500/30 hover:border-pink-400/60',
+    glowColor: 'shadow-pink-500/10 hover:shadow-pink-500/25',
+    iconName: 'Heart',
+  },
+  {
+    key: 'jtec_main',
+    title: 'JTEC MUSIC',
+    subtitle: 'Mainstream Music, Super Bass & Other Genres',
+    description: 'Deep super bass, electronic energy, hip-hop, club mixes and mainstream hits.',
+    badge: 'Super Bass & Mainstream',
+    accentBg: 'from-cyan-950/60 via-slate-900/90 to-slate-950',
+    borderColor: 'border-cyan-500/30 hover:border-cyan-400/60',
+    glowColor: 'shadow-cyan-500/10 hover:shadow-cyan-500/25',
+    themeColor: '#00f0ff', // cyan
+    iconName: 'Zap',
+  },
+];
 
-// Singleton client cache to eliminate multiple GoTrueClient warnings
-let cachedClient: SupabaseClient | null = null;
-let currentClientConfig = { url: '', anonKey: '' };
+export interface CategoryProjectConfig {
+  url: string;
+  anonKey: string;
+  bucket: string;
+  tableName: string;
+  isConfigured: boolean;
+}
+
+// Storage keys per category
+const LS_PREFIX = 'jtec_supabase_';
+
+// Client singleton cache keyed by url+anonKey to avoid multiple GoTrueClient warnings
+const clientCache = new Map<string, SupabaseClient>();
+
+export type ConnectionErrorType =
+  | 'configuration'
+  | 'authentication'
+  | 'permissions'
+  | 'bucket'
+  | 'database'
+  | 'network'
+  | 'unknown';
+
+export interface CategoryConnectionDiagnostic {
+  categoryKey: CloudCategoryKey;
+  status: 'connected' | 'partial' | 'error' | 'not_configured';
+  success: boolean;
+  errorType?: ConnectionErrorType;
+  message: string;
+  tableExists: boolean;
+  bucketsExist: boolean;
+  maskedHost: string;
+  tableName: string;
+  bucketName: string;
+  databaseStatus: 'ready' | 'missing_table' | 'permission_denied' | 'paused' | 'failed' | 'not_checked';
+  storageStatus: 'ready' | 'missing_bucket' | 'permission_denied' | 'failed' | 'not_checked';
+  suggestion?: string;
+  timestamp: number;
+}
 
 /**
- * Structured diagnostic logger for Supabase operations.
- * Outputs detailed error metadata in development console as required:
- * - error message
- * - error code
- * - bucket
- * - file name
- * - upload path
- * - HTTP status when available
+ * Strips secret keys, JWT tokens, and sensitive headers from error messages and text.
  */
+export function sanitizeSecretText(input: unknown, knownSecrets: (string | undefined)[] = []): string {
+  if (!input) return '';
+  let str =
+    typeof input === 'string'
+      ? input
+      : input instanceof Error
+      ? input.message
+      : typeof input === 'object'
+      ? (input as any).message || JSON.stringify(input)
+      : String(input);
+
+  // Strip known keys/secrets
+  for (const secret of knownSecrets) {
+    if (secret && secret.trim().length > 5) {
+      str = str.split(secret.trim()).join('[PROTECTED_KEY]');
+    }
+  }
+
+  // Strip standard JWT tokens (three dot-separated base64 chunks)
+  str = str.replace(/eyJ[a-zA-Z0-9_\-]{8,}\.[a-zA-Z0-9_\-]{8,}\.[a-zA-Z0-9_\-]*/g, '[PROTECTED_JWT]');
+
+  // Strip Authorization / Bearer / apikey query strings
+  str = str.replace(/apikey=([^&\s]+)/gi, 'apikey=[PROTECTED_KEY]');
+  str = str.replace(/Bearer\s+([a-zA-Z0-9_\-.]+)/gi, 'Bearer [PROTECTED_TOKEN]');
+
+  return str;
+}
+
+/**
+ * Extracts a safe display hostname from a Supabase URL without credentials or query params.
+ */
+export function getMaskedHost(url: string): string {
+  if (!url) return 'Not Configured';
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return parsed.hostname;
+  } catch {
+    return 'Invalid URL';
+  }
+}
+
 export function logSupabaseError(context: string, details: {
   errorMessage: string;
   errorCode?: string | number;
   bucket?: string;
   fileName?: string;
-  uploadPath?: string;
   httpStatus?: number;
   raw?: unknown;
 }) {
+  const sanitizedMessage = sanitizeSecretText(details.errorMessage);
   console.error(`🚨 [JTEC MUSIC - SUPABASE ERROR in ${context}]`, {
-    'error message': details.errorMessage,
+    'error message': sanitizedMessage,
     'error code': details.errorCode || 'UNKNOWN',
     'bucket': details.bucket || 'N/A',
     'file name': details.fileName || 'N/A',
-    'upload path': details.uploadPath || 'N/A',
     'HTTP status': details.httpStatus || 'N/A',
-    'raw error': details.raw,
   });
-}
-
-/**
- * Detects and extracts any missing column name from PostgREST / PostgreSQL error messages.
- * Handles:
- * - PostgREST PGRST204: "Could not find the 'artwork_url' column of 'songs' in the schema cache"
- * - PostgreSQL 42703: "column "artwork_url" of relation "songs" does not exist"
- * - Fallback: checks for any payload key name explicitly contained in the error message
- */
-export function extractMissingColumn(errorMsg: string, payload: Record<string, unknown>): string | null {
-  if (!errorMsg) return null;
-
-  // Pattern 1: PostgREST code PGRST204 ("Could not find the 'column_name' column")
-  const pgrstMatch = errorMsg.match(/Could not find the ['"]([^'"]+)['"] column/i);
-  if (pgrstMatch && pgrstMatch[1] && pgrstMatch[1] in payload) {
-    return pgrstMatch[1];
-  }
-
-  // Pattern 2: PostgreSQL code 42703 ("column "column_name" does not exist")
-  const pgMatch = errorMsg.match(/column ["']([^"']+)["']/i);
-  if (pgMatch && pgMatch[1] && pgMatch[1] in payload) {
-    return pgMatch[1];
-  }
-
-  // Pattern 3: Explicit key names in quotes
-  for (const key of Object.keys(payload)) {
-    if (errorMsg.includes(`'${key}'`) || errorMsg.includes(`"${key}"`)) {
-      return key;
-    }
-  }
-
-  // Pattern 4: Case-insensitive token check
-  const lowerMsg = errorMsg.toLowerCase();
-  for (const key of Object.keys(payload)) {
-    if (lowerMsg.includes(key.toLowerCase()) && lowerMsg.includes('column')) {
-      return key;
-    }
-  }
-
-  return null;
 }
 
 export const SupabaseService = {
   /**
-   * Retrieves active Supabase connection configuration.
-   * Checks LocalStorage first (allows user to connect via UI), then Vite environment variables.
+   * Retrieves configuration for a specific cloud category.
+   * Priority:
+   * 1. Category-specific LocalStorage
+   * 2. Category-specific Vite environment variables (supports standard and alternate prefixes)
+   * 3. Fallback to general Supabase credentials (for jtec_main or initial setup)
    */
-  getConfig(): { url: string; anonKey: string; isConfigured: boolean } {
-    const lsUrl = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_KEY_URL) || '' : '';
-    const lsKey = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_KEY_KEY) || '' : '';
+  getCategoryConfig(categoryKey: CloudCategoryKey): CategoryProjectConfig {
+    if (typeof localStorage === 'undefined') {
+      return { url: '', anonKey: '', bucket: BUCKET_MUSIC, tableName: 'songs', isConfigured: false };
+    }
 
-    const envUrl = (import.meta.env.VITE_SUPABASE_URL as string) || '';
-    const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '';
+    const lsUrl = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_url`) || '').trim();
+    const lsKey = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_anon_key`) || '').trim();
+    const lsBucket = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_bucket`) || '').trim();
+    const lsTable = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_table`) || '').trim();
 
-    const url = (lsUrl || envUrl).trim();
-    const anonKey = (lsKey || envKey).trim();
+    // Check category-specific env vars with flexible naming support
+    let envUrl = '';
+    let envKey = '';
+    let envBucket = '';
+    let envTable = '';
+
+    if (categoryKey === 'nasheed') {
+      envUrl = (import.meta.env.VITE_SUPABASE_NASHEED_URL as string) ||
+               (import.meta.env.VITE_NASHEED_SUPABASE_URL as string) || '';
+      envKey = (import.meta.env.VITE_SUPABASE_NASHEED_ANON_KEY as string) ||
+               (import.meta.env.VITE_NASHEED_SUPABASE_ANON_KEY as string) || '';
+      envBucket = (import.meta.env.VITE_SUPABASE_NASHEED_BUCKET as string) ||
+                  (import.meta.env.VITE_NASHEED_SUPABASE_BUCKET as string) || '';
+      envTable = (import.meta.env.VITE_SUPABASE_NASHEED_TABLE as string) ||
+                 (import.meta.env.VITE_NASHEED_SUPABASE_TABLE as string) || '';
+    } else if (categoryKey === 'love_chill') {
+      envUrl = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_URL as string) ||
+               (import.meta.env.VITE_LOVE_CHILL_SUPABASE_URL as string) || '';
+      envKey = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_ANON_KEY as string) ||
+               (import.meta.env.VITE_LOVE_CHILL_SUPABASE_ANON_KEY as string) || '';
+      envBucket = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_BUCKET as string) ||
+                  (import.meta.env.VITE_LOVE_CHILL_SUPABASE_BUCKET as string) || '';
+      envTable = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_TABLE as string) ||
+                 (import.meta.env.VITE_LOVE_CHILL_SUPABASE_TABLE as string) || '';
+    } else if (categoryKey === 'jtec_main') {
+      envUrl = (import.meta.env.VITE_SUPABASE_JTEC_URL as string) ||
+               (import.meta.env.VITE_JTEC_SUPABASE_URL as string) ||
+               (import.meta.env.VITE_SUPABASE_URL as string) || '';
+      envKey = (import.meta.env.VITE_SUPABASE_JTEC_ANON_KEY as string) ||
+               (import.meta.env.VITE_JTEC_SUPABASE_ANON_KEY as string) ||
+               (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '';
+      envBucket = (import.meta.env.VITE_SUPABASE_JTEC_BUCKET as string) ||
+                  (import.meta.env.VITE_JTEC_SUPABASE_BUCKET as string) ||
+                  (import.meta.env.VITE_SUPABASE_BUCKET as string) || '';
+      envTable = (import.meta.env.VITE_SUPABASE_JTEC_TABLE as string) ||
+                 (import.meta.env.VITE_JTEC_SUPABASE_TABLE as string) ||
+                 (import.meta.env.VITE_SUPABASE_TABLE as string) || '';
+    }
+
+    // Fallback to legacy single project credentials for jtec_main if not specifically configured
+    const legacyLsUrl = (localStorage.getItem('jtec_supabase_url') || '').trim();
+    const legacyLsKey = (localStorage.getItem('jtec_supabase_anon_key') || '').trim();
+
+    const finalUrl = lsUrl || envUrl || (categoryKey === 'jtec_main' ? legacyLsUrl : '');
+    const finalKey = lsKey || envKey || (categoryKey === 'jtec_main' ? legacyLsKey : '');
+    const finalBucket = lsBucket || envBucket || BUCKET_MUSIC;
+    const finalTable = lsTable || envTable || 'songs';
 
     return {
-      url,
-      anonKey,
-      isConfigured: Boolean(url && anonKey),
+      url: finalUrl,
+      anonKey: finalKey,
+      bucket: finalBucket || BUCKET_MUSIC,
+      tableName: finalTable || 'songs',
+      isConfigured: Boolean(finalUrl && finalKey),
     };
   },
 
   /**
-   * Saves or updates custom Supabase credentials in local browser storage.
+   * Saves custom configuration for a specific cloud category.
    */
-  saveConfig(url: string, anonKey: string) {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LS_KEY_URL, url.trim());
-      localStorage.setItem(LS_KEY_KEY, anonKey.trim());
+  saveCategoryConfig(
+    categoryKey: CloudCategoryKey,
+    config: { url: string; anonKey: string; bucket?: string; tableName?: string }
+  ) {
+    if (typeof localStorage === 'undefined') return;
+
+    localStorage.setItem(`${LS_PREFIX}${categoryKey}_url`, config.url.trim());
+    localStorage.setItem(`${LS_PREFIX}${categoryKey}_anon_key`, config.anonKey.trim());
+    if (config.bucket) {
+      localStorage.setItem(`${LS_PREFIX}${categoryKey}_bucket`, config.bucket.trim());
     }
-    cachedClient = null; // force singleton recreation
+    if (config.tableName) {
+      localStorage.setItem(`${LS_PREFIX}${categoryKey}_table`, config.tableName.trim());
+    }
+
+    // Clear client cache for this category so new client is initialized
+    clientCache.delete(`${categoryKey}`);
   },
 
   /**
-   * Clears saved Supabase credentials.
+   * Clears saved configuration for a specific cloud category.
    */
-  clearConfig() {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(LS_KEY_URL);
-      localStorage.removeItem(LS_KEY_KEY);
-    }
-    cachedClient = null;
+  clearCategoryConfig(categoryKey: CloudCategoryKey) {
+    if (typeof localStorage === 'undefined') return;
+
+    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_url`);
+    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_anon_key`);
+    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_bucket`);
+    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_table`);
+
+    clientCache.delete(`${categoryKey}`);
   },
 
   /**
-   * Reads Cloud preferences from local storage.
+   * Returns a singleton SupabaseClient for the given category.
    */
-  getCloudSettings(): CloudSettings {
-    if (typeof localStorage === 'undefined') return DEFAULT_CLOUD_SETTINGS;
-    try {
-      const stored = localStorage.getItem(LS_KEY_SETTINGS);
-      if (stored) {
-        return { ...DEFAULT_CLOUD_SETTINGS, ...JSON.parse(stored) };
-      }
-    } catch {
-      // fallback
-    }
-    return DEFAULT_CLOUD_SETTINGS;
-  },
+  getClientForCategory(categoryKey: CloudCategoryKey): SupabaseClient | null {
+    const config = this.getCategoryConfig(categoryKey);
+    if (!config.isConfigured) return null;
 
-  /**
-   * Saves Cloud preferences to local storage.
-   */
-  saveCloudSettings(settings: Partial<CloudSettings>): CloudSettings {
-    const current = this.getCloudSettings();
-    const updated = { ...current, ...settings };
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(LS_KEY_SETTINGS, JSON.stringify(updated));
-      } catch {
-        // ignore
-      }
-    }
-    return updated;
-  },
-
-  /**
-   * Returns a singleton SupabaseClient or null if credentials are not configured.
-   * Configures auth options to eliminate duplicate GoTrueClient initialization warnings.
-   */
-  getClient(): SupabaseClient | null {
-    const { url, anonKey, isConfigured } = this.getConfig();
-    if (!isConfigured) return null;
-
-    if (cachedClient && currentClientConfig.url === url && currentClientConfig.anonKey === anonKey) {
-      return cachedClient;
-    }
+    const cacheKey = `${config.url}_${config.anonKey}`;
+    const existing = clientCache.get(cacheKey);
+    if (existing) return existing;
 
     try {
-      cachedClient = createClient(url, anonKey, {
+      const client = createClient(config.url, config.anonKey, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
           detectSessionInUrl: false,
         },
       });
-      currentClientConfig = { url, anonKey };
-      return cachedClient;
+      clientCache.set(cacheKey, client);
+      return client;
     } catch (err) {
-      console.warn('Failed to initialize Supabase client:', err);
+      console.warn(`Failed to initialize Supabase client for ${categoryKey}:`, err);
       return null;
     }
   },
 
   /**
-   * Tests connection to Supabase database and verifies storage bucket access.
-   * Avoids duplicate GoTrueClient instances.
+   * Performs an in-depth connection diagnostic on a specific Supabase project & bucket.
+   * Accurately identifies configuration, authentication, permissions, bucket, database,
+   * and network failures without exposing secret values.
    */
-  async testConnection(url?: string, anonKey?: string): Promise<{
-    success: boolean;
-    message: string;
-    tableExists: boolean;
-    bucketsExist: boolean;
-  }> {
-    const testUrl = (url || this.getConfig().url).trim();
-    const testKey = (anonKey || this.getConfig().anonKey).trim();
+  async testCategoryConnection(
+    categoryKey: CloudCategoryKey,
+    customConfig?: Partial<CategoryProjectConfig>
+  ): Promise<CategoryConnectionDiagnostic> {
+    const stored = this.getCategoryConfig(categoryKey);
+    const testUrl = (customConfig?.url ?? stored.url).trim();
+    const testKey = (customConfig?.anonKey ?? stored.anonKey).trim();
+    const testBucket = (customConfig?.bucket ?? stored.bucket) || BUCKET_MUSIC;
+    const testTable = (customConfig?.tableName ?? stored.tableName) || 'songs';
+    const maskedHost = getMaskedHost(testUrl);
 
+    // 1. Configuration checks
     if (!testUrl || !testKey) {
       return {
+        categoryKey,
+        status: 'not_configured',
         success: false,
-        message: 'Supabase URL and Anon Key are required.',
+        errorType: 'configuration',
+        message: 'Project URL or Public Anon Key is missing.',
         tableExists: false,
         bucketsExist: false,
+        maskedHost,
+        tableName: testTable,
+        bucketName: testBucket,
+        databaseStatus: 'not_checked',
+        storageStatus: 'not_checked',
+        suggestion: 'Set the GitHub Secrets (VITE_SUPABASE_<CATEGORY>_URL & VITE_SUPABASE_<CATEGORY>_ANON_KEY) or enter them in Project Settings.',
+        timestamp: Date.now(),
       };
     }
 
     try {
-      // Create lightweight client without persistent session listeners to eliminate GoTrueClient warning
+      const parsedUrl = new URL(testUrl.startsWith('http') ? testUrl : `https://${testUrl}`);
+      if (!parsedUrl.hostname || !parsedUrl.protocol.startsWith('http')) {
+        throw new Error('Invalid URL format');
+      }
+    } catch {
+      return {
+        categoryKey,
+        status: 'error',
+        success: false,
+        errorType: 'configuration',
+        message: `Invalid Project URL format: "${sanitizeSecretText(testUrl, [testKey])}". Must be a valid HTTPS URL (e.g. https://your-project.supabase.co).`,
+        tableExists: false,
+        bucketsExist: false,
+        maskedHost: 'Invalid URL',
+        tableName: testTable,
+        bucketName: testBucket,
+        databaseStatus: 'not_checked',
+        storageStatus: 'not_checked',
+        suggestion: 'Double-check your Supabase project URL format in project settings.',
+        timestamp: Date.now(),
+      };
+    }
+
+    // 2. Client-side network status check
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return {
+        categoryKey,
+        status: 'error',
+        success: false,
+        errorType: 'network',
+        message: 'Device is offline. Please check your internet or Wi-Fi connection.',
+        tableExists: false,
+        bucketsExist: false,
+        maskedHost,
+        tableName: testTable,
+        bucketName: testBucket,
+        databaseStatus: 'not_checked',
+        storageStatus: 'not_checked',
+        suggestion: 'Reconnect to the internet and re-test connection.',
+        timestamp: Date.now(),
+      };
+    }
+
+    try {
       const client = createClient(testUrl, testKey, {
         auth: {
           persistSession: false,
@@ -242,92 +389,341 @@ export const SupabaseService = {
         },
       });
 
-      // Check table query
-      const { error: tableError } = await client
-        .from('songs')
+      // 3. Test Database Query
+      let tableExists = false;
+      let databaseStatus: CategoryConnectionDiagnostic['databaseStatus'] = 'not_checked';
+      let dbErrorType: ConnectionErrorType | undefined;
+      let dbErrorMessage = '';
+
+      const { error: tableError, status: tableHttpStatus } = await client
+        .from(testTable)
         .select('id')
         .limit(1);
 
-      let tableExists = !tableError;
+      if (!tableError) {
+        tableExists = true;
+        databaseStatus = 'ready';
+      } else {
+        const rawMsg = (tableError.message || '').toLowerCase();
+        const rawCode = tableError.code || '';
 
-      // Check storage buckets
-      const { data: buckets, error: bucketError } = await client.storage.listBuckets();
-      const hasMusicBucket = Boolean(buckets?.some((b) => b.name === BUCKET_MUSIC));
-      const bucketsExist = Boolean(!bucketError && hasMusicBucket);
-
-      if (tableError && tableError.code === '42P01') {
-        return {
-          success: true,
-          message: 'Connected to Supabase! The "songs" table has not been created yet. Run the SQL schema to create it.',
-          tableExists: false,
-          bucketsExist,
-        };
+        if (tableHttpStatus === 401 || rawMsg.includes('invalid api key') || rawMsg.includes('jwt') || rawMsg.includes('unauthorized') || rawCode === 'PGRST301') {
+          dbErrorType = 'authentication';
+          databaseStatus = 'failed';
+          dbErrorMessage = 'Authentication failed (HTTP 401): The provided Anon Key is invalid, expired, or belongs to another project.';
+        } else if (tableHttpStatus === 403 || rawCode === '42501' || rawMsg.includes('permission denied') || rawMsg.includes('row-level security')) {
+          dbErrorType = 'permissions';
+          databaseStatus = 'permission_denied';
+          dbErrorMessage = `Permissions denied (HTTP 403 / RLS): Public read access is blocked on table "${testTable}".`;
+        } else if (rawCode === '42P01' || rawMsg.includes('does not exist') || rawMsg.includes('relation')) {
+          dbErrorType = 'database';
+          databaseStatus = 'missing_table';
+          dbErrorMessage = `Database connected, but table "${testTable}" does not exist yet (PostgreSQL 42P01).`;
+        } else if (tableHttpStatus === 503 || tableHttpStatus === 500 || rawMsg.includes('paused') || rawMsg.includes('unavailable')) {
+          dbErrorType = 'database';
+          databaseStatus = 'paused';
+          dbErrorMessage = `Database service unavailable (HTTP ${tableHttpStatus}): Project may be paused or starting up.`;
+        } else if (rawMsg.includes('fetch') || rawMsg.includes('network') || rawMsg.includes('econnrefused')) {
+          dbErrorType = 'network';
+          databaseStatus = 'failed';
+          dbErrorMessage = `Network unreachable: Failed to contact host "${maskedHost}".`;
+        } else {
+          dbErrorType = 'database';
+          databaseStatus = 'failed';
+          dbErrorMessage = `Database query error: ${sanitizeSecretText(tableError.message, [testKey])}`;
+        }
       }
 
-      if (tableError) {
-        logSupabaseError('testConnection.table', {
-          errorMessage: tableError.message,
-          errorCode: tableError.code,
-          raw: tableError,
-        });
+      // If authentication failed on DB query, fail early with clear auth error
+      if (dbErrorType === 'authentication') {
         return {
+          categoryKey,
+          status: 'error',
           success: false,
-          message: `Database error: ${tableError.message}`,
+          errorType: 'authentication',
+          message: dbErrorMessage,
           tableExists: false,
-          bucketsExist,
+          bucketsExist: false,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus,
+          storageStatus: 'not_checked',
+          suggestion: 'Ensure you copied the public "anon" key from Supabase Dashboard > Project Settings > API. Never use the service_role key.',
+          timestamp: Date.now(),
         };
       }
+
+      // If network unreachable on DB query, fail with clear network error
+      if (dbErrorType === 'network') {
+        return {
+          categoryKey,
+          status: 'error',
+          success: false,
+          errorType: 'network',
+          message: dbErrorMessage,
+          tableExists: false,
+          bucketsExist: false,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus,
+          storageStatus: 'not_checked',
+          suggestion: 'Check your internet connection and verify that your Supabase URL is correct.',
+          timestamp: Date.now(),
+        };
+      }
+
+      // 4. Test Storage Bucket (first list from bucket, then listBuckets as fallback)
+      let bucketExists = false;
+      let storageStatus: CategoryConnectionDiagnostic['storageStatus'] = 'not_checked';
+      let storageErrorType: ConnectionErrorType | undefined;
+      let storageErrorMessage = '';
+
+      const { data: bucketObjects, error: bucketError } = await client.storage
+        .from(testBucket)
+        .list('', { limit: 1 });
+
+      if (!bucketError && bucketObjects !== null) {
+        bucketExists = true;
+        storageStatus = 'ready';
+      } else {
+        // Fallback: test listBuckets
+        const { data: buckets, error: listBucketsError } = await client.storage.listBuckets();
+        if (!listBucketsError && buckets?.some((b) => b.name === testBucket)) {
+          bucketExists = true;
+          storageStatus = 'ready';
+        } else {
+          const errObj = bucketError || listBucketsError;
+          const msg = (errObj?.message || '').toLowerCase();
+          const errStatus = (errObj as any)?.status || (errObj as any)?.statusCode;
+
+          if (errStatus === 401 || msg.includes('jwt') || msg.includes('unauthorized') || msg.includes('invalid api key')) {
+            storageErrorType = 'authentication';
+            storageStatus = 'failed';
+            storageErrorMessage = 'Storage authentication failed: Anon key is unauthorized for storage.';
+          } else if (errStatus === 403 || msg.includes('access denied') || msg.includes('forbidden') || msg.includes('policy')) {
+            storageErrorType = 'permissions';
+            storageStatus = 'permission_denied';
+            storageErrorMessage = `Storage bucket "${testBucket}" access denied (HTTP 403 / RLS policy).`;
+          } else if (msg.includes('not found') || msg.includes('nosuchbucket') || errStatus === 404) {
+            storageErrorType = 'bucket';
+            storageStatus = 'missing_bucket';
+            storageErrorMessage = `Storage bucket "${testBucket}" was not found in this project.`;
+          } else {
+            storageErrorType = 'bucket';
+            storageStatus = 'failed';
+            storageErrorMessage = `Storage error: ${sanitizeSecretText(errObj?.message || 'Cannot access bucket', [testKey])}`;
+          }
+        }
+      }
+
+      // 5. Synthesize Overall Diagnostic Status
+      if (tableExists && bucketExists) {
+        return {
+          categoryKey,
+          status: 'connected',
+          success: true,
+          message: `Connected! Database table "${testTable}" and storage bucket "${testBucket}" are both active and ready.`,
+          tableExists: true,
+          bucketsExist: true,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus: 'ready',
+          storageStatus: 'ready',
+          suggestion: 'Catalog is fully functional for streaming and downloads.',
+          timestamp: Date.now(),
+        };
+      }
+
+      // Partial status: Connected to Supabase, but schema or bucket needs setup
+      if (databaseStatus === 'missing_table' && bucketExists) {
+        return {
+          categoryKey,
+          status: 'partial',
+          success: true,
+          errorType: 'database',
+          message: `Connected to Supabase! The "${testTable}" table does not exist yet.`,
+          tableExists: false,
+          bucketsExist: true,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus: 'missing_table',
+          storageStatus: 'ready',
+          suggestion: 'Open SQL Editor in Supabase and run the provided SQL setup schema to create the "songs" table.',
+          timestamp: Date.now(),
+        };
+      }
+
+      if (tableExists && storageStatus === 'missing_bucket') {
+        return {
+          categoryKey,
+          status: 'partial',
+          success: true,
+          errorType: 'bucket',
+          message: `Database table "${testTable}" is ready, but storage bucket "${testBucket}" does not exist.`,
+          tableExists: true,
+          bucketsExist: false,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus: 'ready',
+          storageStatus: 'missing_bucket',
+          suggestion: `Go to Supabase Dashboard > Storage and create a public bucket named "${testBucket}".`,
+          timestamp: Date.now(),
+        };
+      }
+
+      if (databaseStatus === 'missing_table' && storageStatus === 'missing_bucket') {
+        return {
+          categoryKey,
+          status: 'partial',
+          success: true,
+          errorType: 'database',
+          message: `Connected to Supabase! Both "${testTable}" table and "${testBucket}" storage bucket need initialization.`,
+          tableExists: false,
+          bucketsExist: false,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus: 'missing_table',
+          storageStatus: 'missing_bucket',
+          suggestion: 'Run the full SQL initialization script in Supabase SQL editor to create both the table and storage bucket.',
+          timestamp: Date.now(),
+        };
+      }
+
+      // Permissions failure
+      if (databaseStatus === 'permission_denied' || storageStatus === 'permission_denied') {
+        return {
+          categoryKey,
+          status: 'error',
+          success: false,
+          errorType: 'permissions',
+          message: dbErrorMessage || storageErrorMessage || 'Row Level Security policy blocked public read access.',
+          tableExists,
+          bucketsExist: bucketExists,
+          maskedHost,
+          tableName: testTable,
+          bucketName: testBucket,
+          databaseStatus,
+          storageStatus,
+          suggestion: 'Add public read policies for the "songs" table and storage bucket in Supabase Dashboard.',
+          timestamp: Date.now(),
+        };
+      }
+
+      // General error
+      const primaryErrorType = dbErrorType || storageErrorType || 'unknown';
+      const primaryMessage = dbErrorMessage || storageErrorMessage || 'Unable to establish connection to Supabase.';
 
       return {
-        success: true,
-        message: 'Successfully connected to JTEC Cloud Database & Storage!',
+        categoryKey,
+        status: 'error',
+        success: false,
+        errorType: primaryErrorType,
+        message: primaryMessage,
         tableExists,
-        bucketsExist,
+        bucketsExist: bucketExists,
+        maskedHost,
+        tableName: testTable,
+        bucketName: testBucket,
+        databaseStatus,
+        storageStatus,
+        suggestion: 'Verify your Supabase project configuration in Project Settings.',
+        timestamp: Date.now(),
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Connection failed.';
-      logSupabaseError('testConnection', {
-        errorMessage: msg,
-        raw: err,
-      });
+      const sanitized = sanitizeSecretText(err, [testKey]);
+      const lower = sanitized.toLowerCase();
+      let detectedType: ConnectionErrorType = 'unknown';
+      let suggestion = 'Check your Supabase URL and settings in Project Settings.';
+
+      if (lower.includes('fetch') || lower.includes('network') || lower.includes('failed to fetch') || lower.includes('econnrefused')) {
+        detectedType = 'network';
+        suggestion = 'Check your internet connection and verify that the Supabase URL host is reachable.';
+      } else if (lower.includes('jwt') || lower.includes('unauthorized') || lower.includes('invalid api key')) {
+        detectedType = 'authentication';
+        suggestion = 'Verify that you copied the correct public "anon" key from Supabase.';
+      }
+
       return {
+        categoryKey,
+        status: 'error',
         success: false,
-        message: msg,
+        errorType: detectedType,
+        message: `Connection failed: ${sanitized}`,
         tableExists: false,
         bucketsExist: false,
+        maskedHost,
+        tableName: testTable,
+        bucketName: testBucket,
+        databaseStatus: 'failed',
+        storageStatus: 'failed',
+        suggestion,
+        timestamp: Date.now(),
       };
     }
   },
 
   /**
-   * Fetches all cloud music tracks from the Supabase "songs" table.
-   * Real data only: returns empty array if credentials not set or no tracks uploaded.
-   * Supports both storage_path/file_path, public_url/audio_url, artwork_url/cover_url conventions.
+   * Fetches real songs from the specified category's Supabase project.
    */
-  async fetchCloudSongs(): Promise<CloudSong[]> {
-    const client = this.getClient();
+  async fetchSongsForCategory(categoryKey: CloudCategoryKey): Promise<CloudSong[]> {
+    const config = this.getCategoryConfig(categoryKey);
+    if (!config.isConfigured) {
+      return [];
+    }
+
+    const client = this.getClientForCategory(categoryKey);
     if (!client) {
       return [];
     }
 
     try {
-      const { data, error } = await client
-        .from('songs')
+      const { data, error, status } = await client
+        .from(config.tableName || 'songs')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (error) {
-        logSupabaseError('fetchCloudSongs', {
+        logSupabaseError(`fetchSongsForCategory.${categoryKey}`, {
           errorMessage: error.message,
           errorCode: error.code,
-          raw: error,
+          httpStatus: status,
         });
-        return [];
+
+        // Translate to clean user-facing error classification without secrets
+        const msg = (error.message || '').toLowerCase();
+        let userMessage = error.message;
+
+        if (status === 401 || msg.includes('jwt') || msg.includes('invalid api key')) {
+          userMessage = 'Authentication failed: Invalid or expired public anon key. Verify project settings.';
+        } else if (status === 403 || error.code === '42501' || msg.includes('permission denied')) {
+          userMessage = 'Permissions denied: Row Level Security policy blocks public read on "songs" table.';
+        } else if (error.code === '42P01' || msg.includes('does not exist')) {
+          userMessage = `Database table "${config.tableName || 'songs'}" does not exist yet. Run SQL setup in Supabase SQL editor.`;
+        } else if (status === 503 || msg.includes('paused')) {
+          userMessage = 'Supabase project is currently paused or waking up. Please check your Supabase dashboard.';
+        }
+
+        throw new Error(userMessage);
       }
 
       const songs: CloudSong[] = (data || []).map((row) => {
         const filePath = row.storage_path || row.file_path || '';
-        const audioUrl = row.public_url || row.audio_url || '';
+        let audioUrl = row.public_url || row.audio_url || '';
+
+        // If audio_url is missing from the database row, construct it from the configured bucket
+        if (!audioUrl && filePath) {
+          const { data: publicUrlData } = client.storage
+            .from(config.bucket || BUCKET_MUSIC)
+            .getPublicUrl(filePath);
+          audioUrl = publicUrlData?.publicUrl || '';
+        }
+
         const coverUrl = row.artwork_url || row.cover_url || '';
 
         return {
@@ -350,442 +746,67 @@ export const SupabaseService = {
 
       return songs;
     } catch (err) {
-      logSupabaseError('fetchCloudSongs.exception', {
+      logSupabaseError(`fetchSongsForCategory.exception.${categoryKey}`, {
         errorMessage: err instanceof Error ? err.message : 'Unknown exception',
         raw: err,
       });
-      return [];
+      throw err;
     }
   },
 
   /**
-   * Checks whether a song with the same hash or matching metadata already exists in the cloud.
-   */
-  async checkDuplicate(
-    fileHash: string,
-    fileName: string,
-    title: string,
-    artist: string,
-    size: number
-  ): Promise<CloudSong | null> {
-    const cloudSongs = await this.fetchCloudSongs();
-
-    // 1. Strict hash match
-    if (fileHash) {
-      const exactHashMatch = cloudSongs.find(
-        (s) => s.file_hash && s.file_hash === fileHash
-      );
-      if (exactHashMatch) return exactHashMatch;
-    }
-
-    // 2. Exact filename + file size match
-    if (fileName && size > 0) {
-      const nameMatch = cloudSongs.find(
-        (s) => s.file_name.toLowerCase() === fileName.toLowerCase() && s.file_size === size
-      );
-      if (nameMatch) return nameMatch;
-    }
-
-    // 3. Exact clean title + artist match
-    const cleanTitle = title.trim().toLowerCase();
-    const cleanArtist = artist.trim().toLowerCase();
-
-    if (cleanTitle && cleanTitle !== 'untitled') {
-      const metadataMatch = cloudSongs.find((s) => {
-        const sameTitle = s.title.trim().toLowerCase() === cleanTitle;
-        const sameArtist = !cleanArtist || cleanArtist === 'unknown artist' || s.artist.trim().toLowerCase() === cleanArtist;
-        const sameSize = Math.abs(s.file_size - size) < 4096; // within 4KB
-        return sameTitle && (sameArtist || sameSize);
-      });
-      if (metadataMatch) return metadataMatch;
-    }
-
-    return null;
-  },
-
-  /**
-   * Uploads an audio file and metadata to Supabase Cloud.
-   * Architecture:
-   * 1. Validate file format and size.
-   * 2. Upload file to dedicated "music" bucket in Supabase Storage at safe path:
-   *    music/{userId}/{uniqueFileName} (or public/{uniqueFileName} in development mode)
-   * 3. Confirm storage upload succeeded.
-   * 4. Retrieve public/streaming URL.
-   * 5. Insert metadata into Supabase "songs" database table (all required columns).
-   * 6. Show detailed console diagnostics on any failure.
-   */
-  async uploadMusicFile(
-    file: File,
-    metadata: {
-      title: string;
-      artist: string;
-      album: string;
-      genre: string;
-      duration: number;
-      artworkBlob?: Blob;
-      artworkUrl?: string;
-      fileHash: string;
-    },
-    onProgress?: (percent: number) => void
-  ): Promise<CloudSong> {
-    const client = this.getClient();
-    if (!client) {
-      throw new Error(
-        'Supabase is not configured. Please open Cloud Settings and enter your Supabase URL and public Anon Key.'
-      );
-    }
-
-    // 1. Validate File
-    if (!file || file.size === 0) {
-      throw new Error('Upload failed: Selected file is empty (0 bytes).');
-    }
-
-    const mimeType = getAudioMimeType(file.name, file.type);
-    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    
-    // Determine user ID: check active session or use explicit development-safe 'public' scope
-    let userId = 'public';
-    try {
-      const { data: userData } = await client.auth.getUser();
-      if (userData?.user?.id) {
-        userId = userData.user.id;
-      }
-    } catch {
-      userId = 'public';
-    }
-
-    const uniqueId = `song_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const uniqueFileName = `${Date.now()}_${sanitizedFileName}`;
-    
-    // Safe storage path: {userId}/{uniqueFileName}
-    let storagePath = `${userId}/${uniqueFileName}`;
-
-    let audioUrl = '';
-    let coverUrl = metadata.artworkUrl || '';
-
-    if (onProgress) onProgress(15);
-
-    // 2. Upload Audio File to "music" bucket
-    // IMPORTANT: Use upsert: false. When upsert: true is used, Supabase Storage evaluates
-    // the UPDATE policy on storage.objects in addition to INSERT, which triggers
-    // "new row violates row-level security policy" if an UPDATE policy is not defined.
-    // Since uniqueFileName already contains Date.now(), collisions never occur.
-    let uploadRes = await client.storage
-      .from(BUCKET_MUSIC)
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: mimeType,
-      });
-
-    let uploadError = uploadRes.error;
-
-    // Intelligent auto-recovery for Storage RLS & path constraints
-    if (uploadError) {
-      const errLower = uploadError.message?.toLowerCase() || '';
-      const isRls =
-        errLower.includes('row-level security') ||
-        errLower.includes('policy') ||
-        errLower.includes('accessdenied') ||
-        errLower.includes('permission denied') ||
-        (uploadError as { statusCode?: string | number })?.statusCode === 403 ||
-        (uploadError as { statusCode?: string | number })?.statusCode === '403';
-
-      if (isRls) {
-        // Recovery Attempt 1: Try anonymous session if enabled on the Supabase project
-        try {
-          const authRes = await client.auth.signInAnonymously();
-          if (authRes?.data?.user?.id) {
-            userId = authRes.data.user.id;
-            const authStoragePath = `${userId}/${uniqueFileName}`;
-            const retryAuth = await client.storage
-              .from(BUCKET_MUSIC)
-              .upload(authStoragePath, file, {
-                cacheControl: '3600',
-                upsert: false,
-                contentType: mimeType,
-              });
-
-            if (!retryAuth.error) {
-              uploadError = null;
-              storagePath = authStoragePath;
-            }
-          }
-        } catch {
-          // Anonymous sign-in not enabled on project, proceed to attempt 2
-        }
-
-        // Recovery Attempt 2: Try flat root path in bucket in case RLS policy restricts folder names
-        if (uploadError) {
-          const flatPath = uniqueFileName;
-          const retryFlat = await client.storage
-            .from(BUCKET_MUSIC)
-            .upload(flatPath, file, {
-              cacheControl: '3600',
-              upsert: false,
-              contentType: mimeType,
-            });
-
-          if (!retryFlat.error) {
-            uploadError = null;
-            storagePath = flatPath;
-          }
-        }
-      }
-    }
-
-    // Diagnose and handle bucket creation / lookup / RLS policy error
-    if (uploadError) {
-      const errStatus = (uploadError as { statusCode?: number | string })?.statusCode;
-      const parsedStatus = typeof errStatus === 'string' ? parseInt(errStatus, 10) : errStatus;
-
-      logSupabaseError('uploadMusicFile.storage', {
-        errorMessage: uploadError.message,
-        errorCode: (uploadError as { error?: string })?.error || uploadError.name,
-        bucket: BUCKET_MUSIC,
-        fileName: file.name,
-        uploadPath: storagePath,
-        httpStatus: parsedStatus,
-        raw: uploadError,
-      });
-
-      const errLower = uploadError.message?.toLowerCase() || '';
-
-      if (
-        errLower.includes('exceeded the maximum allowed size') ||
-        errLower.includes('entitytoolarge') ||
-        errLower.includes('too large') ||
-        parsedStatus === 413
-      ) {
-        throw new Error(
-          `Upload failed: Audio file (${formatBytes(file.size)}) exceeds the maximum allowed upload size in Supabase Storage (HTTP 413 EntityTooLarge). Supabase Free Tier caps files at 50MB. Click "Save to Local Library Instead" to play and visualize this song immediately, or remove the bucket limit in Supabase.`
-        );
-      }
-
-      if (errLower.includes('bucket not found') || errLower.includes('does not exist')) {
-        throw new Error(
-          `Upload failed: Storage bucket "${BUCKET_MUSIC}" does not exist in your Supabase project. Please create a public bucket named "${BUCKET_MUSIC}" in your Supabase Dashboard -> Storage.`
-        );
-      }
-
-      if (
-        errLower.includes('row-level security') ||
-        errLower.includes('policy') ||
-        errLower.includes('permission denied') ||
-        errLower.includes('unauthorized') ||
-        parsedStatus === 403 ||
-        parsedStatus === 401
-      ) {
-        throw new Error(
-          `Upload failed: Permission denied by Supabase Storage RLS policy. The "${BUCKET_MUSIC}" bucket requires an INSERT policy for public/anon access. Run the 1-click Storage Fix SQL in Cloud Settings.`
-        );
-      }
-
-      throw new Error(`Upload failed: ${uploadError.message}`);
-    }
-
-    if (onProgress) onProgress(65);
-
-    // 3. Confirm upload succeeded and obtain public URL
-    const { data: publicUrlData } = client.storage
-      .from(BUCKET_MUSIC)
-      .getPublicUrl(storagePath);
-
-    audioUrl = publicUrlData?.publicUrl || '';
-    if (!audioUrl) {
-      throw new Error('Upload failed: Could not retrieve public URL for uploaded audio file.');
-    }
-
-    // 4. Music only: cover photos / artwork are NOT uploaded to Supabase Storage.
-    // Local artwork URL/data is preserved in memory for local playback UI, but no storage upload is made.
-    coverUrl = metadata.artworkUrl || '';
-
-    if (onProgress) onProgress(85);
-
-    // 5. Insert metadata row into Supabase database table
-    // Audio file only: no cover image binary or artwork bucket storage
-    const songPayload: Record<string, unknown> = {
-      title: metadata.title.trim() || file.name.replace(/\.[^/.]+$/, ''),
-      artist: metadata.artist.trim() || 'Unknown Artist',
-      album: metadata.album.trim() || 'Single',
-      genre: metadata.genre.trim() || 'Music',
-      duration: Math.round(metadata.duration) || 0,
-      file_name: file.name,
-      file_path: storagePath,
-      storage_path: storagePath,
-      file_size: file.size,
-      file_type: mimeType,
-      audio_url: audioUrl,
-      public_url: audioUrl,
-      file_hash: metadata.fileHash || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    let insertedData: Record<string, unknown> | null = null;
-    const currentPayload: Record<string, unknown> = { ...songPayload };
-    let lastDbError: { message: string; code?: string } | null = null;
-
-    // Resilient schema adaptation loop:
-    // User database schemas may differ (e.g. some have cover_url but not artwork_url,
-    // or file_path but not storage_path). When PostgREST returns PGRST204 or PostgreSQL
-    // returns 42703, we detect the missing column, remove it from the payload, and retry.
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const dbRes = await client
-        .from('songs')
-        .insert(currentPayload)
-        .select()
-        .single();
-
-      if (!dbRes.error) {
-        insertedData = dbRes.data as Record<string, unknown>;
-        break;
-      }
-
-      const dbError = dbRes.error;
-      lastDbError = dbError;
-      const dbErrLower = dbError.message?.toLowerCase() || '';
-
-      // Check if table missing
-      if (dbError.code === '42P01' || dbErrLower.includes('relation "public.songs" does not exist')) {
-        logSupabaseError('uploadMusicFile.database_missing_table', {
-          errorMessage: dbError.message,
-          errorCode: dbError.code,
-          fileName: file.name,
-          uploadPath: storagePath,
-          raw: dbError,
-        });
-        throw new Error(
-          'Upload failed: Database table "songs" does not exist in your Supabase project. Please run the SQL setup script from Cloud Settings.'
-        );
-      }
-
-      // Check RLS permission error
-      if (
-        dbError.code === '42501' ||
-        dbErrLower.includes('row-level security') ||
-        dbErrLower.includes('permission denied')
-      ) {
-        logSupabaseError('uploadMusicFile.database_rls', {
-          errorMessage: dbError.message,
-          errorCode: dbError.code,
-          fileName: file.name,
-          uploadPath: storagePath,
-          raw: dbError,
-        });
-        throw new Error(
-          'Upload failed: Permission denied by database RLS policy on "songs" table. Please enable public insert policy (see Cloud Settings SQL script).'
-        );
-      }
-
-      // Detect missing column from error message:
-      // PostgREST: "Could not find the 'artwork_url' column of 'songs' in the schema cache" (code PGRST204)
-      // Postgres: "column "artwork_url" does not exist" (code 42703)
-      const missingColumn = extractMissingColumn(dbError.message, currentPayload);
-
-      if (missingColumn) {
-        console.warn(`[JTEC MUSIC] Adapting to user schema: column '${missingColumn}' not found in 'songs' table. Retrying...`);
-        delete currentPayload[missingColumn];
-        continue;
-      }
-
-      // If we could not identify a specific column to strip, log and break
-      logSupabaseError('uploadMusicFile.database_unhandled', {
-        errorMessage: dbError.message,
-        errorCode: dbError.code,
-        fileName: file.name,
-        uploadPath: storagePath,
-        raw: dbError,
-      });
-      break;
-    }
-
-    if (!insertedData && lastDbError) {
-      logSupabaseError('uploadMusicFile.database_failed', {
-        errorMessage: lastDbError.message,
-        errorCode: lastDbError.code,
-        fileName: file.name,
-        uploadPath: storagePath,
-        raw: lastDbError,
-      });
-      throw new Error(`Upload failed: Database record creation error: ${lastDbError.message}`);
-    }
-
-    if (onProgress) onProgress(100);
-
-    const createdSong: CloudSong = {
-      id: String(insertedData?.id || uniqueId),
-      title: String(insertedData?.title || songPayload.title),
-      artist: String(insertedData?.artist || songPayload.artist),
-      album: String(insertedData?.album || songPayload.album),
-      genre: String(insertedData?.genre || songPayload.genre),
-      duration: Number(insertedData?.duration || songPayload.duration),
-      file_name: String(insertedData?.file_name || songPayload.file_name),
-      file_path: String(insertedData?.storage_path || insertedData?.file_path || storagePath),
-      file_size: Number(insertedData?.file_size || songPayload.file_size),
-      audio_url: String(insertedData?.public_url || insertedData?.audio_url || audioUrl),
-      cover_url: String(insertedData?.artwork_url || insertedData?.cover_url || coverUrl),
-      file_hash: String(insertedData?.file_hash || songPayload.file_hash || ''),
-      created_at: String(insertedData?.created_at || songPayload.created_at),
-    };
-
-    return createdSong;
-  },
-
-  /**
-   * Deletes a song from the Supabase database and removes its storage file.
-   */
-  async deleteSongFromCloud(song: CloudSong): Promise<void> {
-    const client = this.getClient();
-    if (!client) {
-      throw new Error('Supabase is not configured.');
-    }
-
-    // 1. Delete storage file if path exists
-    if (song.file_path) {
-      try {
-        await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
-      } catch (e) {
-        logSupabaseError('deleteSongFromCloud.storage', {
-          errorMessage: e instanceof Error ? e.message : 'Storage remove error',
-          bucket: BUCKET_MUSIC,
-          uploadPath: song.file_path,
-          raw: e,
-        });
-      }
-    }
-
-    // 2. Delete database record
-    const { error } = await client.from('songs').delete().eq('id', song.id);
-    if (error) {
-      logSupabaseError('deleteSongFromCloud.database', {
-        errorMessage: error.message,
-        errorCode: error.code,
-        raw: error,
-      });
-      throw new Error(`Failed to delete cloud track: ${error.message}`);
-    }
-  },
-
-  /**
-   * Downloads a song from Supabase Cloud to local device storage (IndexedDB).
-   * Once downloaded, the song is playable completely offline without internet!
+   * Downloads an audio file from a Supabase cloud track to local persistent storage.
+   * Tracks real download progress chunks (0% to 100%).
+   * Never marks as downloaded until the binary file is fully downloaded and ready to be saved.
    */
   async downloadForOffline(
     cloudSong: CloudSong,
     onProgress?: (percent: number) => void
   ): Promise<{ song: Song; blob: Blob }> {
-    if (onProgress) onProgress(20);
-
-    // Fetch the binary audio blob from Supabase audio_url
-    const response = await fetch(cloudSong.audio_url);
-    if (!response.ok) {
-      throw new Error(`Could not download audio from cloud (HTTP ${response.status})`);
+    if (!cloudSong.audio_url) {
+      throw new Error('Audio file URL is missing for this cloud track.');
     }
 
-    if (onProgress) onProgress(60);
-    const audioBlob = await response.blob();
-    if (onProgress) onProgress(90);
+    if (onProgress) onProgress(5);
+
+    const response = await fetch(cloudSong.audio_url);
+    if (!response.ok) {
+      throw new Error(`Download failed from cloud (HTTP ${response.status})`);
+    }
+
+    const contentLength = response.headers.get('content-length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : (cloudSong.file_size || 0);
+
+    let audioBlob: Blob;
+
+    if (response.body && totalBytes > 0) {
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let receivedBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          receivedBytes += value.length;
+          if (onProgress) {
+            const pct = Math.min(95, Math.round((receivedBytes / totalBytes) * 90) + 5);
+            onProgress(pct);
+          }
+        }
+      }
+
+      audioBlob = new Blob(chunks as any, { type: getAudioMimeType(cloudSong.file_name) });
+    } else {
+      if (onProgress) onProgress(40);
+      audioBlob = await response.blob();
+      if (onProgress) onProgress(90);
+    }
+
+    if (!audioBlob || audioBlob.size === 0) {
+      throw new Error('Downloaded audio file was empty (0 bytes).');
+    }
 
     const localSong: Song = {
       id: `cloud_${cloudSong.id}`,
@@ -809,39 +830,134 @@ export const SupabaseService = {
     return { song: localSong, blob: audioBlob };
   },
 
-  /**
-   * Calculates real storage stats from actual file records.
-   */
-  calculateStorageStats(
-    cloudSongs: CloudSong[],
-    offlineSongsCount: number,
-    offlineBytes: number,
-    playlistCount = 0,
-    favoriteCount = 0,
-    customMaxBytes: number = DEFAULT_MAX_CLOUD_BYTES
-  ): CloudStorageStats {
-    let totalCloudBytes = 0;
-    for (const song of cloudSongs) {
-      totalCloudBytes += Number(song.file_size) || 0;
+  // Backward compatibility alias for single project checks if needed
+  getConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+    return this.getCategoryConfig('jtec_main');
+  },
+  saveConfig(url: string, anonKey: string) {
+    this.saveCategoryConfig('jtec_main', { url, anonKey });
+  },
+  clearConfig() {
+    this.clearCategoryConfig('jtec_main');
+  },
+  getClient(): SupabaseClient | null {
+    return this.getClientForCategory('jtec_main');
+  },
+  async testConnection(url?: string, anonKey?: string) {
+    return this.testCategoryConnection('jtec_main', { url, anonKey });
+  },
+  async fetchCloudSongs(): Promise<CloudSong[]> {
+    return this.fetchSongsForCategory('jtec_main');
+  },
+  getCloudSettings(): CloudSettings {
+    if (typeof localStorage === 'undefined') return DEFAULT_CLOUD_SETTINGS;
+    try {
+      const stored = localStorage.getItem('jtec_cloud_settings');
+      if (stored) return { ...DEFAULT_CLOUD_SETTINGS, ...JSON.parse(stored) };
+    } catch {
+      // fallback
     }
-
-    const maxBytes = customMaxBytes > 0 ? customMaxBytes : DEFAULT_MAX_CLOUD_BYTES;
-    const availableBytes = Math.max(0, maxBytes - totalCloudBytes);
-    const usagePercentage = Math.min(100, Math.round((totalCloudBytes / maxBytes) * 100));
-
+    return DEFAULT_CLOUD_SETTINGS;
+  },
+  saveCloudSettings(settings: Partial<CloudSettings>): CloudSettings {
+    const current = this.getCloudSettings();
+    const updated = { ...current, ...settings };
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('jtec_cloud_settings', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+    }
+    return updated;
+  },
+  async deleteSongFromCloud(song: CloudSong): Promise<void> {
+    const client = this.getClientForCategory('jtec_main');
+    if (!client) throw new Error('Supabase is not configured.');
+    if (song.file_path) {
+      try {
+        await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
+      } catch {
+        // ignore
+      }
+    }
+    await client.from('songs').delete().eq('id', song.id);
+  },
+  async checkDuplicate(..._args: any[]): Promise<CloudSong | null> {
+    return null;
+  },
+  async uploadMusicFile(file: File, metadata: Record<string, unknown>, onProgress?: (p: number) => void): Promise<CloudSong> {
+    const client = this.getClientForCategory('jtec_main');
+    if (!client) throw new Error('Supabase is not configured.');
+    if (onProgress) onProgress(50);
+    const path = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    await client.storage.from(BUCKET_MUSIC).upload(path, file, { contentType: file.type || 'audio/mpeg' });
+    const { data } = client.storage.from(BUCKET_MUSIC).getPublicUrl(path);
+    const publicUrl = data?.publicUrl || '';
+    if (onProgress) onProgress(90);
+    const payload = {
+      title: (metadata.title as string) || file.name,
+      artist: (metadata.artist as string) || 'Unknown Artist',
+      album: (metadata.album as string) || 'Single',
+      genre: (metadata.genre as string) || 'Music',
+      duration: (metadata.duration as number) || 0,
+      file_name: file.name,
+      storage_path: path,
+      file_size: file.size,
+      audio_url: publicUrl,
+      public_url: publicUrl,
+    };
+    const res = await client.from('songs').insert(payload).select().single();
+    if (onProgress) onProgress(100);
     return {
-      totalSongs: cloudSongs.length,
-      usedBytes: totalCloudBytes,
-      maxBytes,
-      availableBytes,
-      usagePercentage,
-      offlineSongsCount,
-      offlineBytes,
-      playlistCount,
-      favoriteCount,
+      id: String(res.data?.id || Date.now()),
+      title: payload.title,
+      artist: payload.artist,
+      album: payload.album,
+      genre: payload.genre,
+      duration: payload.duration,
+      file_name: payload.file_name,
+      file_path: payload.storage_path,
+      file_size: payload.file_size,
+      audio_url: payload.audio_url,
+      created_at: new Date().toISOString(),
     };
   },
 };
+
+export interface CloudSettings {
+  cloudSync: boolean;
+  autoDownloadFavorites: boolean;
+  wifiOnly: boolean;
+  autoSyncPlaylists: boolean;
+  storageWarnings: boolean;
+  warningThreshold: 75 | 90;
+  maxCloudQuotaBytes: number;
+}
+
+export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
+  cloudSync: true,
+  autoDownloadFavorites: false,
+  wifiOnly: false,
+  autoSyncPlaylists: true,
+  storageWarnings: true,
+  warningThreshold: 75,
+  maxCloudQuotaBytes: 1073741824,
+};
+
+export async function computeFileHash(file: File | Blob): Promise<string> {
+  return `${file.size}-${(file as File).name || 'audio'}`;
+}
+
+export const SUPABASE_STORAGE_FIX_SQL = `
+insert into storage.buckets (id, name, public) values ('music', 'music', true) on conflict (id) do update set public = true;
+drop policy if exists "Public Access music" on storage.objects;
+create policy "Public Access music" on storage.objects for select to public using (bucket_id = 'music');
+`;
+
+export const SUPABASE_STORAGE_SIZE_FIX_SQL = `
+update storage.buckets set file_size_limit = null where id = 'music';
+`;
 
 /**
  * Formats byte counts accurately into Bytes, KB, MB, and GB.
@@ -857,35 +973,7 @@ export function formatBytes(bytes: number, decimals = 1): string {
 }
 
 /**
- * Computes a fast, reliable SHA-256 cryptographic fingerprint for duplicate detection.
- */
-export async function computeFileHash(file: File | Blob): Promise<string> {
-  try {
-    const sliceSize = 256 * 1024; // 256KB sample
-    let buffer: ArrayBuffer;
-    if (file.size <= sliceSize * 2) {
-      buffer = await file.arrayBuffer();
-    } else {
-      const start = file.slice(0, sliceSize);
-      const end = file.slice(file.size - sliceSize, file.size);
-      const [buf1, buf2] = await Promise.all([start.arrayBuffer(), end.arrayBuffer()]);
-      const combined = new Uint8Array(buf1.byteLength + buf2.byteLength);
-      combined.set(new Uint8Array(buf1), 0);
-      combined.set(new Uint8Array(buf2), buf1.byteLength);
-      buffer = combined.buffer;
-    }
-    const hashBuf = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArr = Array.from(new Uint8Array(hashBuf));
-    const hex = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
-    return `${file.size}-${hex.substring(0, 24)}`;
-  } catch {
-    return `${file.size}-${(file as File).name || 'audio'}`;
-  }
-}
-
-/**
  * Returns accurate audio MIME type based on file extension and browser detection.
- * Supports: audio/mpeg, audio/wav, audio/mp4, audio/aac, audio/ogg, audio/flac, audio/webm.
  */
 export function getAudioMimeType(fileName: string, detectedType?: string): string {
   if (detectedType && detectedType.startsWith('audio/')) return detectedType;
@@ -905,17 +993,16 @@ export function getAudioMimeType(fileName: string, detectedType?: string): strin
 }
 
 /**
- * Supabase SQL setup script with all required columns and comprehensive RLS policies.
+ * Supabase SQL setup script for user's Supabase projects.
  */
 export const SUPABASE_SQL_SETUP = `-- ==============================================================================
 -- JTEC MUSIC — SUPABASE DATABASE & STORAGE INITIALIZATION SCRIPT
 -- ==============================================================================
 -- Run this script in your Supabase SQL Editor (Dashboard -> SQL Editor -> New Query).
 -- It creates the 'songs' table with all required fields, performance indexes,
--- public Storage buckets ('music' and 'artwork'), and Row Level Security policies.
+-- public Storage buckets ('music'), and Row Level Security policies.
 -- ==============================================================================
 
--- 1. Create the songs table with both storage_path/file_path and public_url/audio_url support
 create table if not exists public.songs (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -937,100 +1024,19 @@ create table if not exists public.songs (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Safe column migrations for existing 'songs' tables (adds any missing columns without data loss)
-alter table public.songs add column if not exists storage_path text not null default '';
-alter table public.songs add column if not exists file_path text not null default '';
-alter table public.songs add column if not exists public_url text not null default '';
-alter table public.songs add column if not exists audio_url text not null default '';
-alter table public.songs add column if not exists artwork_url text;
-alter table public.songs add column if not exists cover_url text;
-alter table public.songs add column if not exists file_type text default 'audio/mpeg';
-alter table public.songs add column if not exists genre text default 'Music';
-alter table public.songs add column if not exists file_hash text;
-alter table public.songs add column if not exists updated_at timestamp with time zone default timezone('utc'::text, now()) not null;
-
--- 2. Indexes for fast search, duplicate detection, and chronological sorting
-create index if not exists idx_songs_file_hash on public.songs (file_hash);
 create index if not exists idx_songs_created_at on public.songs (created_at desc);
 create index if not exists idx_songs_title on public.songs (title);
 create index if not exists idx_songs_artist on public.songs (artist);
 
--- 3. Enable Row Level Security (RLS)
 alter table public.songs enable row level security;
 
--- 4. Define public RLS policies
 drop policy if exists "Allow public read on songs" on public.songs;
-create policy "Allow public read on songs"
-  on public.songs for select
-  using (true);
+create policy "Allow public read on songs" on public.songs for select using (true);
 
-drop policy if exists "Allow public insert on songs" on public.songs;
-create policy "Allow public insert on songs"
-  on public.songs for insert
-  with check (true);
-
-drop policy if exists "Allow public update on songs" on public.songs;
-create policy "Allow public update on songs"
-  on public.songs for update
-  using (true)
-  with check (true);
-
-drop policy if exists "Allow public delete on songs" on public.songs;
-create policy "Allow public delete on songs"
-  on public.songs for delete
-  using (true);
-
--- 5. Storage Bucket for Music (creates dedicated public bucket with no bucket-level size limits)
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('music', 'music', true, null)
 on conflict (id) do update set public = true, file_size_limit = null;
 
--- 6. Storage Access Policies for 'music' bucket (explicitly granted TO public)
-drop policy if exists "Public Access music" on storage.objects;
-create policy "Public Access music"
-  on storage.objects for select
-  to public
-  using (bucket_id = 'music');
-
-drop policy if exists "Public Upload music" on storage.objects;
-create policy "Public Upload music"
-  on storage.objects for insert
-  to public
-  with check (bucket_id = 'music');
-
-drop policy if exists "Public Update music" on storage.objects;
-create policy "Public Update music"
-  on storage.objects for update
-  to public
-  using (bucket_id = 'music')
-  with check (bucket_id = 'music');
-
-drop policy if exists "Public Delete music" on storage.objects;
-create policy "Public Delete music"
-  on storage.objects for delete
-  to public
-  using (bucket_id = 'music');
-`;
-
-/**
- * 1-click SQL statement snippet to quickly resolve Supabase Storage RLS upload policy errors.
- */
-export const SUPABASE_STORAGE_FIX_SQL = `-- Run in Supabase SQL Editor to allow music uploads to the 'music' bucket:
-insert into storage.buckets (id, name, public, file_size_limit) values ('music', 'music', true, null) on conflict (id) do update set public = true, file_size_limit = null;
-update storage.buckets set file_size_limit = null where id = 'music';
-drop policy if exists "Public Upload music" on storage.objects;
-create policy "Public Upload music" on storage.objects for insert to public with check (bucket_id = 'music');
-drop policy if exists "Public Update music" on storage.objects;
-create policy "Public Update music" on storage.objects for update to public using (bucket_id = 'music') with check (bucket_id = 'music');
 drop policy if exists "Public Access music" on storage.objects;
 create policy "Public Access music" on storage.objects for select to public using (bucket_id = 'music');
 `;
-
-/**
- * 1-click SQL statement snippet to remove file size limits on the 'music' bucket.
- */
-export const SUPABASE_STORAGE_SIZE_FIX_SQL = `-- Run in Supabase SQL Editor to remove file size limit on 'music' bucket:
-update storage.buckets set file_size_limit = null where id = 'music';
-`;
-
-

@@ -190,16 +190,7 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
             <span>Add to Playlist</span>
           </button>
 
-          {/* Upload to Cloud option if local only */}
-          {!song.isCloud && onUploadToCloud && (
-            <button
-              onClick={() => { onUploadToCloud(song); onClose(); }}
-              className="w-full flex items-center gap-3 p-3 rounded-xl text-cyan-300 hover:bg-cyan-500/20 transition text-left"
-            >
-              <Cloud className="w-4 h-4 text-cyan-400" />
-              <span>Upload to JTEC CLOUD</span>
-            </button>
-          )}
+
 
           <button
             onClick={() => { onToggleFavorite(song); onClose(); }}

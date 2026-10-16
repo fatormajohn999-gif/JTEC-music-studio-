@@ -37,6 +37,28 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build Static Applet
+        env:
+          # Category 1: NASHEED — Nasheed & Spiritual Audio
+          VITE_SUPABASE_NASHEED_URL: ${{ secrets.VITE_SUPABASE_NASHEED_URL || secrets.SUPABASE_NASHEED_URL || secrets.NASHEED_SUPABASE_URL }}
+          VITE_SUPABASE_NASHEED_ANON_KEY: ${{ secrets.VITE_SUPABASE_NASHEED_ANON_KEY || secrets.SUPABASE_NASHEED_ANON_KEY || secrets.NASHEED_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_NASHEED_BUCKET: ${{ secrets.VITE_SUPABASE_NASHEED_BUCKET || secrets.SUPABASE_NASHEED_BUCKET || 'music' }}
+          VITE_SUPABASE_NASHEED_TABLE: ${{ secrets.VITE_SUPABASE_NASHEED_TABLE || secrets.SUPABASE_NASHEED_TABLE || 'songs' }}
+
+          # Category 2: LOVE & CHILL — Love Songs, Melodic & Chill Beats
+          VITE_SUPABASE_LOVE_CHILL_URL: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_URL || secrets.SUPABASE_LOVE_CHILL_URL || secrets.LOVE_CHILL_SUPABASE_URL }}
+          VITE_SUPABASE_LOVE_CHILL_ANON_KEY: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || secrets.SUPABASE_LOVE_CHILL_ANON_KEY || secrets.LOVE_CHILL_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_LOVE_CHILL_BUCKET: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_BUCKET || secrets.SUPABASE_LOVE_CHILL_BUCKET || 'music' }}
+          VITE_SUPABASE_LOVE_CHILL_TABLE: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_TABLE || secrets.SUPABASE_LOVE_CHILL_TABLE || 'songs' }}
+
+          # Category 3: JTEC MUSIC — Mainstream Music, Super Bass & Other Genres
+          VITE_SUPABASE_JTEC_URL: ${{ secrets.VITE_SUPABASE_JTEC_URL || secrets.SUPABASE_JTEC_URL || secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
+          VITE_SUPABASE_JTEC_ANON_KEY: ${{ secrets.VITE_SUPABASE_JTEC_ANON_KEY || secrets.SUPABASE_JTEC_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_JTEC_BUCKET: ${{ secrets.VITE_SUPABASE_JTEC_BUCKET || secrets.SUPABASE_JTEC_BUCKET || 'music' }}
+          VITE_SUPABASE_JTEC_TABLE: ${{ secrets.VITE_SUPABASE_JTEC_TABLE || secrets.SUPABASE_JTEC_TABLE || 'songs' }}
+
+          # Fallbacks / legacy variables
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Setup GitHub Pages
