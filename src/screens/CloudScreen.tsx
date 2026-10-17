@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
-  RefreshCw, Settings2, Music, AlertCircle, Sparkles, Disc,
-  Moon, Heart, Zap, ShieldCheck, Database, Volume2
+  RefreshCw, Music, AlertCircle, ShieldCheck, Database, Volume2,
+  Sparkles, Disc
 } from 'lucide-react';
 import { CloudSong, Song } from '../types/music';
 import { 
@@ -14,7 +14,6 @@ import {
   CategoryConnectionDiagnostic,
   getMaskedHost 
 } from '../services/supabase';
-import { CloudProjectConfigModal } from '../components/CloudProjectConfigModal';
 
 interface CloudScreenProps {
   offlineSongs: Song[];
@@ -100,10 +99,6 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   // Search filter inside category
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Project configuration modal state
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [configModalCategory, setConfigModalCategory] = useState<CloudCategoryKey>('nasheed');
-
   // Fast offline lookup map to check if a cloud song is already downloaded into local storage
   const offlineSet = useMemo(() => {
     const set = new Set<string>();
@@ -170,9 +165,25 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     }
   }, [selectedCategory, loadCategorySongs]);
 
+  // Pre-load track counts for configured categories on mount
+  useEffect(() => {
+    CLOUD_CATEGORIES.forEach((cat) => {
+      const config = SupabaseService.getCategoryConfig(cat.key);
+      if (config.isConfigured && categorySongs[cat.key].length === 0) {
+        SupabaseService.fetchSongsForCategory(cat.key)
+          .then((tracks) => {
+            setCategorySongs((prev) => ({ ...prev, [cat.key]: tracks }));
+          })
+          .catch(() => {
+            // will be retried when user clicks
+          });
+      }
+    });
+  }, []);
+
   // Handle hardware & browser back buttons
   useEffect(() => {
-    const handlePopState = (e: PopStateEvent) => {
+    const handlePopState = () => {
       if (selectedCategory) {
         setSelectedCategory(null);
       }
@@ -191,11 +202,6 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   const handleBackToHome = () => {
     setSelectedCategory(null);
     setSearchQuery('');
-  };
-
-  const handleOpenConfigForCategory = (catKey: CloudCategoryKey) => {
-    setConfigModalCategory(catKey);
-    setIsConfigModalOpen(true);
   };
 
   // Safe download handler
@@ -266,31 +272,30 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Icon component helper
-  const renderCategoryIcon = (iconName: 'Moon' | 'Heart' | 'Zap', className = 'w-6 h-6') => {
-    switch (iconName) {
-      case 'Moon':
-        return <Moon className={className} />;
-      case 'Heart':
-        return <Heart className={className} />;
-      case 'Zap':
-        return <Zap className={className} />;
+  // Helper for category badge styling
+  const getBadgeStyle = (categoryKey: CloudCategoryKey) => {
+    switch (categoryKey) {
+      case 'nasheed':
+        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+      case 'love_chill':
+        return 'bg-pink-500/20 text-pink-300 border-pink-500/40';
+      case 'jtec_main':
       default:
-        return <Music className={className} />;
+        return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
     }
   };
 
   return (
     <div className="space-y-6 pb-36 px-4 pt-3 max-w-5xl mx-auto animate-in fade-in">
       {/* =========================================================================
-          VIEW 1: CLOUD HOME — CATEGORY CARDS DISCOVERY
+          VIEW 1: CLOUD HOME — PREMIUM IMAGE-BASED CATEGORY CARDS
          ========================================================================= */}
       {!selectedCategory ? (
         <div className="space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-lg shadow-cyan-500/10">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-lg shadow-cyan-500/10 shrink-0">
                 <Cloud className="w-6 h-6" />
               </div>
               <div>
@@ -298,7 +303,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                   <h1 className="text-2xl font-black text-white tracking-wide">
                     Cloud Discovery
                   </h1>
-                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
+                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
                     3 Vaults
                   </span>
                 </div>
@@ -312,24 +317,17 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               <button
                 onClick={checkAllConnections}
                 disabled={isCheckingStatus}
-                className="px-3 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                title="Test all 3 Supabase vault connections"
+                className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer disabled:opacity-50 shadow-sm"
+                title="Test all Supabase vault connections"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isCheckingStatus ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Test Vaults</span>
-              </button>
-              <button
-                onClick={() => setIsConfigModalOpen(true)}
-                className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer shadow-sm hover:text-white"
-              >
-                <Settings2 className="w-4 h-4 text-cyan-400" />
-                <span>Configure Projects</span>
+                <span>{isCheckingStatus ? 'Checking...' : 'Check Vaults'}</span>
               </button>
             </div>
           </div>
 
-          {/* Three Music Category Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          {/* Three Music Category Cards — Image-based, Full-bleed, Zero decorative moon/heart icons */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
             {CLOUD_CATEGORIES.map((category) => {
               const config = SupabaseService.getCategoryConfig(category.key);
               const isConfigured = config.isConfigured;
@@ -340,111 +338,109 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 <div
                   key={category.key}
                   onClick={() => handleOpenCategory(category.key)}
-                  className={`group relative rounded-3xl p-6 bg-gradient-to-b ${category.accentBg} border ${category.borderColor} shadow-xl ${category.glowColor} transition-all duration-300 hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden`}
+                  className={`group relative rounded-3xl overflow-hidden border ${category.borderColor} shadow-2xl ${category.glowColor} transition-all duration-300 hover:-translate-y-1.5 cursor-pointer flex flex-col justify-between min-h-[300px] sm:min-h-[320px]`}
                 >
-                  {/* Subtle Background Glow Orb */}
-                  <div
-                    className="absolute -top-12 -right-12 w-36 h-36 rounded-full blur-3xl opacity-30 pointer-events-none transition duration-500 group-hover:opacity-60"
-                    style={{ backgroundColor: category.themeColor }}
-                  />
+                  {/* Full-bleed Background Image with Zoom on Hover */}
+                  <div className="absolute inset-0 w-full h-full bg-slate-950">
+                    <img
+                      src={category.imagePath}
+                      alt={category.title}
+                      className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                      loading="lazy"
+                      onError={(e) => {
+                        // Tasteful fallback if image is unavailable
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
 
-                  {/* Card Content Top */}
-                  <div className="space-y-4 relative z-10">
-                    {/* Top row: Icon + Status */}
-                    <div className="flex items-center justify-between">
-                      <div
-                        className="w-12 h-12 rounded-2xl flex items-center justify-center border shadow-inner transition duration-300 group-hover:scale-105"
-                        style={{
-                          backgroundColor: `${category.themeColor}22`,
-                          borderColor: `${category.themeColor}55`,
-                          color: category.themeColor,
-                        }}
-                      >
-                        {renderCategoryIcon(category.iconName, 'w-6 h-6')}
-                      </div>
+                  {/* High-Contrast Multi-stop Dark Gradients for Crystal Clear Legibility */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/30" />
+                  <div className={`absolute inset-0 bg-gradient-to-br ${category.accentBg} opacity-50 mix-blend-overlay`} />
 
-                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+                  {/* Card Content Top: Badge and Status */}
+                  <div className="relative z-10 p-5 sm:p-6 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm ${getBadgeStyle(category.key)}`}>
+                        {category.badge}
+                      </span>
+
+                      {/* Connection Status Pill */}
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-medium text-slate-300">
                         <span
-                          className="w-2 h-2 rounded-full animate-pulse"
+                          className={`w-2 h-2 rounded-full ${isCheckingStatus ? 'animate-pulse' : ''}`}
                           style={{
                             backgroundColor: !isConfigured
-                              ? '#64748b'
+                              ? '#94a3b8' // slate / setup required
                               : isCheckingStatus
-                              ? '#38bdf8'
+                              ? '#38bdf8' // checking
                               : diag?.status === 'connected'
-                              ? '#10b981'
+                              ? '#10b981' // live emerald
                               : diag?.status === 'partial'
-                              ? '#f59e0b'
+                              ? '#f59e0b' // partial
                               : diag?.status === 'error'
-                              ? '#f43f5e'
+                              ? '#f43f5e' // error rose
                               : category.themeColor,
                           }}
                         />
-                        <span className="truncate max-w-[130px]">
+                        <span className="truncate max-w-[120px]">
                           {!isConfigured
                             ? 'Setup Required'
                             : isCheckingStatus
                             ? 'Checking...'
                             : diag?.status === 'connected'
-                            ? 'Live • Ready'
+                            ? 'Live'
                             : diag?.status === 'partial'
                             ? 'Schema Needed'
                             : diag?.status === 'error'
-                            ? diag.errorType === 'authentication'
-                              ? 'Auth Error'
-                              : diag.errorType === 'permissions'
-                              ? 'RLS Denied'
-                              : diag.errorType === 'network'
-                              ? 'Host Offline'
-                              : 'Connection Issue'
-                            : 'Vault Connected'}
+                            ? 'Offline'
+                            : 'Connected'}
                         </span>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Titles */}
+                  {/* Card Content Bottom: Title, Subtitle, Description, CTA */}
+                  <div className="relative z-10 p-5 sm:p-6 pt-0 space-y-3">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-xl font-black text-white tracking-wider">
-                          {category.title}
-                        </h2>
-                      </div>
+                      <h2 className="text-2xl font-black text-white tracking-wider drop-shadow-md">
+                        {category.title}
+                      </h2>
                       <p
-                        className="text-xs font-semibold tracking-wide"
+                        className="text-xs font-bold tracking-wide"
                         style={{ color: category.themeColor }}
                       >
                         {category.subtitle}
                       </p>
                     </div>
 
-                    {/* Description */}
-                    <p className="text-xs text-slate-300/80 leading-relaxed min-h-[36px]">
+                    <p className="text-xs text-slate-300/90 leading-relaxed line-clamp-2">
                       {category.description}
                     </p>
-                  </div>
 
-                  {/* Card Bottom: Metadata and CTA */}
-                  <div className="pt-6 mt-6 border-t border-white/10 flex items-center justify-between relative z-10">
-                    <div className="text-[11px] text-slate-400">
-                      {isConfigured ? (
-                        <span>
-                          {count > 0 ? `${count} tracks available` : 'Ready to explore'}
-                        </span>
-                      ) : (
-                        <span>Tap to configure</span>
-                      )}
-                    </div>
+                    {/* Metadata and Explore CTA */}
+                    <div className="pt-3 border-t border-white/10 flex items-center justify-between">
+                      <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                        {isConfigured ? (
+                          <span>
+                            {count > 0 ? `${count} tracks available` : 'Ready to explore'}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">Vault setup required</span>
+                        )}
+                      </div>
 
-                    <div
-                      className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-                      style={{
-                        backgroundColor: `${category.themeColor}20`,
-                        color: category.themeColor,
-                        border: `1px solid ${category.themeColor}40`,
-                      }}
-                    >
-                      <span>Explore</span>
-                      <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
+                      <div
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm group-hover:brightness-110"
+                        style={{
+                          backgroundColor: `${category.themeColor}25`,
+                          color: category.themeColor,
+                          border: `1px solid ${category.themeColor}50`,
+                        }}
+                      >
+                        <span>Explore</span>
+                        <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -466,90 +462,99 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
         </div>
       ) : (
         /* =========================================================================
-            VIEW 2: CATEGORY MUSIC LIST & DOWNLOAD CENTER
+            VIEW 2: CATEGORY MUSIC LIST WITH MATCHING CINEMATIC BANNER IMAGE
            ========================================================================= */
         <div className="space-y-5 animate-in fade-in">
           {/* Back Navigation Bar */}
           <div className="flex items-center justify-between gap-3">
             <button
               onClick={handleBackToHome}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition cursor-pointer border border-white/10"
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition cursor-pointer border border-white/10 shadow-sm"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Back to Categories</span>
+              <span>Back to Vaults</span>
             </button>
 
             <div className="flex items-center gap-2">
               <button
                 onClick={() => loadCategorySongs(selectedCategory, true)}
                 disabled={loadingMap[selectedCategory]}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition cursor-pointer border border-white/10 disabled:opacity-50"
+                className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
                 title="Refresh tracks"
               >
                 <RefreshCw
-                  className={`w-4 h-4 ${loadingMap[selectedCategory] ? 'animate-spin text-cyan-400' : ''}`}
+                  className={`w-3.5 h-3.5 ${loadingMap[selectedCategory] ? 'animate-spin text-cyan-400' : ''}`}
                 />
-              </button>
-
-              <button
-                onClick={() => handleOpenConfigForCategory(selectedCategory)}
-                className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10"
-              >
-                <Settings2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Project Settings</span>
+                <span className="hidden sm:inline">Refresh</span>
               </button>
             </div>
           </div>
 
-          {/* Category Banner */}
+          {/* Cinematic Category Banner Image — Full-bleed Matching Background */}
           {activeCategoryMeta && (
             <div
-              className={`rounded-3xl p-6 bg-gradient-to-r ${activeCategoryMeta.accentBg} border ${activeCategoryMeta.borderColor} shadow-2xl relative overflow-hidden`}
+              className={`rounded-3xl overflow-hidden relative border ${activeCategoryMeta.borderColor} shadow-2xl min-h-[180px] sm:min-h-[210px] flex flex-col justify-end p-6 sm:p-7`}
             >
-              <div
-                className="absolute top-0 right-0 w-64 h-64 rounded-full blur-3xl opacity-25 pointer-events-none"
-                style={{ backgroundColor: activeCategoryMeta.themeColor }}
-              />
+              {/* Full-bleed Background Image */}
+              <div className="absolute inset-0 w-full h-full bg-slate-950">
+                <img
+                  src={activeCategoryMeta.imagePath}
+                  alt={activeCategoryMeta.title}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+              </div>
 
-              <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center border shadow-lg shrink-0"
-                    style={{
-                      backgroundColor: `${activeCategoryMeta.themeColor}25`,
-                      borderColor: `${activeCategoryMeta.themeColor}55`,
-                      color: activeCategoryMeta.themeColor,
-                    }}
-                  >
-                    {renderCategoryIcon(activeCategoryMeta.iconName, 'w-7 h-7')}
+              {/* Multi-stop dark gradient overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/25" />
+              <div className={`absolute inset-0 bg-gradient-to-r ${activeCategoryMeta.accentBg} opacity-60 mix-blend-overlay`} />
+
+              {/* Banner Details */}
+              <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm ${getBadgeStyle(activeCategoryMeta.key)}`}>
+                      {activeCategoryMeta.badge}
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-300 bg-black/50 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/10">
+                      Cloud Vault
+                    </span>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <h1 className="text-2xl font-black text-white tracking-wide">
-                        {activeCategoryMeta.title}
-                      </h1>
-                      <span
-                        className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-wider"
-                        style={{
-                          backgroundColor: `${activeCategoryMeta.themeColor}20`,
-                          borderColor: `${activeCategoryMeta.themeColor}40`,
-                          color: activeCategoryMeta.themeColor,
-                        }}
-                      >
-                        {activeCategoryMeta.badge}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-300 mt-1 font-medium">
-                      {activeCategoryMeta.subtitle}
-                    </p>
-                  </div>
+
+                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-wide drop-shadow-md">
+                    {activeCategoryMeta.title}
+                  </h1>
+
+                  <p className="text-xs sm:text-sm text-slate-200 font-medium">
+                    {activeCategoryMeta.subtitle}
+                  </p>
                 </div>
 
-                <div className="flex items-center gap-3 text-xs text-slate-400 sm:self-center">
-                  <span className="text-white font-bold text-sm">
-                    {categorySongs[selectedCategory]?.length || 0}
-                  </span>
-                  <span>Tracks in Catalog</span>
+                <div className="flex items-center gap-3 text-xs bg-black/60 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-white/10 shrink-0 self-start sm:self-end">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-black text-sm">
+                      {categorySongs[selectedCategory]?.length || 0}
+                    </span>
+                    <span className="text-slate-400">Tracks</span>
+                  </div>
+                  <span className="text-slate-600">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{
+                        backgroundColor: SupabaseService.getCategoryConfig(selectedCategory).isConfigured
+                          ? '#10b981'
+                          : '#94a3b8',
+                      }}
+                    />
+                    <span className="text-slate-300 font-medium">
+                      {SupabaseService.getCategoryConfig(selectedCategory).isConfigured
+                        ? 'Live Vault'
+                        : 'Setup Required'}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -565,6 +570,14 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-cyan-400 transition shadow-inner"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
           </div>
 
           {/* Content: Loading, Error, Unconfigured, or Track List */}
@@ -588,7 +601,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               ))}
             </div>
           ) : errorMap[selectedCategory] ? (
-            /* Rich Diagnostic Error State */
+            /* Rich Diagnostic Error State — No Manual Credential Form */
             <div className="p-6 rounded-3xl bg-rose-500/10 border border-rose-500/30 space-y-4 max-w-xl mx-auto">
               <div className="flex items-center justify-between border-b border-rose-500/20 pb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2.5">
@@ -619,7 +632,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               {/* Status Breakdown if diagnostic available */}
               {statusMap[selectedCategory] && (
                 <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
-                  <div className="bg-black/30 p-2 rounded-xl border border-white/5">
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5">
                     <span className="text-slate-400 block text-[10px]">Database:</span>
                     <span className="font-semibold text-slate-200">
                       {statusMap[selectedCategory]?.databaseStatus === 'ready'
@@ -632,7 +645,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     </span>
                   </div>
 
-                  <div className="bg-black/30 p-2 rounded-xl border border-white/5">
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5">
                     <span className="text-slate-400 block text-[10px]">Storage Bucket:</span>
                     <span className="font-semibold text-slate-200">
                       {statusMap[selectedCategory]?.storageStatus === 'ready'
@@ -662,16 +675,10 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 >
                   Retry Connection
                 </button>
-                <button
-                  onClick={() => handleOpenConfigForCategory(selectedCategory)}
-                  className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-black text-xs font-bold transition cursor-pointer"
-                >
-                  Project Settings
-                </button>
               </div>
             </div>
           ) : !SupabaseService.getCategoryConfig(selectedCategory).isConfigured ? (
-            /* Unconfigured State */
+            /* Unconfigured State (e.g. LOVE & CHILL) — Informative CI/CD Setup Notice */
             <div className="p-8 rounded-3xl bg-slate-900/70 border border-white/10 text-center space-y-4 max-w-lg mx-auto">
               <div
                 className="w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border shadow-lg"
@@ -683,22 +690,25 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               >
                 <Database className="w-7 h-7" />
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300">
+                  Setup Required
+                </span>
                 <h3 className="text-base font-bold text-white">
-                  {activeCategoryMeta?.title} Vault Not Configured
+                  {activeCategoryMeta?.title} Vault Configuration
                 </h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Connect your dedicated Supabase project for {activeCategoryMeta?.title} to stream
-                  and download real tracks into your local library.
+                <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
+                  This category is configured through GitHub Actions repository variables and secrets.
+                  To activate music streaming and downloads for {activeCategoryMeta?.title}, add the following variables in your GitHub Repository Settings:
+                </p>
+                <div className="p-3 rounded-2xl bg-black/50 border border-white/5 text-left text-[11px] font-mono text-slate-300 space-y-1">
+                  <div><span className="text-cyan-400">URL:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_URL</div>
+                  <div><span className="text-cyan-400">KEY:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_ANON_KEY</div>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Once set, the next GitHub Actions build will automatically connect this vault.
                 </p>
               </div>
-              <button
-                onClick={() => handleOpenConfigForCategory(selectedCategory)}
-                className="px-5 py-2.5 rounded-xl font-bold text-xs text-black shadow-lg transition cursor-pointer"
-                style={{ backgroundColor: activeCategoryMeta?.themeColor }}
-              >
-                Configure Supabase Vault
-              </button>
             </div>
           ) : filteredCategoryTracks.length === 0 ? (
             /* Empty State */
@@ -887,16 +897,6 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
           )}
         </div>
       )}
-
-      {/* Cloud Projects Configuration Modal */}
-      <CloudProjectConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        initialCategory={configModalCategory}
-        onConfigSaved={(catKey) => {
-          loadCategorySongs(catKey, true);
-        }}
-      />
     </div>
   );
 };

@@ -18,7 +18,7 @@ export interface CategoryMetadata {
   accentBg: string;
   borderColor: string;
   glowColor: string;
-  iconName: 'Moon' | 'Heart' | 'Zap';
+  imagePath: string;
 }
 
 export const CLOUD_CATEGORIES: CategoryMetadata[] = [
@@ -29,10 +29,10 @@ export const CLOUD_CATEGORIES: CategoryMetadata[] = [
     description: 'Acoustic vocals, spiritual anthems, calming recitations and peaceful melodies.',
     badge: 'Spiritual & Vocals',
     themeColor: '#10b981', // emerald
-    accentBg: 'from-emerald-950/60 via-slate-900/90 to-slate-950',
+    accentBg: 'from-emerald-950/80 via-slate-900/90 to-slate-950',
     borderColor: 'border-emerald-500/30 hover:border-emerald-400/60',
-    glowColor: 'shadow-emerald-500/10 hover:shadow-emerald-500/25',
-    iconName: 'Moon',
+    glowColor: 'shadow-emerald-500/10 hover:shadow-emerald-500/30',
+    imagePath: './images/cloud/nasheed.jpg',
   },
   {
     key: 'love_chill',
@@ -41,10 +41,10 @@ export const CLOUD_CATEGORIES: CategoryMetadata[] = [
     description: 'Romantic acoustics, lofi vibes, warm melodic ballads and late-night relaxation.',
     badge: 'Melodic & Chill',
     themeColor: '#ec4899', // pink/rose
-    accentBg: 'from-pink-950/60 via-slate-900/90 to-slate-950',
+    accentBg: 'from-pink-950/80 via-slate-900/90 to-slate-950',
     borderColor: 'border-pink-500/30 hover:border-pink-400/60',
-    glowColor: 'shadow-pink-500/10 hover:shadow-pink-500/25',
-    iconName: 'Heart',
+    glowColor: 'shadow-pink-500/10 hover:shadow-pink-500/30',
+    imagePath: './images/cloud/love_chill.jpg',
   },
   {
     key: 'jtec_main',
@@ -52,11 +52,11 @@ export const CLOUD_CATEGORIES: CategoryMetadata[] = [
     subtitle: 'Mainstream Music, Super Bass & Other Genres',
     description: 'Deep super bass, electronic energy, hip-hop, club mixes and mainstream hits.',
     badge: 'Super Bass & Mainstream',
-    accentBg: 'from-cyan-950/60 via-slate-900/90 to-slate-950',
+    accentBg: 'from-cyan-950/80 via-slate-900/90 to-slate-950',
     borderColor: 'border-cyan-500/30 hover:border-cyan-400/60',
-    glowColor: 'shadow-cyan-500/10 hover:shadow-cyan-500/25',
+    glowColor: 'shadow-cyan-500/10 hover:shadow-cyan-500/30',
     themeColor: '#00f0ff', // cyan
-    iconName: 'Zap',
+    imagePath: './images/cloud/jtec_main.jpg',
   },
 ];
 
@@ -331,7 +331,7 @@ export const SupabaseService = {
         bucketName: testBucket,
         databaseStatus: 'not_checked',
         storageStatus: 'not_checked',
-        suggestion: 'Set the GitHub Secrets (VITE_SUPABASE_<CATEGORY>_URL & VITE_SUPABASE_<CATEGORY>_ANON_KEY) or enter them in Project Settings.',
+        suggestion: 'Configure GitHub Actions repository secrets (VITE_SUPABASE_<CATEGORY>_URL & VITE_SUPABASE_<CATEGORY>_ANON_KEY) for automatic build configuration.',
         timestamp: Date.now(),
       };
     }

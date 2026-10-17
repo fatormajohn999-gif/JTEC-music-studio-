@@ -1,14 +1,14 @@
 // Service Worker for JTEC MUSIC PWA
 // Changes with every build to ensure immediate updates across all devices
-const VERSION = '1.0.1.1792153349887';
+const VERSION = '1.0.1.1792231146880';
 const CACHE_NAME = `jtec-music-${VERSION}`;
 
 // Core assets to pre-cache on install using relative paths for sub-folder and GitHub Pages support
 const PRECACHE_ASSETS = [
-  'assets/index-CKBF4--E.js',
-  'assets/index-ILMkEYMp.css',
-  'assets/web-CW2DCQua.js',
-  'assets/web-DOnCSbnn.js',
+  'assets/index-CCTDLozZ.js',
+  'assets/index-DWedXkBo.css',
+  'assets/web-B7qqylNi.js',
+  'assets/web-CNMVg_eS.js',
   './',
   './index.html',
   'manifest.webmanifest',
