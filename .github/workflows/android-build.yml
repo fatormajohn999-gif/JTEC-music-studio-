@@ -1,54 +1,56 @@
-name: Build Android APK
+name: Android Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Setup Java
+      - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 21
+          distribution: 'zulu'
+          java-version: '17'
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
       - name: Build web app
         env:
-          # Category 1: NASHEED — Nasheed & Spiritual Audio
-          VITE_SUPABASE_NASHEED_URL: ${{ secrets.VITE_SUPABASE_NASHEED_URL || secrets.SUPABASE_NASHEED_URL || secrets.NASHEED_SUPABASE_URL }}
-          VITE_SUPABASE_NASHEED_ANON_KEY: ${{ secrets.VITE_SUPABASE_NASHEED_ANON_KEY || secrets.SUPABASE_NASHEED_ANON_KEY || secrets.NASHEED_SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_NASHEED_BUCKET: ${{ secrets.VITE_SUPABASE_NASHEED_BUCKET || secrets.SUPABASE_NASHEED_BUCKET || 'music' }}
-          VITE_SUPABASE_NASHEED_TABLE: ${{ secrets.VITE_SUPABASE_NASHEED_TABLE || secrets.SUPABASE_NASHEED_TABLE || 'songs' }}
+          # Category 1: NASHEED — Nasheed & Spiritual Audio (supports secrets & vars)
+          VITE_SUPABASE_NASHEED_URL: ${{ secrets.VITE_SUPABASE_NASHEED_URL || vars.VITE_SUPABASE_NASHEED_URL || secrets.SUPABASE_NASHEED_URL || vars.SUPABASE_NASHEED_URL || secrets.NASHEED_SUPABASE_URL || vars.NASHEED_SUPABASE_URL }}
+          VITE_SUPABASE_NASHEED_ANON_KEY: ${{ secrets.VITE_SUPABASE_NASHEED_ANON_KEY || vars.VITE_SUPABASE_NASHEED_ANON_KEY || secrets.SUPABASE_NASHEED_ANON_KEY || vars.SUPABASE_NASHEED_ANON_KEY || secrets.NASHEED_SUPABASE_ANON_KEY || vars.NASHEED_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_NASHEED_BUCKET: ${{ secrets.VITE_SUPABASE_NASHEED_BUCKET || vars.VITE_SUPABASE_NASHEED_BUCKET || secrets.SUPABASE_NASHEED_BUCKET || vars.SUPABASE_NASHEED_BUCKET || 'music' }}
+          VITE_SUPABASE_NASHEED_TABLE: ${{ secrets.VITE_SUPABASE_NASHEED_TABLE || vars.VITE_SUPABASE_NASHEED_TABLE || secrets.SUPABASE_NASHEED_TABLE || vars.SUPABASE_NASHEED_TABLE || 'songs' }}
 
-          # Category 2: LOVE & CHILL — Love Songs, Melodic & Chill Beats
-          VITE_SUPABASE_LOVE_CHILL_URL: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_URL || secrets.SUPABASE_LOVE_CHILL_URL || secrets.LOVE_CHILL_SUPABASE_URL }}
-          VITE_SUPABASE_LOVE_CHILL_ANON_KEY: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || secrets.SUPABASE_LOVE_CHILL_ANON_KEY || secrets.LOVE_CHILL_SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_LOVE_CHILL_BUCKET: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_BUCKET || secrets.SUPABASE_LOVE_CHILL_BUCKET || 'music' }}
-          VITE_SUPABASE_LOVE_CHILL_TABLE: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_TABLE || secrets.SUPABASE_LOVE_CHILL_TABLE || 'songs' }}
+          # Category 2: LOVE & CHILL — Love Songs, Melodic & Chill Beats (supports secrets & vars)
+          VITE_SUPABASE_LOVE_CHILL_URL: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_URL || vars.VITE_SUPABASE_LOVE_CHILL_URL || secrets.SUPABASE_LOVE_CHILL_URL || vars.SUPABASE_LOVE_CHILL_URL || secrets.LOVE_CHILL_SUPABASE_URL || vars.LOVE_CHILL_SUPABASE_URL }}
+          VITE_SUPABASE_LOVE_CHILL_ANON_KEY: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || vars.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || secrets.SUPABASE_LOVE_CHILL_ANON_KEY || vars.SUPABASE_LOVE_CHILL_ANON_KEY || secrets.LOVE_CHILL_SUPABASE_ANON_KEY || vars.LOVE_CHILL_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_LOVE_CHILL_BUCKET: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_BUCKET || vars.VITE_SUPABASE_LOVE_CHILL_BUCKET || secrets.SUPABASE_LOVE_CHILL_BUCKET || vars.SUPABASE_LOVE_CHILL_BUCKET || 'music' }}
+          VITE_SUPABASE_LOVE_CHILL_TABLE: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_TABLE || vars.VITE_SUPABASE_LOVE_CHILL_TABLE || secrets.SUPABASE_LOVE_CHILL_TABLE || vars.SUPABASE_LOVE_CHILL_TABLE || 'songs' }}
 
-          # Category 3: JTEC MUSIC — Mainstream Music, Super Bass & Other Genres
-          VITE_SUPABASE_JTEC_URL: ${{ secrets.VITE_SUPABASE_JTEC_URL || secrets.SUPABASE_JTEC_URL || secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_JTEC_ANON_KEY: ${{ secrets.VITE_SUPABASE_JTEC_ANON_KEY || secrets.SUPABASE_JTEC_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_JTEC_BUCKET: ${{ secrets.VITE_SUPABASE_JTEC_BUCKET || secrets.SUPABASE_JTEC_BUCKET || 'music' }}
-          VITE_SUPABASE_JTEC_TABLE: ${{ secrets.VITE_SUPABASE_JTEC_TABLE || secrets.SUPABASE_JTEC_TABLE || 'songs' }}
+          # Category 3: JTEC MUSIC — Mainstream Music, Super Bass & Other Genres (supports secrets & vars)
+          VITE_SUPABASE_JTEC_URL: ${{ secrets.VITE_SUPABASE_JTEC_URL || vars.VITE_SUPABASE_JTEC_URL || secrets.SUPABASE_JTEC_URL || vars.SUPABASE_JTEC_URL || secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          VITE_SUPABASE_JTEC_ANON_KEY: ${{ secrets.VITE_SUPABASE_JTEC_ANON_KEY || vars.VITE_SUPABASE_JTEC_ANON_KEY || secrets.SUPABASE_JTEC_ANON_KEY || vars.SUPABASE_JTEC_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_JTEC_BUCKET: ${{ secrets.VITE_SUPABASE_JTEC_BUCKET || vars.VITE_SUPABASE_JTEC_BUCKET || secrets.SUPABASE_JTEC_BUCKET || vars.SUPABASE_JTEC_BUCKET || 'music' }}
+          VITE_SUPABASE_JTEC_TABLE: ${{ secrets.VITE_SUPABASE_JTEC_TABLE || vars.VITE_SUPABASE_JTEC_TABLE || secrets.SUPABASE_JTEC_TABLE || vars.SUPABASE_JTEC_TABLE || 'songs' }}
 
           # Fallbacks / legacy variables
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Add Android project if missing
@@ -68,20 +70,15 @@ jobs:
               folder = res + '/mipmap-' + d
               os.makedirs(folder, exist_ok=True)
               icon = src.resize((legacy, legacy), Image.LANCZOS)
-              icon.save(folder + '/ic_launcher.png')
+              icon.save(os.path.join(folder, 'ic_launcher.png'), 'PNG')
+              icon_round = src.resize((legacy, legacy), Image.LANCZOS)
               mask = Image.new('L', (legacy, legacy), 0)
-              ImageDraw.Draw(mask).ellipse((0, 0, legacy - 1, legacy - 1), fill=255)
-              round_icon = icon.convert('RGBA')
-              round_icon.putalpha(mask)
-              round_icon.save(folder + '/ic_launcher_round.png')
-              canvas = Image.new('RGBA', (fg, fg), (0, 0, 0, 0))
-              inner = int(fg * 0.72)
-              logo = src.resize((inner, inner), Image.LANCZOS).convert('RGBA')
-              off = (fg - inner) // 2
-              canvas.paste(logo, (off, off))
-              canvas.save(folder + '/ic_launcher_foreground.png')
-          os.makedirs(res + '/values', exist_ok=True)
-          open(res + '/values/ic_launcher_background.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n')
+              draw = ImageDraw.Draw(mask)
+              draw.ellipse((0, 0, legacy, legacy), fill=255)
+              icon_round.putalpha(mask)
+              icon_round.save(os.path.join(folder, 'ic_launcher_round.png'), 'PNG')
+              fg_img = src.resize((fg, fg), Image.LANCZOS)
+              fg_img.save(os.path.join(folder, 'ic_launcher_foreground.png'), 'PNG')
           PY
 
       - name: Sync web files into Android
@@ -91,27 +88,13 @@ jobs:
         run: node scripts/ensure-android-manifest.cjs
 
       - name: Build release APK
-        working-directory: android
         run: |
-          chmod +x ./gradlew
-          ./gradlew assembleRelease
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Sign APK
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore.p12
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          UNSIGNED=$(find android/app/build/outputs/apk/release -name "*.apk" | head -1)
-          "$BT/zipalign" -p 4 "$UNSIGNED" aligned.apk
-          "$BT/apksigner" sign --ks keystore.p12 --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD --out JTEC-native.apk aligned.apk
-          "$BT/apksigner" verify JTEC-native.apk
-          rm keystore.p12
-
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JTEC-native-apk
-          path: JTEC-native.apk
+          name: jtec-music-apk
+          path: android/app/build/outputs/apk/release/*.apk

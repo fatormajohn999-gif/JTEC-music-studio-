@@ -1362,6 +1362,9 @@ export default function App() {
         )}
       </main>
 
+      {/* Bottom dimming gradient backdrop so content smoothly fades behind mini-player & navbar */}
+      <div className="fixed bottom-0 left-0 right-0 h-36 bg-gradient-to-t from-[#060810] via-[#060810]/80 to-transparent pointer-events-none z-20" />
+
       {/* Floating Mini Player (visible whenever a song exists) */}
       <MiniPlayer
         currentSong={currentSong}

@@ -16,7 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCloud,
 }) => {
   return (
-    <header className="sticky top-0 z-30 w-full glass-panel border-b border-white/10 px-4 py-3">
+    <header className="sticky top-0 z-30 w-full glass-panel bg-[#060810]/95 backdrop-blur-xl border-b border-white/10 px-4 py-3">
       <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
         {/* Brand & Subtitle */}
         <div className="flex items-center gap-2.5">

@@ -1,33 +1,28 @@
-<!doctype html>
-<html lang="en" class="dark">
+<!DOCTYPE html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>JTEC MUSIC</title>
     <meta name="description" content="Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management." />
-    <meta property="og:title" content="JTEC MUSIC" />
-    <meta property="og:description" content="Your Music • Your Vibe • Offline. Premium mobile-first offline music player with real-time audio effects and visualizer." />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
     
-    <!-- PWA and Mobile Meta -->
-    <meta name="theme-color" content="#070913" />
+    <!-- Open Graph / Meta -->
+    <meta property="og:title" content="JTEC MUSIC" />
+    <meta property="og:description" content="Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#050811" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="JTEC MUSIC" />
-    <link rel="apple-touch-icon" href="icons/icon-192.png" />
-    <link rel="icon" href="icons/icon-192.png" />
-    <link rel="manifest" href="manifest.webmanifest" />
-    
-    <!-- Typography -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Favicon & PWA Icons -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 18V5l12-2v13'/><circle cx='6' cy='18' r='3'/><circle cx='18' cy='16' r='3'/></svg>" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   </head>
-  <body class="bg-[#060810] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200 overflow-x-hidden">
+  <body class="bg-[#050811] text-slate-100 min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

@@ -29,7 +29,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
     <div className="fixed bottom-[68px] left-0 right-0 z-30 px-3 max-w-lg mx-auto pointer-events-none">
       <div 
         onClick={onOpenFullPlayer}
-        className="pointer-events-auto relative overflow-hidden rounded-2xl glass-panel-elevated border border-cyan-500/30 p-2.5 flex items-center gap-3 cursor-pointer shadow-2xl active:scale-[0.99] transition duration-200 group"
+        className="pointer-events-auto relative overflow-hidden rounded-2xl glass-panel-elevated bg-[#0a0f24]/95 backdrop-blur-2xl border border-cyan-500/30 p-2.5 flex items-center gap-3 cursor-pointer shadow-2xl active:scale-[0.99] transition duration-200 group"
       >
         {/* Circular Artwork Profile / Default Cover */}
         <div className="relative shrink-0">

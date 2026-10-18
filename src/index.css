@@ -2,60 +2,70 @@
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    color-scheme: dark;
   }
 
-  body {
-    font-family: var(--font-sans);
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: #050811;
+    color: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
     user-select: none;
-    -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
+  }
+
+  /* Custom sleek scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
   }
 }
 
-/* Custom Neon & Glassmorphism Utilities */
+/* Glass panel for fixed header and navigation bars */
 .glass-panel {
-  background: rgba(14, 18, 36, 0.72);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: rgba(6, 8, 16, 0.95);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
+/* Elevated glass panel for floating MiniPlayer */
 .glass-panel-elevated {
-  background: rgba(18, 24, 48, 0.85);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 40px -10px rgba(0, 0, 0, 0.8), 0 0 20px -5px rgba(0, 240, 255, 0.15);
+  background: linear-gradient(135deg, rgba(14, 20, 42, 0.97) 0%, rgba(8, 11, 26, 0.98) 100%);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.85), 0 0 20px 2px rgba(0, 240, 255, 0.08);
 }
 
-.neon-glow-cyan {
-  box-shadow: 0 0 20px -3px rgba(6, 182, 212, 0.45);
-}
-
-.neon-glow-magenta {
-  box-shadow: 0 0 20px -3px rgba(236, 72, 153, 0.45);
-}
-
-.neon-glow-purple {
-  box-shadow: 0 0 25px -4px rgba(168, 85, 247, 0.45);
-}
-
+/* Brand text gradient */
 .text-gradient-cyan-purple {
   background: linear-gradient(135deg, #00f0ff 0%, #a855f7 50%, #ec4899 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-.text-gradient-neon {
-  background: linear-gradient(90deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+/* Safe area bottom padding for iPhone / mobile navigation */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
 }
 
-/* Hide scrollbars but keep scrolling */
+/* Hide scrollbar utility */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -64,30 +74,7 @@
   scrollbar-width: none;
 }
 
-/* Custom Range Input */
+/* Range input accent styling for audio seek & volume */
 input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
-}
-input[type="range"]:focus {
-  outline: none;
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  height: 18px;
-  width: 18px;
-  border-radius: 50%;
-  background: #00f0ff;
-  cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
-  margin-top: -6px;
-  border: 2px solid #ffffff;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  width: 100%;
-  height: 6px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
+  accent-color: #00f0ff;
 }

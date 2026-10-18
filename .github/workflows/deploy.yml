@@ -1,31 +1,28 @@
-name: Deploy JTEC MUSIC to GitHub Pages
+name: Deploy GitHub Pages
 
 on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
 concurrency:
   group: 'pages'
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -38,27 +35,27 @@ jobs:
 
       - name: Build Static Applet
         env:
-          # Category 1: NASHEED — Nasheed & Spiritual Audio
-          VITE_SUPABASE_NASHEED_URL: ${{ secrets.VITE_SUPABASE_NASHEED_URL || secrets.SUPABASE_NASHEED_URL || secrets.NASHEED_SUPABASE_URL }}
-          VITE_SUPABASE_NASHEED_ANON_KEY: ${{ secrets.VITE_SUPABASE_NASHEED_ANON_KEY || secrets.SUPABASE_NASHEED_ANON_KEY || secrets.NASHEED_SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_NASHEED_BUCKET: ${{ secrets.VITE_SUPABASE_NASHEED_BUCKET || secrets.SUPABASE_NASHEED_BUCKET || 'music' }}
-          VITE_SUPABASE_NASHEED_TABLE: ${{ secrets.VITE_SUPABASE_NASHEED_TABLE || secrets.SUPABASE_NASHEED_TABLE || 'songs' }}
+          # Category 1: NASHEED — Nasheed & Spiritual Audio (supports secrets & vars)
+          VITE_SUPABASE_NASHEED_URL: ${{ secrets.VITE_SUPABASE_NASHEED_URL || vars.VITE_SUPABASE_NASHEED_URL || secrets.SUPABASE_NASHEED_URL || vars.SUPABASE_NASHEED_URL || secrets.NASHEED_SUPABASE_URL || vars.NASHEED_SUPABASE_URL }}
+          VITE_SUPABASE_NASHEED_ANON_KEY: ${{ secrets.VITE_SUPABASE_NASHEED_ANON_KEY || vars.VITE_SUPABASE_NASHEED_ANON_KEY || secrets.SUPABASE_NASHEED_ANON_KEY || vars.SUPABASE_NASHEED_ANON_KEY || secrets.NASHEED_SUPABASE_ANON_KEY || vars.NASHEED_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_NASHEED_BUCKET: ${{ secrets.VITE_SUPABASE_NASHEED_BUCKET || vars.VITE_SUPABASE_NASHEED_BUCKET || secrets.SUPABASE_NASHEED_BUCKET || vars.SUPABASE_NASHEED_BUCKET || 'music' }}
+          VITE_SUPABASE_NASHEED_TABLE: ${{ secrets.VITE_SUPABASE_NASHEED_TABLE || vars.VITE_SUPABASE_NASHEED_TABLE || secrets.SUPABASE_NASHEED_TABLE || vars.SUPABASE_NASHEED_TABLE || 'songs' }}
 
-          # Category 2: LOVE & CHILL — Love Songs, Melodic & Chill Beats
-          VITE_SUPABASE_LOVE_CHILL_URL: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_URL || secrets.SUPABASE_LOVE_CHILL_URL || secrets.LOVE_CHILL_SUPABASE_URL }}
-          VITE_SUPABASE_LOVE_CHILL_ANON_KEY: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || secrets.SUPABASE_LOVE_CHILL_ANON_KEY || secrets.LOVE_CHILL_SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_LOVE_CHILL_BUCKET: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_BUCKET || secrets.SUPABASE_LOVE_CHILL_BUCKET || 'music' }}
-          VITE_SUPABASE_LOVE_CHILL_TABLE: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_TABLE || secrets.SUPABASE_LOVE_CHILL_TABLE || 'songs' }}
+          # Category 2: LOVE & CHILL — Love Songs, Melodic & Chill Beats (supports secrets & vars)
+          VITE_SUPABASE_LOVE_CHILL_URL: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_URL || vars.VITE_SUPABASE_LOVE_CHILL_URL || secrets.SUPABASE_LOVE_CHILL_URL || vars.SUPABASE_LOVE_CHILL_URL || secrets.LOVE_CHILL_SUPABASE_URL || vars.LOVE_CHILL_SUPABASE_URL }}
+          VITE_SUPABASE_LOVE_CHILL_ANON_KEY: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || vars.VITE_SUPABASE_LOVE_CHILL_ANON_KEY || secrets.SUPABASE_LOVE_CHILL_ANON_KEY || vars.SUPABASE_LOVE_CHILL_ANON_KEY || secrets.LOVE_CHILL_SUPABASE_ANON_KEY || vars.LOVE_CHILL_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_LOVE_CHILL_BUCKET: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_BUCKET || vars.VITE_SUPABASE_LOVE_CHILL_BUCKET || secrets.SUPABASE_LOVE_CHILL_BUCKET || vars.SUPABASE_LOVE_CHILL_BUCKET || 'music' }}
+          VITE_SUPABASE_LOVE_CHILL_TABLE: ${{ secrets.VITE_SUPABASE_LOVE_CHILL_TABLE || vars.VITE_SUPABASE_LOVE_CHILL_TABLE || secrets.SUPABASE_LOVE_CHILL_TABLE || vars.SUPABASE_LOVE_CHILL_TABLE || 'songs' }}
 
-          # Category 3: JTEC MUSIC — Mainstream Music, Super Bass & Other Genres
-          VITE_SUPABASE_JTEC_URL: ${{ secrets.VITE_SUPABASE_JTEC_URL || secrets.SUPABASE_JTEC_URL || secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_JTEC_ANON_KEY: ${{ secrets.VITE_SUPABASE_JTEC_ANON_KEY || secrets.SUPABASE_JTEC_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
-          VITE_SUPABASE_JTEC_BUCKET: ${{ secrets.VITE_SUPABASE_JTEC_BUCKET || secrets.SUPABASE_JTEC_BUCKET || 'music' }}
-          VITE_SUPABASE_JTEC_TABLE: ${{ secrets.VITE_SUPABASE_JTEC_TABLE || secrets.SUPABASE_JTEC_TABLE || 'songs' }}
+          # Category 3: JTEC MUSIC — Mainstream Music, Super Bass & Other Genres (supports secrets & vars)
+          VITE_SUPABASE_JTEC_URL: ${{ secrets.VITE_SUPABASE_JTEC_URL || vars.VITE_SUPABASE_JTEC_URL || secrets.SUPABASE_JTEC_URL || vars.SUPABASE_JTEC_URL || secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          VITE_SUPABASE_JTEC_ANON_KEY: ${{ secrets.VITE_SUPABASE_JTEC_ANON_KEY || vars.VITE_SUPABASE_JTEC_ANON_KEY || secrets.SUPABASE_JTEC_ANON_KEY || vars.SUPABASE_JTEC_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_JTEC_BUCKET: ${{ secrets.VITE_SUPABASE_JTEC_BUCKET || vars.VITE_SUPABASE_JTEC_BUCKET || secrets.SUPABASE_JTEC_BUCKET || vars.SUPABASE_JTEC_BUCKET || 'music' }}
+          VITE_SUPABASE_JTEC_TABLE: ${{ secrets.VITE_SUPABASE_JTEC_TABLE || vars.VITE_SUPABASE_JTEC_TABLE || secrets.SUPABASE_JTEC_TABLE || vars.SUPABASE_JTEC_TABLE || 'songs' }}
 
           # Fallbacks / legacy variables
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Setup GitHub Pages
