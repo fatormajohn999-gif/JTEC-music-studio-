@@ -886,42 +886,8 @@ export const SupabaseService = {
   async checkDuplicate(..._args: any[]): Promise<CloudSong | null> {
     return null;
   },
-  async uploadMusicFile(file: File, metadata: Record<string, unknown>, onProgress?: (p: number) => void): Promise<CloudSong> {
-    const client = this.getClientForCategory('jtec_main');
-    if (!client) throw new Error('Supabase is not configured.');
-    if (onProgress) onProgress(50);
-    const path = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    await client.storage.from(BUCKET_MUSIC).upload(path, file, { contentType: file.type || 'audio/mpeg' });
-    const { data } = client.storage.from(BUCKET_MUSIC).getPublicUrl(path);
-    const publicUrl = data?.publicUrl || '';
-    if (onProgress) onProgress(90);
-    const payload = {
-      title: (metadata.title as string) || file.name,
-      artist: (metadata.artist as string) || 'Unknown Artist',
-      album: (metadata.album as string) || 'Single',
-      genre: (metadata.genre as string) || 'Music',
-      duration: (metadata.duration as number) || 0,
-      file_name: file.name,
-      storage_path: path,
-      file_size: file.size,
-      audio_url: publicUrl,
-      public_url: publicUrl,
-    };
-    const res = await client.from('songs').insert(payload).select().single();
-    if (onProgress) onProgress(100);
-    return {
-      id: String(res.data?.id || Date.now()),
-      title: payload.title,
-      artist: payload.artist,
-      album: payload.album,
-      genre: payload.genre,
-      duration: payload.duration,
-      file_name: payload.file_name,
-      file_path: payload.storage_path,
-      file_size: payload.file_size,
-      audio_url: payload.audio_url,
-      created_at: new Date().toISOString(),
-    };
+  async uploadMusicFile(_file: File, _metadata: Record<string, unknown>, _onProgress?: (p: number) => void): Promise<CloudSong> {
+    throw new Error('Cloud uploading is disabled. JTEC MUSIC supports local device imports only.');
   },
 };
 

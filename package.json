@@ -6,27 +6,28 @@
   "scripts": {
     "dev": "vite --port 3000 --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 3000 --host 0.0.0.0",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@capacitor/core": "^7.0.1",
-    "@capacitor/local-notifications": "^7.0.0",
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/local-notifications": "^7.0.7",
     "@jofr/capacitor-media-session": "^4.0.0",
-    "@supabase/supabase-js": "^2.48.1",
-    "lucide-react": "^1.16.0",
+    "@supabase/supabase-js": "^2.118.0",
+    "lucide-react": "^1.59.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@capacitor/android": "^7.0.1",
-    "@capacitor/cli": "^7.0.1",
-    "@tailwindcss/vite": "^4.0.9",
-    "@types/node": "^22.13.4",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "tailwindcss": "^4.0.9",
-    "typescript": "^5.7.3",
-    "vite": "^6.2.0"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4"
   }
 }

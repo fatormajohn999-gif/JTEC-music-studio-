@@ -252,7 +252,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div>
                 <h4 className="text-sm font-bold text-white">Your Library is Empty</h4>
                 <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-                  Import your music files or upload to JTEC CLOUD to play your music offline.
+                  Import audio files from your device to build your offline music library.
                 </p>
               </div>
               <button

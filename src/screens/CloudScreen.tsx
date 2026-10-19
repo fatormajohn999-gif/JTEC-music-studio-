@@ -720,7 +720,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
                 {searchQuery
                   ? `No tracks matching "${searchQuery}" in this catalog.`
-                  : `Your Supabase project's "songs" table currently has no records. Upload audio files to your Supabase project to populate this catalog.`}
+                  : `This cloud catalog currently has no tracks available.`}
               </p>
               {searchQuery && (
                 <button

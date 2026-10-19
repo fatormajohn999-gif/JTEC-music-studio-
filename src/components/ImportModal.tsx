@@ -9,14 +9,12 @@ interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportComplete: (songs: Song[]) => void;
-  onOpenCloudUpload?: () => void;
 }
 
 export const ImportModal: React.FC<ImportModalProps> = ({
   isOpen,
   onClose,
   onImportComplete,
-  onOpenCloudUpload,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressText, setProgressText] = useState('');
@@ -155,35 +153,11 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           </div>
 
           <div>
-            <h2 className="text-xl font-bold text-white tracking-wide">Add Music to Library</h2>
+            <h2 className="text-xl font-bold text-white tracking-wide">Import Music to Library</h2>
             <p className="text-xs text-slate-400 mt-1">
-              Store locally or upload to Supabase cloud storage
+              Select audio files from your device to play 100% offline
             </p>
           </div>
-
-          {/* Cloud Option Banner if Supabase connected */}
-          {onOpenCloudUpload && (
-            <div className="p-3 rounded-2xl bg-gradient-to-r from-cyan-500/15 to-purple-600/15 border border-cyan-500/30 flex items-center justify-between gap-3 text-left">
-              <div className="flex items-center gap-2.5">
-                <Cloud className="w-5 h-5 text-cyan-400 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-white">Want Cloud Persistence?</p>
-                  <p className="text-[11px] text-slate-400">
-                    Upload to JTEC CLOUD (Supabase) to keep tracks across browser data clears.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenCloudUpload();
-                }}
-                className="px-3 py-1.5 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs hover:bg-cyan-400 transition shrink-0 shadow-md shadow-cyan-500/20"
-              >
-                Cloud Upload
-              </button>
-            </div>
-          )}
 
           {/* Drag & Drop Box */}
           <div

@@ -9,20 +9,24 @@
     <!-- Open Graph / Meta -->
     <meta property="og:title" content="JTEC MUSIC" />
     <meta property="og:description" content="Premium mobile-first offline music player with slow+reverb effects, real-time Web Audio visualizer, and local library management." />
+    <meta property="og:image" content="./logo.png" />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#050811" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="JTEC MUSIC" />
-
+    
     <!-- Favicon & PWA Icons -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 18V5l12-2v13'/><circle cx='6' cy='18' r='3'/><circle cx='18' cy='16' r='3'/></svg>" />
+    <link rel="icon" type="image/png" href="./logo.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png" />
     <link rel="manifest" href="./manifest.json" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="stylesheet" crossorigin href="./assets/index-Drysp-ai.css">
   </head>
   <body class="bg-[#050811] text-slate-100 min-h-screen">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

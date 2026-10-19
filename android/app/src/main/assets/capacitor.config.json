@@ -1,0 +1,14 @@
+{
+	"appId": "com.jtecmusic.app",
+	"appName": "JTEC MUSIC",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	},
+	"plugins": {
+		"LocalNotifications": {
+			"smallIcon": "ic_launcher_round",
+			"iconColor": "#00f0ff"
+		}
+	}
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">JTEC MUSIC</string>
+    <string name="title_activity_main">JTEC MUSIC</string>
+    <string name="package_name">com.jtecmusic.app</string>
+    <string name="custom_url_scheme">com.jtecmusic.app</string>
+</resources>

@@ -293,7 +293,7 @@ function rgbToHex(rgb: RGB): string {
 }
 
 // Authentic default colors for every scene when no cover is present
-const THEME_ORIGINAL_COLORS: Record<CinematicScene, { main: RGB; secondary: RGB; accent: RGB }> = {
+const THEME_ORIGINAL_COLORS: Record<string, { main: RGB; secondary: RGB; accent: RGB }> = {
   auto: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
   dark_spectrum: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
   cyber_city: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#ec4899'), accent: hexToRgb('#f59e0b') },
@@ -911,16 +911,17 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         resolvedScene = internalSceneRef.current;
       } else {
         // Backwards compatibility mappings for older scene names
-        if (activeSceneProp === 'aurora' || activeSceneProp === 'prism') resolvedScene = 'dark_spectrum';
-        else if (activeSceneProp === 'neon_city' || activeSceneProp === 'meteor_shower') resolvedScene = 'cyber_city';
-        else if (activeSceneProp === 'deep_space' || activeSceneProp === 'black_hole') resolvedScene = 'galaxy';
-        else if (activeSceneProp === 'inferno') resolvedScene = 'fire_energy';
-        else if (activeSceneProp === 'dream') resolvedScene = 'rainy_night';
-        else if (activeSceneProp === 'energy' || activeSceneProp === 'neural_network') resolvedScene = 'anime_ninja';
-        else if (activeSceneProp === 'nature') resolvedScene = 'samurai';
-        else if (activeSceneProp === 'ocean') resolvedScene = 'deep_ocean';
-        else if (activeSceneProp === 'vortex') resolvedScene = 'music_tunnel';
-        else if (activeSceneProp === 'crystal') resolvedScene = 'minimal_pro';
+        const sceneStr = activeSceneProp as string;
+        if (sceneStr === 'aurora' || sceneStr === 'prism') resolvedScene = 'dark_spectrum';
+        else if (sceneStr === 'neon_city' || sceneStr === 'meteor_shower') resolvedScene = 'cyber_city';
+        else if (sceneStr === 'deep_space' || sceneStr === 'black_hole') resolvedScene = 'galaxy';
+        else if (sceneStr === 'inferno') resolvedScene = 'fire_energy';
+        else if (sceneStr === 'dream') resolvedScene = 'rainy_night';
+        else if (sceneStr === 'energy' || sceneStr === 'neural_network') resolvedScene = 'anime_ninja';
+        else if (sceneStr === 'nature') resolvedScene = 'samurai';
+        else if (sceneStr === 'ocean') resolvedScene = 'deep_ocean';
+        else if (sceneStr === 'vortex') resolvedScene = 'music_tunnel';
+        else if (sceneStr === 'crystal') resolvedScene = 'minimal_pro';
       }
 
       // Sync Night Walk video container visibility & playback

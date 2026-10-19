@@ -97,6 +97,8 @@ export interface Song {
   isFavorite?: boolean;
   isDemo?: boolean;
   palette?: ArtworkPalette;
+  year?: string | number;
+  coverUrl?: string;
 }
 
 export interface Playlist {
@@ -121,6 +123,8 @@ export interface CloudSong {
   file_name: string;
   file_size?: number;
   file_hash?: string;
+  file_path?: string;
+  storage_path?: string;
   created_at: string;
   category?: string;
   bucket?: string;

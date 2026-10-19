@@ -1,17 +1,20 @@
-import { Capacitor } from '@capacitor/core';
-import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
 import './index.css';
+import { Capacitor } from '@capacitor/core';
 
-// Register service worker at site root on initial page load (web only, skip on native app)
+// PWA Service Worker Registration
 if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('./sw.js', { scope: './' })
-      .catch(() => {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
-      });
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
   });
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

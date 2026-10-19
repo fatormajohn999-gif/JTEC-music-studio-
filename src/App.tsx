@@ -23,7 +23,6 @@ import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
-import { CloudUploadModal } from './components/CloudUploadModal';
 import { PWAUpdateBanner } from './components/PWAUpdateBanner';
 
 // Screens
@@ -78,7 +77,6 @@ export default function App() {
   // Supabase Cloud State
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
   const [isCloudSettingsOpen, setIsCloudSettingsOpen] = useState(false);
-  const [isCloudUploadOpen, setIsCloudUploadOpen] = useState(false);
 
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
@@ -1174,54 +1172,6 @@ export default function App() {
     setStorageStats(stats);
   };
 
-  const handleUploadSuccess = async (newSongs: CloudSong[]) => {
-    const allCloud = await SupabaseService.fetchCloudSongs();
-    await syncCloudWithLocalSongs(allCloud);
-    const stats = await StorageService.getStorageStats();
-    setStorageStats(stats);
-    setIsCloudUploadOpen(false);
-  };
-
-  // Upload local track to Supabase Cloud directly from song options menu
-  const handleUploadLocalSongToCloud = async (song: Song) => {
-    try {
-      const blob = await StorageService.getSongBlob(song.id);
-      if (!blob) {
-        setGlobalError("Audio file not found on local device storage to upload.");
-        setTimeout(() => setGlobalError(null), 5000);
-        return;
-      }
-      const file = new File([blob], `${song.title}.${song.format || 'mp3'}`, {
-        type: blob.type || 'audio/mpeg',
-      });
-      const uploaded = await SupabaseService.uploadMusicFile(file, {
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
-        genre: song.genre || 'Music',
-        duration: song.duration,
-        artworkUrl: song.artworkUrl,
-        fileHash: song.fileHash || '',
-      });
-      // Update local song record
-      const updatedSong: Song = {
-        ...song,
-        isCloud: true,
-        cloudId: uploaded.id,
-        audioUrl: uploaded.audio_url,
-      };
-      await StorageService.saveSong(updatedSong);
-      setSongs((prev) => prev.map((s) => (s.id === song.id ? updatedSong : s)));
-      setCloudSongs((prev) => [uploaded, ...prev]);
-      setGlobalError(`"${song.title}" uploaded successfully to JTEC CLOUD!`);
-      setTimeout(() => setGlobalError(null), 4000);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Upload failed.';
-      setGlobalError(msg);
-      setTimeout(() => setGlobalError(null), 6000);
-    }
-  };
-
   // Import completion callback
   const handleImportComplete = async (newSongs: Song[]) => {
     setSongs((prev) => [...newSongs, ...prev]);
@@ -1269,6 +1219,12 @@ export default function App() {
           setIsSettingsView(false);
           setCurrentTab('cloud');
         }}
+        onLogoClick={() => {
+          setIsSettingsView(false);
+          setCurrentTab('home');
+        }}
+        isSettingsView={isSettingsView}
+        onBackFromSettings={() => setIsSettingsView(false)}
       />
 
       {/* Main Body Content Router */}
@@ -1455,10 +1411,6 @@ export default function App() {
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
         onImportComplete={handleImportComplete}
-        onOpenCloudUpload={() => {
-          setIsImportOpen(false);
-          setIsCloudUploadOpen(true);
-        }}
       />
 
       {/* PLAYLIST MODAL */}
@@ -1496,26 +1448,8 @@ export default function App() {
         onToggleFavorite={handleToggleFavorite}
         onViewDetails={(song) => setDetailsSong(song)}
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
-        onUploadToCloud={handleUploadLocalSongToCloud}
         onUpdateCover={handleUpdateSongCover}
         onRemoveCover={handleRemoveSongCover}
-      />
-
-      {/* CLOUD UPLOAD MODAL */}
-      <CloudUploadModal
-        isOpen={isCloudUploadOpen}
-        onClose={() => setIsCloudUploadOpen(false)}
-        onUploadSuccess={handleUploadSuccess}
-        onPlayCloudSong={handlePlayCloudSong}
-        onSongSavedLocally={async (savedSong) => {
-          setSongs((prev) => [savedSong, ...prev.filter((s) => s.id !== savedSong.id)]);
-          const stats = await StorageService.getStorageStats();
-          setStorageStats(stats);
-        }}
-        onOpenSettings={() => {
-          setIsCloudUploadOpen(false);
-          setIsCloudSettingsOpen(true);
-        }}
       />
 
       {/* CLOUD SETTINGS MODAL */}

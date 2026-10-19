@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass,
-  BellOff, Bell, X
+  BellOff, Bell, X, Shield, BookOpen
 } from 'lucide-react';
 import { NotificationPermissionManager } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
+import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
+import { UserGuideView } from '../components/UserGuideView';
 import { APP_VERSION, BUILD_DATE } from '../version';
 
 interface SettingsScreenProps {
@@ -33,6 +35,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onCancelSleepTimer,
   onExtendSleepTimer,
 }) => {
+  const [activeSubView, setActiveSubView] = useState<'main' | 'privacy' | 'guide'>('main');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [notificationDenied, setNotificationDenied] = useState(false);
   const [showHowToModal, setShowHowToModal] = useState(false);
@@ -70,6 +73,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const handleVisualizerChange = (mode: VisualizerMode) => {
     onUpdateSettings({ ...settings, visualizerMode: mode });
   };
+
+  if (activeSubView === 'privacy') {
+    return <PrivacyPolicyView onBack={() => setActiveSubView('main')} />;
+  }
+
+  if (activeSubView === 'guide') {
+    return <UserGuideView onBack={() => setActiveSubView('main')} />;
+  }
 
   return (
     <div className="space-y-6 pb-36 px-4 pt-3 max-w-4xl mx-auto animate-in fade-in">
@@ -458,6 +469,54 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <span>Clear Offline Music Library</span>
           </button>
         )}
+      </div>
+
+      {/* INFORMATION, PRIVACY & USER GUIDE */}
+      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-cyan-400" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+            Information & Support
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Privacy Policy Card */}
+          <button
+            type="button"
+            onClick={() => setActiveSubView('privacy')}
+            className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <ShieldCheck className="w-5 h-5 text-cyan-400" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">Privacy Policy</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">Local data, Supabase interaction & permissions</p>
+              </div>
+            </div>
+            <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
+          </button>
+
+          {/* How to Use JTEC MUSIC Card */}
+          <button
+            type="button"
+            onClick={() => setActiveSubView('guide')}
+            className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-purple-500/40 text-left transition active:scale-98 group cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                <BookOpen className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white group-hover:text-purple-300 transition">How to Use JTEC MUSIC</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">Importing, playback, visualizers & effects</p>
+              </div>
+            </div>
+            <span className="text-purple-400 text-xs font-semibold pl-2">Guide →</span>
+          </button>
+        </div>
       </div>
 
       <div className="text-center text-xs text-slate-500 pb-10 space-y-3">

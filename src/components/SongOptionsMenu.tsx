@@ -13,7 +13,6 @@ interface SongOptionsMenuProps {
   onToggleFavorite: (song: Song) => void;
   onViewDetails: (song: Song) => void;
   onRemoveFromLibrary: (song: Song) => void;
-  onUploadToCloud?: (song: Song) => void;
   onUpdateCover?: (song: Song, artworkUrl: string) => void;
   onRemoveCover?: (song: Song) => void;
 }
@@ -29,7 +28,6 @@ export const SongOptionsMenu: React.FC<SongOptionsMenuProps> = ({
   onToggleFavorite,
   onViewDetails,
   onRemoveFromLibrary,
-  onUploadToCloud,
   onUpdateCover,
   onRemoveCover,
 }) => {
