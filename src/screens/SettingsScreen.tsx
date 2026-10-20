@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass,
-  BellOff, Bell, X, Shield, BookOpen
+  BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle, Activity
 } from 'lucide-react';
 import { NotificationPermissionManager } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
@@ -11,6 +11,7 @@ import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
 import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
 import { UserGuideView } from '../components/UserGuideView';
 import { APP_VERSION, BUILD_DATE } from '../version';
+import { SupabaseService, SourceDiagnosticResult } from '../services/supabase';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -39,6 +40,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [notificationDenied, setNotificationDenied] = useState(false);
   const [showHowToModal, setShowHowToModal] = useState(false);
+  const [isTestingConnections, setIsTestingConnections] = useState(false);
+  const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[] | null>(null);
+
+  const handleRunConnectionTest = async () => {
+    setIsTestingConnections(true);
+    try {
+      const results = await SupabaseService.testAllSources();
+      setConnectionResults(results);
+    } catch (err) {
+      console.error('Connection test error:', err);
+    } finally {
+      setIsTestingConnections(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -426,7 +441,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         {onOpenCloudSettings && (
           <button
             onClick={onOpenCloudSettings}
-            className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 to-purple-600/10 border border-cyan-500/30 text-white hover:border-cyan-400 transition text-xs font-semibold"
+            className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 to-purple-600/10 border border-cyan-500/30 text-white hover:border-cyan-400 transition text-xs font-semibold cursor-pointer"
           >
             <div className="flex items-center gap-2">
               <Cloud className="w-4 h-4 text-cyan-400" />
@@ -435,6 +450,99 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <span className="text-cyan-300 text-[11px]">Configure →</span>
           </button>
         )}
+
+        {/* CONNECTION TEST DIAGNOSTICS CARD */}
+        <div className="p-4 rounded-2xl bg-slate-950/70 border border-white/10 space-y-3.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0">
+                <Activity className="w-4 h-4 text-cyan-400" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Supabase Diagnostics
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Verify public read connectivity & HTTP status across all sources
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRunConnectionTest}
+              disabled={isTestingConnections}
+              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 shadow-lg shadow-cyan-500/20"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isTestingConnections ? 'animate-spin' : ''}`} />
+              <span>{isTestingConnections ? 'Testing...' : 'Connection test'}</span>
+            </button>
+          </div>
+
+          {/* Connection Test Results */}
+          {connectionResults && (
+            <div className="space-y-2.5 pt-1 animate-in fade-in">
+              {connectionResults.map((res) => (
+                <div
+                  key={res.categoryKey}
+                  className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                    res.success
+                      ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
+                      : !res.isConfigured
+                      ? 'bg-amber-950/30 border-amber-500/30 text-amber-200'
+                      : 'bg-rose-950/30 border-rose-500/30 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-white flex items-center gap-1.5">
+                      {res.success ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      ) : !res.isConfigured ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                      )}
+                      <span>{res.sourceName}</span>
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-black/40 border border-white/10 text-slate-300">
+                        HTTP {res.httpStatus}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          res.success
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : !res.isConfigured
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        }`}
+                      >
+                        {res.success ? 'Read Succeeded' : !res.isConfigured ? 'Not Configured' : 'Read Failed'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Host: <strong className="font-mono text-slate-200">{res.projectHost}</strong></span>
+                    <span>Version: <strong className="font-mono text-cyan-300">{res.appVersion}</strong></span>
+                  </div>
+
+                  {res.errorMessage && (
+                    <div className="p-2 rounded-lg bg-black/50 text-[11px] text-slate-300 font-mono leading-relaxed border border-white/5">
+                      {res.errorMessage}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                <span>App Version: <strong className="text-slate-400">{APP_VERSION}</strong></span>
+                <span>Protected: No API keys or secrets are ever exposed</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Clear Library Button */}
         {showClearConfirm ? (

@@ -4,7 +4,8 @@ import {
   HardDrive, Wifi, RefreshCw, Trash2, Shield, BellRing, Settings2
 } from 'lucide-react';
 import { 
-  SupabaseService, SUPABASE_SQL_SETUP, SUPABASE_STORAGE_FIX_SQL, CloudSettings, formatBytes 
+  SupabaseService, SUPABASE_SQL_SETUP, SUPABASE_STORAGE_FIX_SQL, CloudSettings, formatBytes,
+  CloudCategoryKey, CLOUD_CATEGORIES 
 } from '../services/supabase';
 
 interface CloudSettingsModalProps {
@@ -30,7 +31,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   onClearOfflineDownloads,
   onConfigChanged,
 }) => {
-  const currentConfig = SupabaseService.getConfig();
+  const [selectedCategory, setSelectedCategory] = useState<CloudCategoryKey>('jtec_main');
+  const currentConfig = SupabaseService.getCategoryConfig(selectedCategory);
   const [url, setUrl] = useState(currentConfig.url);
   const [anonKey, setAnonKey] = useState(currentConfig.anonKey);
   const [isTesting, setIsTesting] = useState(false);
@@ -63,6 +65,14 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     onConfigChanged();
   };
 
+  const handleSelectCategory = (catKey: CloudCategoryKey) => {
+    setSelectedCategory(catKey);
+    const cfg = SupabaseService.getCategoryConfig(catKey);
+    setUrl(cfg.url);
+    setAnonKey(cfg.anonKey);
+    setTestResult(null);
+  };
+
   const handleTestAndSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim() || !anonKey.trim()) return;
@@ -70,18 +80,18 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     setIsTesting(true);
     setTestResult(null);
 
-    const result = await SupabaseService.testConnection(url, anonKey);
+    const result = await SupabaseService.testCategoryConnection(selectedCategory, { url, anonKey });
     setIsTesting(false);
     setTestResult(result);
 
     if (result.success) {
-      SupabaseService.saveConfig(url, anonKey);
+      SupabaseService.saveCategoryConfig(selectedCategory, { url, anonKey });
       onConfigChanged();
     }
   };
 
   const handleDisconnect = () => {
-    SupabaseService.clearConfig();
+    SupabaseService.clearCategoryConfig(selectedCategory);
     setUrl('');
     setAnonKey('');
     setTestResult(null);
@@ -334,6 +344,32 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             >
               {currentConfig.isConfigured ? 'Connected' : 'Not Connected'}
             </span>
+          </div>
+
+          {/* Category Selector Tabs */}
+          <div className="grid grid-cols-3 gap-2 p-1 rounded-2xl bg-black/40 border border-white/5">
+            {CLOUD_CATEGORIES.map((cat) => {
+              const cfg = SupabaseService.getCategoryConfig(cat.key);
+              const isSelected = selectedCategory === cat.key;
+              return (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => handleSelectCategory(cat.key)}
+                  className={`py-2 px-2 rounded-xl text-center transition flex flex-col items-center gap-0.5 cursor-pointer ${
+                    isSelected
+                      ? 'bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400 text-white shadow-sm'
+                      : 'border border-transparent text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="text-xs font-bold truncate max-w-full">{cat.title}</span>
+                  <span className={`text-[9px] font-mono flex items-center gap-1 ${cfg.isConfigured ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${cfg.isConfigured ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                    {cfg.isConfigured ? 'Connected' : 'Not Set'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <form onSubmit={handleTestAndSave} className="space-y-3 bg-slate-900/60 rounded-2xl p-4 border border-white/5">

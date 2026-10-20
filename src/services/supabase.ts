@@ -131,6 +131,10 @@ export function sanitizeSecretText(input: unknown, knownSecrets: (string | undef
   return str;
 }
 
+export function logSupabaseError(context: string, details: Record<string, unknown>) {
+  console.warn(`[SupabaseService] ${context}:`, details);
+}
+
 /**
  * Extracts a safe display hostname from a Supabase URL without credentials or query params.
  */
@@ -144,31 +148,82 @@ export function getMaskedHost(url: string): string {
   }
 }
 
-export function logSupabaseError(context: string, details: {
-  errorMessage: string;
-  errorCode?: string | number;
-  bucket?: string;
-  fileName?: string;
-  httpStatus?: number;
-  raw?: unknown;
-}) {
-  const sanitizedMessage = sanitizeSecretText(details.errorMessage);
-  console.error(`🚨 [JTEC MUSIC - SUPABASE ERROR in ${context}]`, {
-    'error message': sanitizedMessage,
-    'error code': details.errorCode || 'UNKNOWN',
-    'bucket': details.bucket || 'N/A',
-    'file name': details.fileName || 'N/A',
-    'HTTP status': details.httpStatus || 'N/A',
-  });
+/**
+ * Ensures absolute HTTPS URL without trailing slashes.
+ * Rejects localhost, 127.0.0.1, relative paths, or window.location.origin.
+ */
+export function normalizeSupabaseUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let clean = rawUrl.trim();
+  if (!clean) return '';
+
+  // Reject local/relative addresses
+  if (
+    clean.includes('localhost') ||
+    clean.includes('127.0.0.1') ||
+    clean.startsWith('/') ||
+    clean.startsWith('./')
+  ) {
+    console.warn(`[SupabaseService] Disallowed relative or local URL: ${clean}. Only absolute https URLs are allowed.`);
+    return '';
+  }
+
+  // Ensure absolute HTTPS protocol
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    clean = `https://${clean}`;
+  } else if (clean.startsWith('http://')) {
+    clean = clean.replace(/^http:\/\//, 'https://');
+  }
+
+  // Strip trailing slashes
+  return clean.replace(/\/+$/, '');
+}
+
+/**
+ * Retries an asynchronous operation up to maxRetries times with exponential backoff delay.
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries = 3,
+  delayMs = 600,
+  context = 'Supabase operation'
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        console.warn(`[SupabaseService] ${context} attempt ${attempt} failed, retrying in ${delayMs * attempt}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+      }
+    }
+  }
+  throw lastError;
+}
+
+export const APP_VERSION = 'v1.0.1 (Build 101)';
+
+export interface SourceDiagnosticResult {
+  categoryKey: CloudCategoryKey;
+  sourceName: string;
+  projectHost: string;
+  success: boolean;
+  httpStatus: number | string;
+  errorMessage?: string;
+  isConfigured: boolean;
+  appVersion: string;
+  testedAt: number;
 }
 
 export const SupabaseService = {
   /**
    * Retrieves configuration for a specific cloud category.
    * Priority:
-   * 1. Category-specific LocalStorage
-   * 2. Category-specific Vite environment variables (supports standard and alternate prefixes)
-   * 3. Fallback to general Supabase credentials (for jtec_main or initial setup)
+   * 1. Category-specific LocalStorage (custom override for debugging or testing)
+   * 2. Category-specific Vite environment variables (direct import.meta.env references for static build replacement)
+   * 3. Fallback to general Supabase credentials (for jtec_main)
    */
   getCategoryConfig(categoryKey: CloudCategoryKey): CategoryProjectConfig {
     if (typeof localStorage === 'undefined') {
@@ -180,50 +235,105 @@ export const SupabaseService = {
     const lsBucket = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_bucket`) || '').trim();
     const lsTable = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_table`) || '').trim();
 
-    // Check category-specific env vars with flexible naming support
+    // Check category-specific env vars with direct static property access so Vite replaces them at build time
     let envUrl = '';
     let envKey = '';
     let envBucket = '';
     let envTable = '';
 
+    const dynamicEnv = (import.meta.env as Record<string, string | undefined>) || {};
+
     if (categoryKey === 'nasheed') {
-      envUrl = (import.meta.env.VITE_SUPABASE_NASHEED_URL as string) ||
-               (import.meta.env.VITE_NASHEED_SUPABASE_URL as string) || '';
-      envKey = (import.meta.env.VITE_SUPABASE_NASHEED_ANON_KEY as string) ||
-               (import.meta.env.VITE_NASHEED_SUPABASE_ANON_KEY as string) || '';
-      envBucket = (import.meta.env.VITE_SUPABASE_NASHEED_BUCKET as string) ||
-                  (import.meta.env.VITE_NASHEED_SUPABASE_BUCKET as string) || '';
-      envTable = (import.meta.env.VITE_SUPABASE_NASHEED_TABLE as string) ||
-                 (import.meta.env.VITE_NASHEED_SUPABASE_TABLE as string) || '';
+      envUrl = (import.meta.env.VITE_SUPABASE_NASHEED_URL ||
+                import.meta.env.VITE_NASHEED_SUPABASE_URL ||
+                import.meta.env.VITE_NASHEED_URL ||
+                dynamicEnv.SUPABASE_NASHEED_URL ||
+                dynamicEnv.NASHEED_SUPABASE_URL ||
+                dynamicEnv.NASHEED_URL || '').trim();
+
+      envKey = (import.meta.env.VITE_SUPABASE_NASHEED_ANON_KEY ||
+                import.meta.env.VITE_NASHEED_SUPABASE_ANON_KEY ||
+                import.meta.env.VITE_NASHEED_ANON_KEY ||
+                import.meta.env.VITE_NASHEED_KEY ||
+                dynamicEnv.SUPABASE_NASHEED_ANON_KEY ||
+                dynamicEnv.NASHEED_SUPABASE_ANON_KEY ||
+                dynamicEnv.NASHEED_ANON_KEY ||
+                dynamicEnv.NASHEED_KEY || '').trim();
+
+      envBucket = (import.meta.env.VITE_SUPABASE_NASHEED_BUCKET ||
+                   dynamicEnv.SUPABASE_NASHEED_BUCKET ||
+                   dynamicEnv.NASHEED_BUCKET || '').trim();
+
+      envTable = (import.meta.env.VITE_SUPABASE_NASHEED_TABLE ||
+                  dynamicEnv.SUPABASE_NASHEED_TABLE ||
+                  dynamicEnv.NASHEED_TABLE || '').trim();
     } else if (categoryKey === 'love_chill') {
-      envUrl = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_URL as string) ||
-               (import.meta.env.VITE_LOVE_CHILL_SUPABASE_URL as string) || '';
-      envKey = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_ANON_KEY as string) ||
-               (import.meta.env.VITE_LOVE_CHILL_SUPABASE_ANON_KEY as string) || '';
-      envBucket = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_BUCKET as string) ||
-                  (import.meta.env.VITE_LOVE_CHILL_SUPABASE_BUCKET as string) || '';
-      envTable = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_TABLE as string) ||
-                 (import.meta.env.VITE_LOVE_CHILL_SUPABASE_TABLE as string) || '';
+      envUrl = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_URL ||
+                import.meta.env.VITE_LOVE_CHILL_SUPABASE_URL ||
+                import.meta.env.VITE_LOVE_CHILL_URL ||
+                import.meta.env.VITE_SUPABASE_LOVE_URL ||
+                import.meta.env.VITE_LOVE_URL ||
+                dynamicEnv.SUPABASE_LOVE_CHILL_URL ||
+                dynamicEnv.LOVE_CHILL_SUPABASE_URL ||
+                dynamicEnv.LOVE_CHILL_URL || '').trim();
+
+      envKey = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_ANON_KEY ||
+                import.meta.env.VITE_LOVE_CHILL_SUPABASE_ANON_KEY ||
+                import.meta.env.VITE_LOVE_CHILL_ANON_KEY ||
+                import.meta.env.VITE_LOVE_CHILL_KEY ||
+                import.meta.env.VITE_SUPABASE_LOVE_ANON_KEY ||
+                import.meta.env.VITE_LOVE_ANON_KEY ||
+                dynamicEnv.SUPABASE_LOVE_CHILL_ANON_KEY ||
+                dynamicEnv.LOVE_CHILL_SUPABASE_ANON_KEY ||
+                dynamicEnv.LOVE_CHILL_ANON_KEY ||
+                dynamicEnv.LOVE_CHILL_KEY || '').trim();
+
+      envBucket = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_BUCKET ||
+                   dynamicEnv.SUPABASE_LOVE_CHILL_BUCKET ||
+                   dynamicEnv.LOVE_CHILL_BUCKET || '').trim();
+
+      envTable = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_TABLE ||
+                  dynamicEnv.SUPABASE_LOVE_CHILL_TABLE ||
+                  dynamicEnv.LOVE_CHILL_TABLE || '').trim();
     } else if (categoryKey === 'jtec_main') {
-      envUrl = (import.meta.env.VITE_SUPABASE_JTEC_URL as string) ||
-               (import.meta.env.VITE_JTEC_SUPABASE_URL as string) ||
-               (import.meta.env.VITE_SUPABASE_URL as string) || '';
-      envKey = (import.meta.env.VITE_SUPABASE_JTEC_ANON_KEY as string) ||
-               (import.meta.env.VITE_JTEC_SUPABASE_ANON_KEY as string) ||
-               (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '';
-      envBucket = (import.meta.env.VITE_SUPABASE_JTEC_BUCKET as string) ||
-                  (import.meta.env.VITE_JTEC_SUPABASE_BUCKET as string) ||
-                  (import.meta.env.VITE_SUPABASE_BUCKET as string) || '';
-      envTable = (import.meta.env.VITE_SUPABASE_JTEC_TABLE as string) ||
-                 (import.meta.env.VITE_JTEC_SUPABASE_TABLE as string) ||
-                 (import.meta.env.VITE_SUPABASE_TABLE as string) || '';
+      envUrl = (import.meta.env.VITE_SUPABASE_JTEC_MAIN_URL ||
+                import.meta.env.VITE_SUPABASE_JTEC_URL ||
+                import.meta.env.VITE_JTEC_SUPABASE_URL ||
+                import.meta.env.VITE_JTEC_MAIN_URL ||
+                import.meta.env.VITE_JTEC_URL ||
+                import.meta.env.VITE_SUPABASE_URL ||
+                dynamicEnv.SUPABASE_JTEC_MAIN_URL ||
+                dynamicEnv.SUPABASE_JTEC_URL ||
+                dynamicEnv.SUPABASE_URL ||
+                dynamicEnv.JTEC_URL || '').trim();
+
+      envKey = (import.meta.env.VITE_SUPABASE_JTEC_MAIN_ANON_KEY ||
+                import.meta.env.VITE_SUPABASE_JTEC_ANON_KEY ||
+                import.meta.env.VITE_JTEC_SUPABASE_ANON_KEY ||
+                import.meta.env.VITE_JTEC_MAIN_ANON_KEY ||
+                import.meta.env.VITE_JTEC_ANON_KEY ||
+                import.meta.env.VITE_JTEC_KEY ||
+                import.meta.env.VITE_SUPABASE_ANON_KEY ||
+                dynamicEnv.SUPABASE_JTEC_MAIN_ANON_KEY ||
+                dynamicEnv.SUPABASE_JTEC_ANON_KEY ||
+                dynamicEnv.SUPABASE_ANON_KEY ||
+                dynamicEnv.JTEC_KEY || '').trim();
+
+      envBucket = (import.meta.env.VITE_SUPABASE_JTEC_BUCKET ||
+                   import.meta.env.VITE_SUPABASE_BUCKET ||
+                   dynamicEnv.SUPABASE_BUCKET || '').trim();
+
+      envTable = (import.meta.env.VITE_SUPABASE_JTEC_TABLE ||
+                  import.meta.env.VITE_SUPABASE_TABLE ||
+                  dynamicEnv.SUPABASE_TABLE || '').trim();
     }
 
     // Fallback to legacy single project credentials for jtec_main if not specifically configured
     const legacyLsUrl = (localStorage.getItem('jtec_supabase_url') || '').trim();
     const legacyLsKey = (localStorage.getItem('jtec_supabase_anon_key') || '').trim();
 
-    const finalUrl = lsUrl || envUrl || (categoryKey === 'jtec_main' ? legacyLsUrl : '');
+    const rawUrl = lsUrl || envUrl || (categoryKey === 'jtec_main' ? legacyLsUrl : '');
+    const finalUrl = normalizeSupabaseUrl(rawUrl);
     const finalKey = lsKey || envKey || (categoryKey === 'jtec_main' ? legacyLsKey : '');
     const finalBucket = lsBucket || envBucket || BUCKET_MUSIC;
     const finalTable = lsTable || envTable || 'songs';
@@ -233,7 +343,7 @@ export const SupabaseService = {
       anonKey: finalKey,
       bucket: finalBucket || BUCKET_MUSIC,
       tableName: finalTable || 'songs',
-      isConfigured: Boolean(finalUrl && finalKey),
+      isConfigured: Boolean(finalUrl && finalKey && finalUrl.startsWith('https://')),
     };
   },
 
@@ -298,6 +408,132 @@ export const SupabaseService = {
       console.warn(`Failed to initialize Supabase client for ${categoryKey}:`, err);
       return null;
     }
+  },
+
+  /**
+   * Tests a simple public read (SELECT limit 1) on a Supabase source using only the anon key.
+   * Returns host-only project address (never keys), HTTP status, error message, and app version.
+   */
+  async testSourceRead(categoryKey: CloudCategoryKey): Promise<SourceDiagnosticResult> {
+    const meta = CLOUD_CATEGORIES.find((c) => c.key === categoryKey);
+    const sourceName = meta ? `${meta.title} (${meta.badge})` : categoryKey.toUpperCase();
+    const config = this.getCategoryConfig(categoryKey);
+    const projectHost = getMaskedHost(config.url);
+
+    if (!config.isConfigured || !config.url || !config.anonKey) {
+      return {
+        categoryKey,
+        sourceName,
+        projectHost: 'Not Configured',
+        success: false,
+        httpStatus: 'N/A',
+        errorMessage: `Source "${sourceName}" is not configured. Missing build-time environment variables (VITE_SUPABASE_${categoryKey.toUpperCase()}_URL & VITE_SUPABASE_${categoryKey.toUpperCase()}_ANON_KEY).`,
+        isConfigured: false,
+        appVersion: APP_VERSION,
+        testedAt: Date.now(),
+      };
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return {
+        categoryKey,
+        sourceName,
+        projectHost,
+        success: false,
+        httpStatus: 'N/A',
+        errorMessage: 'Device is offline. Check your internet or Wi-Fi connection.',
+        isConfigured: true,
+        appVersion: APP_VERSION,
+        testedAt: Date.now(),
+      };
+    }
+
+    try {
+      const client = this.getClientForCategory(categoryKey) || createClient(config.url, config.anonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      });
+
+      // Execute simple public read (SELECT limit 1) with automatic retries
+      const res = await withRetry(
+        () => client.from(config.tableName || 'songs').select('*').limit(1),
+        3,
+        400,
+        `Read test ${categoryKey}`
+      );
+      const { error, status } = res as { error: any; status: number };
+
+      if (!error && status >= 200 && status < 300) {
+        return {
+          categoryKey,
+          sourceName,
+          projectHost,
+          success: true,
+          httpStatus: status || 200,
+          errorMessage: undefined,
+          isConfigured: true,
+          appVersion: APP_VERSION,
+          testedAt: Date.now(),
+        };
+      }
+
+      const statusNum = status || (error?.code ? 400 : 'N/A');
+      const rawMsg = (error?.message || '').toLowerCase();
+      let cleanError = error?.message || 'Read failed';
+
+      if (status === 401 || rawMsg.includes('invalid api key') || rawMsg.includes('jwt') || rawMsg.includes('unauthorized')) {
+        cleanError = 'Authentication failed (HTTP 401): The public anon key is invalid or unauthorized.';
+      } else if (status === 403 || error?.code === '42501' || rawMsg.includes('permission denied') || rawMsg.includes('row-level security')) {
+        cleanError = `Permissions denied (HTTP 403): Row Level Security policy blocks public read on "${config.tableName || 'songs'}". Run public read SQL policy.`;
+      } else if (error?.code === '42P01' || rawMsg.includes('does not exist') || rawMsg.includes('relation')) {
+        cleanError = `Table not found (HTTP 404 / 42P01): Table "${config.tableName || 'songs'}" does not exist in this project.`;
+      } else if (status === 503 || status === 500 || rawMsg.includes('paused')) {
+        cleanError = `Service unavailable (HTTP ${status}): Supabase project may be paused or starting up.`;
+      } else if (rawMsg.includes('fetch') || rawMsg.includes('network')) {
+        cleanError = `Network unreachable: Failed to contact host "${projectHost}".`;
+      } else {
+        cleanError = `Read error (HTTP ${statusNum}): ${sanitizeSecretText(error?.message, [config.anonKey])}`;
+      }
+
+      return {
+        categoryKey,
+        sourceName,
+        projectHost,
+        success: false,
+        httpStatus: statusNum,
+        errorMessage: cleanError,
+        isConfigured: true,
+        appVersion: APP_VERSION,
+        testedAt: Date.now(),
+      };
+    } catch (err) {
+      const sanitized = sanitizeSecretText(err, [config.anonKey]);
+      return {
+        categoryKey,
+        sourceName,
+        projectHost,
+        success: false,
+        httpStatus: 'N/A',
+        errorMessage: `Connection failed: ${sanitized}`,
+        isConfigured: true,
+        appVersion: APP_VERSION,
+        testedAt: Date.now(),
+      };
+    }
+  },
+
+  /**
+   * Tests all Supabase sources in parallel for connection diagnostics.
+   */
+  async testAllSources(): Promise<SourceDiagnosticResult[]> {
+    return Promise.all(CLOUD_CATEGORIES.map((cat) => this.testSourceRead(cat.key)));
+  },
+
+  async runAllSourcesDiagnostics(): Promise<SourceDiagnosticResult[]> {
+    return this.testAllSources();
   },
 
   /**
@@ -673,20 +909,29 @@ export const SupabaseService = {
    */
   async fetchSongsForCategory(categoryKey: CloudCategoryKey): Promise<CloudSong[]> {
     const config = this.getCategoryConfig(categoryKey);
-    if (!config.isConfigured) {
-      return [];
+    const meta = CLOUD_CATEGORIES.find((c) => c.key === categoryKey);
+    const categoryTitle = meta?.title || categoryKey.toUpperCase();
+
+    if (!config.isConfigured || !config.url || !config.anonKey) {
+      throw new Error(`Source "${categoryTitle}" is not configured. Missing build-time configuration.`);
     }
 
     const client = this.getClientForCategory(categoryKey);
     if (!client) {
-      return [];
+      throw new Error(`Failed to initialize Supabase client for ${categoryTitle}.`);
     }
 
     try {
-      const { data, error, status } = await client
-        .from(config.tableName || 'songs')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const res = await withRetry(
+        () => client
+          .from(config.tableName || 'songs')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        3,
+        500,
+        `fetchSongsForCategory.${categoryKey}`
+      );
+      const { data, error, status } = res as { data: any[]; error: any; status: number };
 
       if (error) {
         logSupabaseError(`fetchSongsForCategory.${categoryKey}`, {

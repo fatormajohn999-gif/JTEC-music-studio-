@@ -15,12 +15,14 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
     if (compact) {
       return (
         <button
+          type="button"
           onClick={install}
           title="Install JTEC MUSIC"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-lg shadow-cyan-500/20 hover:brightness-110 active:scale-95 transition"
+          aria-label="Install JTEC MUSIC application for offline use"
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-lg shadow-cyan-500/25 hover:brightness-110 active:scale-95 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810]"
         >
-          <Download className="w-3.5 h-3.5" />
-          <span>Install App</span>
+          <Download className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Install</span>
         </button>
       );
     }

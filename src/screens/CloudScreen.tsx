@@ -126,8 +126,12 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   // Fetch songs for a specific category
   const loadCategorySongs = useCallback(async (catKey: CloudCategoryKey, force = false) => {
     const config = SupabaseService.getCategoryConfig(catKey);
+    const meta = CLOUD_CATEGORIES.find((c) => c.key === catKey);
     if (!config.isConfigured) {
-      setErrorMap((prev) => ({ ...prev, [catKey]: null }));
+      setErrorMap((prev) => ({
+        ...prev,
+        [catKey]: `Source "${meta?.title || catKey}" is not configured. Missing build-time configuration.`,
+      }));
       return;
     }
 
@@ -385,11 +389,11 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                         />
                         <span className="truncate max-w-[120px]">
                           {!isConfigured
-                            ? 'Setup Required'
+                            ? 'Not Configured'
                             : isCheckingStatus
                             ? 'Checking...'
                             : diag?.status === 'connected'
-                            ? 'Live'
+                            ? 'Connected'
                             : diag?.status === 'partial'
                             ? 'Schema Needed'
                             : diag?.status === 'error'
@@ -692,21 +696,21 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               </div>
               <div className="space-y-2">
                 <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300">
-                  Setup Required
+                  Not Configured
                 </span>
                 <h3 className="text-base font-bold text-white">
-                  {activeCategoryMeta?.title} Vault Configuration
+                  Source {activeCategoryMeta?.title} is not configured
                 </h3>
                 <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
-                  This category is configured through GitHub Actions repository variables and secrets.
-                  To activate music streaming and downloads for {activeCategoryMeta?.title}, add the following variables in your GitHub Repository Settings:
+                  The build-time environment variables for {activeCategoryMeta?.title} were not detected.
+                  To activate music streaming and downloads, define the following variables in your GitHub Repository Secrets or build environment:
                 </p>
                 <div className="p-3 rounded-2xl bg-black/50 border border-white/5 text-left text-[11px] font-mono text-slate-300 space-y-1">
                   <div><span className="text-cyan-400">URL:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_URL</div>
                   <div><span className="text-cyan-400">KEY:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_ANON_KEY</div>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  Once set, the next GitHub Actions build will automatically connect this vault.
+                  Once set, the next APK or web build will automatically connect this music source.
                 </p>
               </div>
             </div>
