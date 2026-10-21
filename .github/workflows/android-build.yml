@@ -72,15 +72,20 @@ jobs:
               folder = res + '/mipmap-' + d
               os.makedirs(folder, exist_ok=True)
               icon = src.resize((legacy, legacy), Image.LANCZOS)
-              icon.save(os.path.join(folder, 'ic_launcher.png'), 'PNG')
-              icon_round = src.resize((legacy, legacy), Image.LANCZOS)
+              icon.save(folder + '/ic_launcher.png')
               mask = Image.new('L', (legacy, legacy), 0)
-              draw = ImageDraw.Draw(mask)
-              draw.ellipse((0, 0, legacy, legacy), fill=255)
-              icon_round.putalpha(mask)
-              icon_round.save(os.path.join(folder, 'ic_launcher_round.png'), 'PNG')
-              fg_img = src.resize((fg, fg), Image.LANCZOS)
-              fg_img.save(os.path.join(folder, 'ic_launcher_foreground.png'), 'PNG')
+              ImageDraw.Draw(mask).ellipse((0, 0, legacy - 1, legacy - 1), fill=255)
+              round_icon = icon.convert('RGBA')
+              round_icon.putalpha(mask)
+              round_icon.save(folder + '/ic_launcher_round.png')
+              canvas = Image.new('RGBA', (fg, fg), (0, 0, 0, 0))
+              inner = int(fg * 0.72)
+              logo = src.resize((inner, inner), Image.LANCZOS).convert('RGBA')
+              off = (fg - inner) // 2
+              canvas.paste(logo, (off, off))
+              canvas.save(folder + '/ic_launcher_foreground.png')
+          os.makedirs(res + '/values', exist_ok=True)
+          open(res + '/values/ic_launcher_background.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n')
           PY
 
       - name: Sync web files into Android
@@ -92,8 +97,8 @@ jobs:
       - name: Configure Android package ID and version settings
         env:
           PACKAGE_ID: ${{ secrets.CAPACITOR_APP_ID || vars.CAPACITOR_APP_ID || secrets.ANDROID_PACKAGE_ID || vars.ANDROID_PACKAGE_ID || 'com.jtecmusic.app' }}
-          VERSION_NAME: ${{ vars.APP_VERSION_NAME || secrets.APP_VERSION_NAME || '1.0.1' }}
-          VERSION_CODE: ${{ vars.APP_VERSION_CODE || secrets.APP_VERSION_CODE || '101' }}
+          VERSION_NAME: ${{ vars.APP_VERSION_NAME || secrets.APP_VERSION_NAME || '1.0' }}.${{ github.run_number }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           node - <<'NODE'
           const fs = require('fs');
@@ -103,8 +108,9 @@ jobs:
             let content = fs.readFileSync(gradlePath, 'utf8');
             const pkgId = process.env.PACKAGE_ID || 'com.jtecmusic.app';
             const verName = process.env.VERSION_NAME || '1.0.1';
-            let verCode = parseInt(process.env.VERSION_CODE || '101', 10);
-            if (isNaN(verCode) || verCode < 100) verCode = 101;
+            // versionCode grows with every build so each new APK can update the old one
+            let verCode = 100 + parseInt(process.env.RUN_NUMBER || '1', 10);
+            if (isNaN(verCode) || verCode < 101) verCode = 101;
             
             content = content.replace(/applicationId\s+["'][^"']+["']/, `applicationId "${pkgId}"`);
             content = content.replace(/versionCode\s+\d+/, `versionCode ${verCode}`);
@@ -123,63 +129,39 @@ jobs:
 
       - name: Sign and align release APK
         env:
-          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 || secrets.SIGNING_KEY || secrets.ANDROID_KEYSTORE_BASE64 || '' }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.ANDROID_KEY_ALIAS || 'jtecmusic' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.ANDROID_KEY_PASSWORD || 'jtecmusic123' }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD || 'jtecmusic123' }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 || secrets.RELEASE_KEYSTORE_BASE64 || secrets.SIGNING_KEY || secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.ANDROID_KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: signing key secret (KEYSTORE_BASE64) is missing. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
           RELEASE_DIR="android/app/build/outputs/apk/release"
           UNSIGNED_APK="$RELEASE_DIR/app-release-unsigned.apk"
           ALIGNED_APK="$RELEASE_DIR/app-release-aligned.apk"
-          SIGNED_APK="$RELEASE_DIR/app-release.apk"
-          
-          # Find Android SDK build tools for zipalign and apksigner
+          SIGNED_APK="$RELEASE_DIR/jtec-music-release.apk"
           BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           echo "Using Android build tools from: $BUILD_TOOLS_DIR"
-          
-          KEYSTORE_FILE="/tmp/release.keystore"
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "Using provided release signing keystore..."
-            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_FILE"
-          else
-            echo "Generating consistent release keystore for signing..."
-            keytool -genkeypair -v \
-              -keystore "$KEYSTORE_FILE" \
-              -alias "$KEY_ALIAS" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass "$STORE_PASSWORD" \
-              -keypass "$KEY_PASSWORD" \
-              -dname "CN=JTEC MUSIC, OU=Mobile, O=JTEC, L=London, ST=London, C=GB"
+          echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.keystore
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "ERROR: unsigned APK not found at $UNSIGNED_APK"
+            ls -la "$RELEASE_DIR" || true
+            exit 1
           fi
-          
-          if [ -f "$UNSIGNED_APK" ]; then
-            echo "Zipaligning APK..."
-            "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$UNSIGNED_APK" "$ALIGNED_APK"
-            
-            echo "Signing APK with apksigner (v1, v2, v3 schemes)..."
-            "$BUILD_TOOLS_DIR/apksigner" sign \
-              --ks "$KEYSTORE_FILE" \
-              --ks-key-alias "$KEY_ALIAS" \
-              --ks-pass "pass:$STORE_PASSWORD" \
-              --key-pass "pass:$KEY_PASSWORD" \
-              --out "$SIGNED_APK" \
-              "$ALIGNED_APK"
-              
-            echo "Verifying APK signature..."
-            "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$SIGNED_APK"
-            
-            # Create standard convenience copies for download
-            cp "$SIGNED_APK" "$RELEASE_DIR/jtec-music-release.apk"
-            echo "Complete, installable APK created successfully at $SIGNED_APK and $RELEASE_DIR/jtec-music-release.apk"
-          else
-            echo "Release APK was already signed by Gradle or located at $SIGNED_APK"
-          fi
+          "$BUILD_TOOLS_DIR/zipalign" -p 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          "$BUILD_TOOLS_DIR/apksigner" sign \
+            --ks /tmp/release.keystore \
+            --ks-pass env:STORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$SIGNED_APK"
+          rm -f /tmp/release.keystore "$UNSIGNED_APK" "$ALIGNED_APK"
+          echo "Signed APK ready: $SIGNED_APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: jtec-music-apk
-          path: |
-            android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/release/jtec-music-release.apk
