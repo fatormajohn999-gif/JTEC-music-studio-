@@ -47,7 +47,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   }, [playlists, clean]);
 
   return (
-    <div className="space-y-5 pb-36 px-4 pt-3 max-w-4xl mx-auto">
+    <div className="space-y-5 pb-36 px-4 sm:px-6 pt-3 max-w-3xl mx-auto w-full min-w-0">
       {/* Search Input Bar */}
       <div className="relative">
         <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">

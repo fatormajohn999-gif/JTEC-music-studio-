@@ -128,7 +128,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   };
 
   return (
-    <div className="space-y-4 pb-36 px-4 pt-3 max-w-4xl mx-auto">
+    <div className="space-y-4 pb-36 px-4 sm:px-6 pt-3 max-w-3xl mx-auto w-full min-w-0">
       {/* Category Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
         {[

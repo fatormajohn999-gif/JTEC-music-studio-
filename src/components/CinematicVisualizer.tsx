@@ -587,18 +587,22 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Responsive scaling
+    // Responsive scaling with full screen, rotation and devicePixelRatio support
     const updateDimensions = () => {
+      if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
       const dpr = performanceMode === 'battery' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
-      ctx.scale(dpr, dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     updateDimensions();
     const resizeObserver = new ResizeObserver(() => updateDimensions());
     resizeObserver.observe(canvas);
+    window.addEventListener('resize', updateDimensions);
+    window.addEventListener('orientationchange', updateDimensions);
 
     // Initial population of particles
     const starCount = performanceMode === 'battery' ? 45 : performanceMode === 'balanced' ? 85 : 140;
@@ -4108,6 +4112,8 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         animFrameRef.current = null;
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('resize', updateDimensions);
+      window.removeEventListener('orientationchange', updateDimensions);
       resizeObserver.disconnect();
     };
   }, [scene, performanceMode, isActive]);

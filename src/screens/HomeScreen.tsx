@@ -38,7 +38,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const recentlyAdded = [...songs].sort((a, b) => b.dateAdded - a.dateAdded).slice(0, 6);
 
   return (
-    <div className="space-y-7 pb-36 px-4 pt-3 max-w-4xl mx-auto">
+    <div className="space-y-7 pb-36 px-4 sm:px-6 pt-3 max-w-3xl mx-auto w-full min-w-0">
       {/* PWA Install Alert Banner */}
       <PWAInstallButton />
 

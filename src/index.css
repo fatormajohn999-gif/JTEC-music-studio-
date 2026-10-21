@@ -8,6 +8,8 @@
   html, body {
     margin: 0;
     padding: 0;
+    height: 100dvh;
+    min-height: 100dvh;
     background-color: #050811;
     color: #f1f5f9;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -60,9 +62,18 @@
   -webkit-text-fill-color: transparent;
 }
 
-/* Safe area bottom padding for iPhone / mobile navigation */
+/* Safe area padding utilities for notch, gesture bar, status bar across devices */
+.pt-safe {
+  padding-top: max(0.625rem, env(safe-area-inset-top, 0px));
+}
 .pb-safe {
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+}
+.pl-safe {
+  padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+}
+.pr-safe {
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
 }
 
 /* Hide scrollbar utility */

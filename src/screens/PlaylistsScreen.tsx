@@ -58,7 +58,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
   };
 
   return (
-    <div className="space-y-6 pb-36 px-4 pt-3 max-w-4xl mx-auto">
+    <div className="space-y-6 pb-36 px-4 sm:px-6 pt-3 max-w-3xl mx-auto w-full min-w-0">
       {/* If a playlist is selected, show detail view */}
       {selectedPlaylist ? (
         <div className="space-y-5 animate-in fade-in">

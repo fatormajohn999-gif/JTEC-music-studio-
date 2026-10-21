@@ -1,6 +1,5 @@
 import React from 'react';
-import { Search, Cloud, Settings, ArrowLeft } from 'lucide-react';
-import { PWAInstallButton } from './PWAInstallButton';
+import { Sliders, Cloud, Search, Settings } from 'lucide-react';
 
 interface HeaderProps {
   onOpenSearch: () => void;
@@ -15,92 +14,85 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenSettings,
+  onOpenEffects,
   onOpenCloud,
   onLogoClick,
   isSettingsView = false,
   onBackFromSettings,
 }) => {
+  const handleSettingsClick = () => {
+    if (isSettingsView && onBackFromSettings) {
+      onBackFromSettings();
+    } else {
+      onOpenSettings();
+    }
+  };
+
   return (
     <header
       role="banner"
-      className="sticky top-0 z-40 w-full shrink-0 bg-[#060810]/98 backdrop-blur-2xl border-b border-cyan-500/20 shadow-2xl shadow-black/80 transition-all duration-200"
+      className="sticky top-0 z-40 w-full shrink-0 bg-[#060810]/95 backdrop-blur-2xl border-b border-white/10 transition-colors"
+      style={{
+        paddingTop: 'max(0.625rem, env(safe-area-inset-top, 0px))',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+      }}
     >
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-[max(1.375rem,calc(env(safe-area-inset-top)+1rem))] pb-4 sm:pb-5 min-h-[82px] sm:min-h-[94px] flex items-center justify-between gap-2.5 sm:gap-3">
-        {/* Left Side: Substantial Brand Typography & PRO Badge */}
-        {isSettingsView ? (
-          <div className="flex items-center gap-3">
-            {onBackFromSettings && (
-              <button
-                type="button"
-                onClick={onBackFromSettings}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onBackFromSettings();
-                  }
-                }}
-                className="flex items-center gap-2 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 font-bold text-xs sm:text-sm active:scale-95 transition-all shadow-md shadow-cyan-500/10 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810]"
-                aria-label="Back to music player"
-                title="Back to music player"
-              >
-                <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-                <span>Back</span>
-              </button>
-            )}
-            <div className="flex items-center gap-2 sm:gap-2.5">
-              <h1 className="text-xl sm:text-3xl font-black text-white tracking-wide">Settings</h1>
-              <span className="text-[10px] sm:text-xs font-mono uppercase px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-black tracking-wider shadow-sm shadow-cyan-500/20">
-                PRO
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div
-            onClick={onLogoClick}
-            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group select-none shrink-0 rounded-2xl p-1 -m-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810]"
-            role="link"
-            tabIndex={0}
-            aria-label="JTEC MUSIC Home - Return to home screen"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onLogoClick?.();
-              }
-            }}
-            title="JTEC MUSIC Home"
-          >
-            {/* Pure Typography Branding - Premium & Substantial */}
-            <h1 className="text-2xl sm:text-3xl font-black tracking-wider text-white whitespace-nowrap drop-shadow-xl">
-              JTEC <span className="text-gradient-cyan-purple">MUSIC</span>
+      <div className="max-w-3xl mx-auto w-full py-2.5 sm:py-3 flex items-center justify-between gap-3 min-w-0">
+        {/* Left Side: JTEC MUSIC Title, PRO Badge, and Subtitle (No Logo) */}
+        <div
+          onClick={onLogoClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onLogoClick?.();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="JTEC MUSIC Home"
+          className="flex flex-col min-w-0 cursor-pointer select-none group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810] rounded-xl pr-1"
+        >
+          {/* Main Title Row: JTEC + MUSIC + PRO badge */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap min-w-0">
+            <h1 className="text-xl sm:text-2xl font-black tracking-wide leading-tight whitespace-nowrap">
+              <span className="text-white">JTEC </span>
+              <span className="text-gradient-cyan-purple">MUSIC</span>
             </h1>
-            <span className="text-[10px] sm:text-xs font-mono uppercase px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-black tracking-wider shadow-sm shadow-cyan-500/20">
+
+            <span className="text-[10px] sm:text-[11px] font-mono font-bold px-2 py-0.5 rounded-full border border-cyan-500/40 text-cyan-300 bg-cyan-950/40 shrink-0 tracking-wider shadow-sm shadow-cyan-500/10">
               PRO
             </span>
           </div>
-        )}
 
-        {/* Right Side: Neatly Aligned Search, Cloud & Settings Icons */}
-        <nav aria-label="Quick Controls" className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          <PWAInstallButton compact />
+          {/* Subtitle */}
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium tracking-wide leading-tight truncate mt-0.5">
+            Your Music • Your Vibe • Offline
+          </p>
+        </div>
 
-          {/* Search Library Button */}
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onOpenSearch();
-              }
-            }}
-            title="Search Music Library"
-            aria-label="Search local library and songs by title, artist, or album"
-            className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center bg-slate-900/80 border border-white/10 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 active:scale-95 transition-all shadow-md shadow-black/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810]"
-          >
-            <Search className="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
-          </button>
+        {/* Right Side: Four Icon Buttons in Exact Order (Equalizer, Cloud, Search, Settings) */}
+        <nav aria-label="Quick Actions" className="flex items-center gap-1 sm:gap-2 shrink-0">
+          {/* 1. Equalizer / Sound DSP Effects */}
+          {onOpenEffects && (
+            <button
+              type="button"
+              onClick={onOpenEffects}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpenEffects();
+                }
+              }}
+              title="Equalizer & DSP Audio Effects"
+              aria-label="Open Equalizer and Audio Effects"
+              className="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-cyan-300 hover:bg-white/5 active:scale-95 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+            >
+              <Sliders className="w-5 h-5 sm:w-[22px] sm:h-[22px]" strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          )}
 
-          {/* Cloud Catalog Button */}
+          {/* 2. Cloud Music Catalog */}
           {onOpenCloud && (
             <button
               type="button"
@@ -112,39 +104,53 @@ export const Header: React.FC<HeaderProps> = ({
                 }
               }}
               title="Browse JTEC CLOUD Music"
-              aria-label="Browse JTEC Cloud Music Catalog and Online Streams"
-              className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center bg-slate-900/80 border border-white/10 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 active:scale-95 transition-all shadow-md shadow-black/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810]"
+              aria-label="Browse JTEC Cloud Music Catalogs"
+              className="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-cyan-300 hover:bg-white/5 active:scale-95 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
-              <Cloud className="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
+              <Cloud className="w-5 h-5 sm:w-[22px] sm:h-[22px]" strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
 
-          {/* Player Settings Button - Highlighted & Prominent */}
+          {/* 3. Search Library */}
           <button
             type="button"
-            onClick={onOpenSettings}
+            onClick={onOpenSearch}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                onOpenSettings();
+                onOpenSearch();
               }
             }}
-            title="Player Settings"
-            aria-label={isSettingsView ? "Currently in Player Settings" : "Open Player Settings and audio configuration"}
+            title="Search Music Library"
+            aria-label="Search local library songs"
+            className="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-cyan-300 hover:bg-white/5 active:scale-95 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+          >
+            <Search className="w-5 h-5 sm:w-[22px] sm:h-[22px]" strokeWidth={1.8} aria-hidden="true" />
+          </button>
+
+          {/* 4. Player Settings */}
+          <button
+            type="button"
+            onClick={handleSettingsClick}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleSettingsClick();
+              }
+            }}
+            title={isSettingsView ? "Back to Player" : "Settings"}
+            aria-label={isSettingsView ? "Close settings and return to player" : "Open application and player settings"}
             aria-pressed={isSettingsView}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810] ${
+            className={`p-2 sm:p-2.5 rounded-xl transition-all cursor-pointer active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
               isSettingsView
-                ? 'text-cyan-300 bg-cyan-500/25 border border-cyan-400 shadow-cyan-500/30 scale-105'
-                : 'bg-gradient-to-tr from-cyan-500/15 via-purple-500/15 to-slate-900/90 border border-cyan-500/40 hover:border-cyan-400 text-cyan-300 hover:text-white shadow-cyan-500/15 hover:shadow-cyan-400/25'
+                ? 'text-cyan-300 bg-cyan-500/15 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
+                : 'text-slate-300 hover:text-cyan-300 hover:bg-white/5 border border-transparent'
             }`}
           >
-            <Settings className="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
+            <Settings className="w-5 h-5 sm:w-[22px] sm:h-[22px]" strokeWidth={1.8} aria-hidden="true" />
           </button>
         </nav>
       </div>
-
-      {/* Radiant cyan accent border line */}
-      <div className="h-[2px] w-full bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent shadow-sm shadow-cyan-400/50" />
     </header>
   );
 };

@@ -18,8 +18,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 glass-panel bg-[#060810]/95 backdrop-blur-xl border-t border-white/10 px-4 py-2 pb-safe">
-      <div className="max-w-lg mx-auto flex items-center justify-around">
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-30 glass-panel bg-[#060810]/95 backdrop-blur-xl border-t border-white/10 px-4 py-2"
+      style={{
+        paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+        paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom, 0px))',
+      }}
+    >
+      <div className="max-w-xl sm:max-w-2xl mx-auto flex items-center justify-around">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;

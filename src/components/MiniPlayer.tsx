@@ -26,7 +26,14 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
   const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
 
   return (
-    <div className="fixed bottom-[68px] left-0 right-0 z-30 px-3 max-w-lg mx-auto pointer-events-none">
+    <div
+      className="fixed left-0 right-0 z-30 px-3 sm:px-4 max-w-xl sm:max-w-2xl mx-auto pointer-events-none"
+      style={{
+        bottom: 'calc(62px + max(0.5rem, env(safe-area-inset-bottom, 0px)))',
+        paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
+      }}
+    >
       <div 
         onClick={onOpenFullPlayer}
         className="pointer-events-auto relative overflow-hidden rounded-2xl glass-panel-elevated bg-[#0a0f24]/95 backdrop-blur-2xl border border-cyan-500/30 p-2.5 flex items-center gap-3 cursor-pointer shadow-2xl active:scale-[0.99] transition duration-200 group"

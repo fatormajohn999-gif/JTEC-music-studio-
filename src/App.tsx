@@ -1198,7 +1198,7 @@ export default function App() {
     .filter((s): s is Song => Boolean(s));
 
   return (
-    <div className="min-h-screen bg-[#060810] text-slate-100 flex flex-col font-sans relative selection:bg-cyan-500/30">
+    <div className="h-[100dvh] min-h-[100dvh] w-full overflow-hidden bg-[#060810] text-slate-100 flex flex-col font-sans relative selection:bg-cyan-500/30">
       {/* Toast Error Alert */}
       {globalError && (
         <div className="fixed top-16 left-4 right-4 z-50 max-w-md mx-auto p-3.5 rounded-2xl bg-rose-950/90 border border-rose-500/40 text-rose-200 text-xs shadow-2xl backdrop-blur-md animate-in slide-in-from-top-4 flex items-center justify-between">
@@ -1228,7 +1228,7 @@ export default function App() {
       />
 
       {/* Main Body Content Router */}
-      <main className="flex-1 w-full overflow-y-auto">
+      <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
         {isSettingsView ? (
           <SettingsScreen
             settings={settings}
