@@ -382,6 +382,17 @@ export const StorageService = {
     return null;
   },
 
+  async isStoragePersisted(): Promise<boolean> {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persisted) {
+      try {
+        return await navigator.storage.persisted();
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  },
+
   async requestPersistentStorage(): Promise<boolean> {
     if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
       try {
@@ -398,15 +409,42 @@ export const StorageService = {
   },
 
   // STORAGE USAGE
-  async getStorageStats(): Promise<{ songCount: number; estimatedBytes: number }> {
+  async getStorageStats(): Promise<{
+    songCount: number;
+    estimatedBytes: number;
+    downloadCount: number;
+    downloadBytes: number;
+    isPersisted: boolean;
+  }> {
     const songs = await this.getAllSongs();
     let totalBytes = 0;
+    let downloadBytes = 0;
+    let downloadCount = 0;
+
     for (const song of songs) {
-      totalBytes += song.size || 0;
+      const bytes = song.size || 0;
+      totalBytes += bytes;
+      if (song.hasStoredBlob) {
+        downloadCount++;
+        downloadBytes += bytes;
+      }
     }
+
+    let isPersisted = false;
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persisted) {
+      try {
+        isPersisted = await navigator.storage.persisted();
+      } catch {
+        isPersisted = false;
+      }
+    }
+
     return {
       songCount: songs.length,
       estimatedBytes: totalBytes,
+      downloadCount,
+      downloadBytes,
+      isPersisted,
     };
   },
 

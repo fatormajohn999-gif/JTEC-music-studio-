@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, Music, CheckCircle2, AlertCircle, FileAudio, Sparkles, Cloud, HardDrive } from 'lucide-react';
-import { Song } from '../types/music';
+import { Song, ArtworkPalette } from '../types/music';
 import { extractAudioMetadata } from '../services/id3Parser';
+import { extractPaletteFromImage } from '../services/colorExtractor';
 import { StorageService } from '../services/storage';
 import { SupabaseService } from '../services/supabase';
 
@@ -58,6 +59,15 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         const meta = await extractAudioMetadata(file);
         const ext = file.name.split('.').pop()?.toLowerCase() || 'audio';
         
+        let palette: ArtworkPalette | undefined = undefined;
+        if (meta.artworkUrl) {
+          try {
+            palette = await extractPaletteFromImage(meta.artworkUrl);
+          } catch {
+            // ignore palette extraction failure
+          }
+        }
+        
         const song: Song = {
           id: `song_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           title: meta.title || file.name.replace(/\.[^/.]+$/, ''),
@@ -65,6 +75,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           album: meta.album || 'Local Library',
           duration: meta.duration || 0,
           artworkUrl: meta.artworkUrl,
+          palette,
           format: ext,
           size: file.size,
           dateAdded: Date.now(),

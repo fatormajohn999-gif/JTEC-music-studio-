@@ -12,10 +12,17 @@ import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
 import { UserGuideView } from '../components/UserGuideView';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { SupabaseService, SourceDiagnosticResult } from '../services/supabase';
+import { StorageService } from '../services/storage';
 
 interface SettingsScreenProps {
   settings: AppSettings;
-  storageStats: { songCount: number; estimatedBytes: number };
+  storageStats: {
+    songCount: number;
+    estimatedBytes: number;
+    downloadCount?: number;
+    downloadBytes?: number;
+    isPersisted?: boolean;
+  };
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClearLibrary: () => void;
   onOpenCloudSettings?: () => void;
@@ -42,6 +49,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [showHowToModal, setShowHowToModal] = useState(false);
   const [isTestingConnections, setIsTestingConnections] = useState(false);
   const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[] | null>(null);
+  const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
+
+  useEffect(() => {
+    StorageService.isStoragePersisted().then((p) => setPersistedStatus(p));
+  }, [storageStats.isPersisted]);
+
+  const handleRequestPersist = async () => {
+    const granted = await StorageService.requestPersistentStorage();
+    setPersistedStatus(granted);
+  };
 
   const handleRunConnectionTest = async () => {
     setIsTestingConnections(true);
@@ -419,22 +436,51 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </h3>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
           <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
             <span className="text-xs text-slate-400">Library Songs</span>
             <div className="text-lg font-bold text-white font-mono">{storageStats.songCount}</div>
+            <span className="text-[10px] text-slate-500">Total catalog</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
-            <span className="text-xs text-slate-400">Storage Used</span>
+            <span className="text-xs text-slate-400">Downloads Storage</span>
             <div className="text-lg font-bold text-cyan-300 font-mono">
-              {formatBytes(storageStats.estimatedBytes)}
+              {formatBytes(storageStats.downloadBytes ?? storageStats.estimatedBytes)}
             </div>
+            <span className="text-[10px] text-slate-500">
+              {storageStats.downloadCount ?? storageStats.songCount} offline tracks
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 col-span-2 sm:col-span-1">
+            <span className="text-xs text-slate-400">Persistent Storage</span>
+            <div className={`text-xs font-bold font-mono mt-1 flex items-center justify-center gap-1 ${
+              persistedStatus ? 'text-emerald-400' : 'text-amber-400'
+            }`}>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{persistedStatus ? 'Granted' : 'Standard'}</span>
+            </div>
+            {!persistedStatus ? (
+              <button
+                type="button"
+                onClick={handleRequestPersist}
+                className="text-[10px] text-cyan-400 hover:underline mt-0.5 cursor-pointer"
+              >
+                Request permanent
+              </button>
+            ) : (
+              <span className="text-[10px] text-slate-500">Protected</span>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/20 text-xs text-cyan-300">
-          <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400" />
-          <span>Offline first: all downloaded tracks play 100% offline from your device IndexedDB. Persistent cloud backup is powered by Supabase.</span>
+        {/* Short Note: required offline storage notice */}
+        <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-xs text-slate-300">
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
+            <p className="leading-relaxed">
+              Downloads are saved inside the app. Uninstalling the app or clearing its data deletes them.
+            </p>
+          </div>
         </div>
 
         {/* Cloud Settings Link */}

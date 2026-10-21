@@ -1,3 +1,5 @@
+import { resizeImageToJpegDataUrl } from './imageUtils';
+
 export interface ExtractedMetadata {
   title: string;
   artist: string;
@@ -40,11 +42,123 @@ export function generateProceduralArtwork(title: string, artist: string): string
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-export async function extractAudioMetadata(file: File): Promise<ExtractedMetadata> {
-  const defaultTitle = file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+/**
+ * Extracts embedded ID3 cover artwork from an audio Blob or File,
+ * shrinks it to at most 512x512, and returns a JPEG data URL.
+ * Never uses or returns a temporary blob: URL.
+ */
+export async function extractCoverFromAudioBlob(fileOrBlob: Blob | File): Promise<string | null> {
+  try {
+    // Read the first 10 bytes to check ID3 header and calculate total tag size
+    const headerBuffer = await fileOrBlob.slice(0, 10).arrayBuffer();
+    const headerView = new DataView(headerBuffer);
+
+    if (
+      headerView.byteLength >= 10 &&
+      headerView.getUint8(0) === 0x49 &&
+      headerView.getUint8(1) === 0x44 &&
+      headerView.getUint8(2) === 0x33
+    ) {
+      const majorVersion = headerView.getUint8(3);
+      const tagSize =
+        ((headerView.getUint8(6) & 0x7f) << 21) |
+        ((headerView.getUint8(7) & 0x7f) << 14) |
+        ((headerView.getUint8(8) & 0x7f) << 7) |
+        (headerView.getUint8(9) & 0x7f);
+
+      // Read up to 8MB max of ID3 tag data to find the APIC frame
+      const readLength = Math.min(fileOrBlob.size, 10 + tagSize, 8 * 1024 * 1024);
+      const buffer = await fileOrBlob.slice(0, readLength).arrayBuffer();
+      const view = new DataView(buffer);
+
+      let offset = 10;
+      const maxOffset = buffer.byteLength;
+
+      while (offset < maxOffset - 10) {
+        let frameId = '';
+        for (let i = 0; i < 4; i++) {
+          const charCode = view.getUint8(offset + i);
+          if (charCode === 0) break;
+          frameId += String.fromCharCode(charCode);
+        }
+
+        if (frameId.length < 4) break;
+
+        let frameSize = 0;
+        if (majorVersion === 4) {
+          frameSize =
+            ((view.getUint8(offset + 4) & 0x7f) << 21) |
+            ((view.getUint8(offset + 5) & 0x7f) << 14) |
+            ((view.getUint8(offset + 6) & 0x7f) << 7) |
+            (view.getUint8(offset + 7) & 0x7f);
+        } else {
+          frameSize = view.getUint32(offset + 4, false);
+        }
+
+        if (frameSize <= 0 || offset + 10 + frameSize > maxOffset) {
+          break;
+        }
+
+        const frameDataOffset = offset + 10;
+
+        if (frameId === 'APIC' || frameId === 'PIC') {
+          try {
+            let p = frameDataOffset;
+            const picEncoding = view.getUint8(p++);
+            let mimeType = '';
+            while (p < frameDataOffset + frameSize && view.getUint8(p) !== 0) {
+              mimeType += String.fromCharCode(view.getUint8(p++));
+            }
+            p++; // skip null terminator
+            if (!mimeType || mimeType === '-->') mimeType = 'image/jpeg';
+
+            p++; // skip picture type
+
+            // Description
+            if (picEncoding === 1 || picEncoding === 2) {
+              while (p < frameDataOffset + frameSize - 1) {
+                if (view.getUint8(p) === 0 && view.getUint8(p + 1) === 0) {
+                  p += 2;
+                  break;
+                }
+                p += 2;
+              }
+            } else {
+              while (p < frameDataOffset + frameSize && view.getUint8(p) !== 0) {
+                p++;
+              }
+              p++;
+            }
+
+            const imgDataSize = frameDataOffset + frameSize - p;
+            if (imgDataSize > 0) {
+              const imgBytes = new Uint8Array(buffer, p, imgDataSize);
+              const blob = new Blob([imgBytes], { type: mimeType });
+              return await resizeImageToJpegDataUrl(blob, 512, 0.85);
+            }
+          } catch (e) {
+            console.warn('APIC parse error', e);
+          }
+        }
+
+        offset += 10 + frameSize;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not extract cover from audio blob', err);
+  }
+  return null;
+}
+
+export async function extractAudioMetadata(
+  file: File | Blob,
+  fallbackName?: string
+): Promise<ExtractedMetadata> {
+  const rawName = (file instanceof File ? file.name : fallbackName || 'track.mp3');
+  const defaultTitle = rawName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
   let title = defaultTitle;
   let artist = 'Unknown Artist';
-  let album = 'Local Device';
+  let album = 'Local Library';
   let artworkUrl: string | undefined = undefined;
   let artworkBlob: Blob | undefined = undefined;
   let year: string | undefined = undefined;
@@ -60,26 +174,31 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
 
   // Parse ID3 from buffer
   try {
-    const buffer = await file.slice(0, 512 * 1024).arrayBuffer(); // read first 512KB
-    const view = new DataView(buffer);
+    const headerBuffer = await file.slice(0, 10).arrayBuffer();
+    const headerView = new DataView(headerBuffer);
 
-    // Check ID3 header ("ID3")
-    if (view.byteLength > 10 &&
-        view.getUint8(0) === 0x49 &&
-        view.getUint8(1) === 0x44 &&
-        view.getUint8(2) === 0x33) {
-      
-      const majorVersion = view.getUint8(3); // 3 for ID3v2.3, 4 for ID3v2.4
+    if (
+      headerView.byteLength >= 10 &&
+      headerView.getUint8(0) === 0x49 &&
+      headerView.getUint8(1) === 0x44 &&
+      headerView.getUint8(2) === 0x33
+    ) {
+      const majorVersion = headerView.getUint8(3);
       let offset = 10;
-      const tagSize = ((view.getUint8(6) & 0x7f) << 21) |
-                      ((view.getUint8(7) & 0x7f) << 14) |
-                      ((view.getUint8(8) & 0x7f) << 7) |
-                      (view.getUint8(9) & 0x7f);
+      const tagSize =
+        ((headerView.getUint8(6) & 0x7f) << 21) |
+        ((headerView.getUint8(7) & 0x7f) << 14) |
+        ((headerView.getUint8(8) & 0x7f) << 7) |
+        (headerView.getUint8(9) & 0x7f);
 
-      const maxOffset = Math.min(buffer.byteLength, 10 + tagSize);
+      // Read up to 8MB max of ID3 tag data
+      const readLength = Math.min(file.size, 10 + tagSize, 8 * 1024 * 1024);
+      const buffer = await file.slice(0, readLength).arrayBuffer();
+      const view = new DataView(buffer);
+
+      const maxOffset = buffer.byteLength;
 
       while (offset < maxOffset - 10) {
-        // Read 4-character Frame ID
         let frameId = '';
         for (let i = 0; i < 4; i++) {
           const charCode = view.getUint8(offset + i);
@@ -91,10 +210,11 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
 
         let frameSize = 0;
         if (majorVersion === 4) {
-          frameSize = ((view.getUint8(offset + 4) & 0x7f) << 21) |
-                      ((view.getUint8(offset + 5) & 0x7f) << 14) |
-                      ((view.getUint8(offset + 6) & 0x7f) << 7) |
-                      (view.getUint8(offset + 7) & 0x7f);
+          frameSize =
+            ((view.getUint8(offset + 4) & 0x7f) << 21) |
+            ((view.getUint8(offset + 5) & 0x7f) << 14) |
+            ((view.getUint8(offset + 6) & 0x7f) << 7) |
+            (view.getUint8(offset + 7) & 0x7f);
         } else {
           frameSize = view.getUint32(offset + 4, false);
         }
@@ -112,11 +232,9 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
           let text = '';
 
           if (encoding === 0 || encoding === 3) {
-            // ISO-8859-1 or UTF-8
             const decoder = new TextDecoder(encoding === 3 ? 'utf-8' : 'iso-8859-1');
             text = decoder.decode(rawBytes).replace(/\0/g, '').trim();
           } else if (encoding === 1 || encoding === 2) {
-            // UTF-16
             const decoder = new TextDecoder('utf-16');
             text = decoder.decode(rawBytes).replace(/\0/g, '').trim();
           }
@@ -130,11 +248,10 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
         }
 
         // Extract APIC (Attached Picture)
-        if (frameId === 'APIC') {
+        if (frameId === 'APIC' || frameId === 'PIC') {
           try {
             let p = frameDataOffset;
             const picEncoding = view.getUint8(p++);
-            // MIME type is null-terminated ASCII string
             let mimeType = '';
             while (p < frameDataOffset + frameSize && view.getUint8(p) !== 0) {
               mimeType += String.fromCharCode(view.getUint8(p++));
@@ -142,12 +259,9 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
             p++; // skip null terminator
             if (!mimeType || mimeType === '-->') mimeType = 'image/jpeg';
 
-            // Picture type (1 byte)
-            p++;
+            p++; // picture type
 
-            // Description (null terminated)
             if (picEncoding === 1 || picEncoding === 2) {
-              // 2 null bytes for utf-16
               while (p < frameDataOffset + frameSize - 1) {
                 if (view.getUint8(p) === 0 && view.getUint8(p + 1) === 0) {
                   p += 2;
@@ -162,13 +276,18 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
               p++;
             }
 
-            // Remainder is picture data
             const imgDataSize = frameDataOffset + frameSize - p;
             if (imgDataSize > 0) {
               const imgBytes = new Uint8Array(buffer, p, imgDataSize);
               const blob = new Blob([imgBytes], { type: mimeType });
               artworkBlob = blob;
-              artworkUrl = URL.createObjectURL(blob);
+              // Resize and convert directly to JPEG data URL. NEVER save blob: URL!
+              try {
+                artworkUrl = await resizeImageToJpegDataUrl(blob, 512, 0.85);
+              } catch (e) {
+                console.warn('Failed to resize APIC cover to JPEG data URL', e);
+                artworkUrl = undefined;
+              }
             }
           } catch (e) {
             console.warn('APIC parse error', e);
@@ -205,7 +324,6 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
       audio.addEventListener('loadedmetadata', onLoaded);
       audio.addEventListener('error', onError);
       audio.src = objectUrl;
-      // timeout fallback
       setTimeout(() => {
         cleanup();
         resolve(0);
@@ -215,6 +333,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedMetadat
     duration = 0;
   }
 
+  // If no artwork was extracted from APIC, generate procedural neon vinyl SVG data URL
   if (!artworkUrl) {
     artworkUrl = generateProceduralArtwork(title, artist);
   }

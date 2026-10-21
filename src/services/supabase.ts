@@ -1,5 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { CloudSong, Song } from '../types/music';
+import { downloadAndConvertCover } from './imageUtils';
+import { generateProceduralArtwork } from './id3Parser';
+import { extractPaletteFromImage } from './colorExtractor';
 
 // Storage Bucket Names
 export const BUCKET_MUSIC = 'music';
@@ -1060,7 +1063,8 @@ export const SupabaseService = {
       album: cloudSong.album,
       duration: cloudSong.duration,
       genre: cloudSong.genre,
-      artworkUrl: cloudSong.cover_url,
+      artworkUrl: undefined,
+      coverUrl: cloudSong.cover_url, // Keep original web address in separate field
       format: (cloudSong.file_name.split('.').pop() || 'mp3').toLowerCase(),
       size: cloudSong.file_size || audioBlob.size,
       dateAdded: Date.now(),
@@ -1070,6 +1074,35 @@ export const SupabaseService = {
       audioUrl: cloudSong.audio_url,
       fileHash: cloudSong.file_hash,
     };
+
+    // Download cover image for offline use, shrink to max 512x512, and convert to JPEG data URL
+    if (cloudSong.cover_url) {
+      try {
+        const coverDataUrl = await downloadAndConvertCover(cloudSong.cover_url, 512, 0.85);
+        localSong.artworkUrl = coverDataUrl;
+        try {
+          localSong.palette = await extractPaletteFromImage(coverDataUrl);
+        } catch {
+          // palette extraction fallback
+        }
+      } catch (err) {
+        console.warn(`Cover download failed for "${cloudSong.title}". Song audio download continues.`, err);
+        // If cover download fails, song download still succeeds! App will try cover again later when online.
+        localSong.artworkUrl = generateProceduralArtwork(cloudSong.title, cloudSong.artist);
+        try {
+          localSong.palette = await extractPaletteFromImage(localSong.artworkUrl);
+        } catch {
+          // fallback
+        }
+      }
+    } else {
+      localSong.artworkUrl = generateProceduralArtwork(cloudSong.title, cloudSong.artist);
+      try {
+        localSong.palette = await extractPaletteFromImage(localSong.artworkUrl);
+      } catch {
+        // fallback
+      }
+    }
 
     if (onProgress) onProgress(100);
     return { song: localSong, blob: audioBlob };

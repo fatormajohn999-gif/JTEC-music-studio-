@@ -24,6 +24,7 @@ import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { PWAUpdateBanner } from './components/PWAUpdateBanner';
+import { repairExistingSongCovers } from './services/coverMigration';
 
 // Screens
 import { HomeScreen } from './screens/HomeScreen';
@@ -72,7 +73,13 @@ export default function App() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [recentlyPlayedIds, setRecentlyPlayedIds] = useState<string[]>([]);
-  const [storageStats, setStorageStats] = useState({ songCount: 0, estimatedBytes: 0 });
+  const [storageStats, setStorageStats] = useState({
+    songCount: 0,
+    estimatedBytes: 0,
+    downloadCount: 0,
+    downloadBytes: 0,
+    isPersisted: false,
+  });
 
   // Supabase Cloud State
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
@@ -385,12 +392,44 @@ export default function App() {
 
         const stats = await StorageService.getStorageStats();
         setStorageStats(stats);
+
+        // Background Cover Repair & Migration (non-blocking, runs after initial render)
+        setTimeout(() => {
+          repairExistingSongCovers((updatedSongs) => {
+            setSongs(updatedSongs);
+            setCurrentSong((curr) => {
+              if (!curr) return null;
+              const matched = updatedSongs.find((s) => s.id === curr.id);
+              if (matched && matched.artworkUrl !== curr.artworkUrl) {
+                if (matched.palette) {
+                  setCurrentPalette({ ...matched.palette, hasCover: true });
+                }
+                return matched;
+              }
+              return curr;
+            });
+            StorageService.getStorageStats().then(setStorageStats);
+          });
+        }, 1200);
       } catch (err) {
         console.error('Initialization error:', err);
       }
     }
 
     initApp();
+
+    // Re-check and retry cloud covers when device comes online
+    const handleOnline = () => {
+      repairExistingSongCovers((updatedSongs) => {
+        setSongs(updatedSongs);
+        StorageService.getStorageStats().then(setStorageStats);
+      });
+    };
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, []);
 
   // Listen for shared audio files from Service Worker Share Target or shortcut navigation
@@ -1056,7 +1095,13 @@ export default function App() {
     setQueue([]);
     setCurrentSong(null);
     setRecentlyPlayedIds([]);
-    setStorageStats({ songCount: 0, estimatedBytes: 0 });
+    setStorageStats({
+      songCount: 0,
+      estimatedBytes: 0,
+      downloadCount: 0,
+      downloadBytes: 0,
+      isPersisted: false,
+    });
   };
 
   // Cloud Handlers
