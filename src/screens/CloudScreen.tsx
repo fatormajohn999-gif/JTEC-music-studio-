@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
-  RefreshCw, Music, AlertCircle, ShieldCheck, Database, Volume2,
+  RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
   Sparkles, Disc
 } from 'lucide-react';
 import { CloudSong, Song } from '../types/music';
@@ -11,8 +11,7 @@ import {
   CLOUD_CATEGORIES, 
   formatBytes,
   CategoryMetadata,
-  CategoryConnectionDiagnostic,
-  getMaskedHost 
+  CategoryConnectionDiagnostic
 } from '../services/supabase';
 
 interface CloudScreenProps {
@@ -126,12 +125,9 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   // Fetch songs for a specific category
   const loadCategorySongs = useCallback(async (catKey: CloudCategoryKey, force = false) => {
     const config = SupabaseService.getCategoryConfig(catKey);
-    const meta = CLOUD_CATEGORIES.find((c) => c.key === catKey);
     if (!config.isConfigured) {
-      setErrorMap((prev) => ({
-        ...prev,
-        [catKey]: `Source "${meta?.title || catKey}" is not configured. Missing build-time configuration.`,
-      }));
+      // Unconfigured category: keep errorMap null so friendly "coming soon" card shows
+      setErrorMap((prev) => ({ ...prev, [catKey]: null }));
       return;
     }
 
@@ -147,16 +143,11 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
       const tracks = await SupabaseService.fetchSongsForCategory(catKey);
       setCategorySongs((prev) => ({ ...prev, [catKey]: tracks }));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect to Supabase catalog.';
-      setErrorMap((prev) => ({ ...prev, [catKey]: msg }));
-
-      // Run diagnostic on failure to populate detailed status
-      try {
-        const diag = await SupabaseService.testCategoryConnection(catKey);
-        setStatusMap((prev) => ({ ...prev, [catKey]: diag }));
-      } catch {
-        // ignore
-      }
+      console.warn(`JTEC Cloud category fetch warning for ${catKey}:`, err);
+      setErrorMap((prev) => ({
+        ...prev,
+        [catKey]: "Can't reach JTEC Cloud right now. Check your internet and try again.",
+      }));
     } finally {
       setLoadingMap((prev) => ({ ...prev, [catKey]: false }));
     }
@@ -236,7 +227,8 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
         return next;
       });
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : 'Download failed';
+      console.warn('Download failed:', err);
+      const errorMsg = "Can't reach JTEC Cloud right now. Check your internet and try again.";
       setDownloadErrors((prev) => new Map(prev).set(cs.id, errorMsg));
       setDownloadProgress((prev) => {
         const next = new Map(prev);
@@ -267,6 +259,36 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
         (s.genre && s.genre.toLowerCase().includes(q))
     );
   }, [selectedCategory, categorySongs, searchQuery]);
+
+  // Map active category tracks to Song queue in exact top-to-bottom order
+  const categoryAsSongQueue = useMemo(() => {
+    return filteredCategoryTracks.map((cs) => {
+      const match = offlineSongs.find(
+        (s) => s.cloudId === cs.id || (cs.file_hash && s.fileHash === cs.file_hash)
+      );
+      if (match && match.hasStoredBlob) {
+        return match;
+      }
+      return {
+        id: `stream_${cs.id}`,
+        title: cs.title,
+        artist: cs.artist,
+        album: cs.album,
+        duration: cs.duration,
+        genre: cs.genre,
+        artworkUrl: cs.cover_url,
+        coverUrl: cs.cover_url,
+        format: (cs.file_name.split('.').pop() || 'mp3').toLowerCase(),
+        size: cs.file_size,
+        dateAdded: Date.now(),
+        hasStoredBlob: false,
+        cloudId: cs.id,
+        isCloud: true,
+        audioUrl: cs.audio_url,
+        fileHash: cs.file_hash,
+      } as Song;
+    });
+  }, [filteredCategoryTracks, offlineSongs]);
 
   // Format seconds to mm:ss
   const formatTime = (secs: number) => {
@@ -308,7 +330,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     Cloud Discovery
                   </h1>
                   <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
-                    3 Vaults
+                    JTEC Cloud
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -322,10 +344,10 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 onClick={checkAllConnections}
                 disabled={isCheckingStatus}
                 className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer disabled:opacity-50 shadow-sm"
-                title="Test all Supabase vault connections"
+                title="Refresh JTEC Cloud"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isCheckingStatus ? 'animate-spin' : ''}`} />
-                <span>{isCheckingStatus ? 'Checking...' : 'Check Vaults'}</span>
+                <span>{isCheckingStatus ? 'Updating...' : 'Refresh'}</span>
               </button>
             </div>
           </div>
@@ -375,30 +397,22 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                           className={`w-2 h-2 rounded-full ${isCheckingStatus ? 'animate-pulse' : ''}`}
                           style={{
                             backgroundColor: !isConfigured
-                              ? '#94a3b8' // slate / setup required
+                              ? '#94a3b8'
                               : isCheckingStatus
-                              ? '#38bdf8' // checking
-                              : diag?.status === 'connected'
-                              ? '#10b981' // live emerald
-                              : diag?.status === 'partial'
-                              ? '#f59e0b' // partial
+                              ? '#38bdf8'
                               : diag?.status === 'error'
-                              ? '#f43f5e' // error rose
-                              : category.themeColor,
+                              ? '#f43f5e'
+                              : '#10b981',
                           }}
                         />
                         <span className="truncate max-w-[120px]">
                           {!isConfigured
-                            ? 'Not Configured'
+                            ? 'Coming Soon'
                             : isCheckingStatus
-                            ? 'Checking...'
-                            : diag?.status === 'connected'
-                            ? 'Connected'
-                            : diag?.status === 'partial'
-                            ? 'Schema Needed'
+                            ? 'Updating...'
                             : diag?.status === 'error'
                             ? 'Offline'
-                            : 'Connected'}
+                            : 'Ready'}
                         </span>
                       </div>
                     </div>
@@ -427,10 +441,10 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                       <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                         {isConfigured ? (
                           <span>
-                            {count > 0 ? `${count} tracks available` : 'Ready to explore'}
+                            {count > 0 ? `${count} tracks available` : 'Curated collection'}
                           </span>
                         ) : (
-                          <span className="text-slate-400">Vault setup required</span>
+                          <span className="text-slate-400">Curated collection</span>
                         )}
                       </div>
 
@@ -555,8 +569,8 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     />
                     <span className="text-slate-300 font-medium">
                       {SupabaseService.getCategoryConfig(selectedCategory).isConfigured
-                        ? 'Live Vault'
-                        : 'Setup Required'}
+                        ? 'JTEC Cloud'
+                        : 'Coming Soon'}
                     </span>
                   </div>
                 </div>
@@ -605,85 +619,29 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               ))}
             </div>
           ) : errorMap[selectedCategory] ? (
-            /* Rich Diagnostic Error State — No Manual Credential Form */
-            <div className="p-6 rounded-3xl bg-rose-500/10 border border-rose-500/30 space-y-4 max-w-xl mx-auto">
-              <div className="flex items-center justify-between border-b border-rose-500/20 pb-3 flex-wrap gap-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center shrink-0">
-                    <AlertCircle className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Connection Failure</h3>
-                    <p className="text-[11px] text-slate-400 font-mono">
-                      Host: {getMaskedHost(SupabaseService.getCategoryConfig(selectedCategory).url)}
-                    </p>
-                  </div>
-                </div>
-
-                {statusMap[selectedCategory]?.errorType && (
-                  <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider bg-rose-500/20 border border-rose-500/40 text-rose-300">
-                    {statusMap[selectedCategory]?.errorType}
-                  </span>
-                )}
+            /* Friendly Error State — No technical backend details */
+            <div className="p-8 rounded-3xl bg-rose-500/10 border border-rose-500/30 space-y-4 max-w-md mx-auto text-center">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-300 mx-auto flex items-center justify-center">
+                <AlertCircle className="w-6 h-6" />
               </div>
-
               <div className="space-y-1.5">
-                <p className="text-xs text-rose-200/90 leading-relaxed font-medium">
-                  {errorMap[selectedCategory]}
+                <h3 className="text-sm font-bold text-white">Can't Reach JTEC Cloud</h3>
+                <p className="text-xs text-rose-200/90 leading-relaxed">
+                  Can't reach JTEC Cloud right now. Check your internet and try again.
                 </p>
               </div>
-
-              {/* Status Breakdown if diagnostic available */}
-              {statusMap[selectedCategory] && (
-                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
-                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5">
-                    <span className="text-slate-400 block text-[10px]">Database:</span>
-                    <span className="font-semibold text-slate-200">
-                      {statusMap[selectedCategory]?.databaseStatus === 'ready'
-                        ? '✓ Ready'
-                        : statusMap[selectedCategory]?.databaseStatus === 'missing_table'
-                        ? '✗ Missing Table'
-                        : statusMap[selectedCategory]?.databaseStatus === 'permission_denied'
-                        ? '✗ RLS Denied'
-                        : '✗ Failed'}
-                    </span>
-                  </div>
-
-                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5">
-                    <span className="text-slate-400 block text-[10px]">Storage Bucket:</span>
-                    <span className="font-semibold text-slate-200">
-                      {statusMap[selectedCategory]?.storageStatus === 'ready'
-                        ? '✓ Ready'
-                        : statusMap[selectedCategory]?.storageStatus === 'missing_bucket'
-                        ? '✗ Bucket Missing'
-                        : statusMap[selectedCategory]?.storageStatus === 'permission_denied'
-                        ? '✗ Access Denied'
-                        : '✗ Failed'}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Actionable Tip */}
-              {statusMap[selectedCategory]?.suggestion && (
-                <div className="p-3 rounded-2xl bg-black/40 border border-white/5 text-[11px] text-slate-300 flex items-start gap-2">
-                  <span className="font-bold text-cyan-400 shrink-0">Tip:</span>
-                  <span>{statusMap[selectedCategory]?.suggestion}</span>
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-rose-500/20">
+              <div className="pt-2">
                 <button
                   onClick={() => loadCategorySongs(selectedCategory, true)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer active:scale-95 shadow-lg shadow-cyan-500/20"
                 >
-                  Retry Connection
+                  Retry
                 </button>
               </div>
             </div>
           ) : !SupabaseService.getCategoryConfig(selectedCategory).isConfigured ? (
-            /* Unconfigured State (e.g. LOVE & CHILL) — Informative CI/CD Setup Notice */
-            <div className="p-8 rounded-3xl bg-slate-900/70 border border-white/10 text-center space-y-4 max-w-lg mx-auto">
+            /* Friendly Coming Soon State */
+            <div className="p-8 rounded-3xl bg-slate-900/70 border border-white/10 text-center space-y-3 max-w-md mx-auto">
               <div
                 className="w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border shadow-lg"
                 style={{
@@ -692,25 +650,14 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                   color: activeCategoryMeta?.themeColor,
                 }}
               >
-                <Database className="w-7 h-7" />
+                <Music className="w-7 h-7" />
               </div>
-              <div className="space-y-2">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300">
-                  Not Configured
-                </span>
+              <div className="space-y-1.5">
                 <h3 className="text-base font-bold text-white">
-                  Source {activeCategoryMeta?.title} is not configured
+                  {activeCategoryMeta?.title}
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
-                  The build-time environment variables for {activeCategoryMeta?.title} were not detected.
-                  To activate music streaming and downloads, define the following variables in your GitHub Repository Secrets or build environment:
-                </p>
-                <div className="p-3 rounded-2xl bg-black/50 border border-white/5 text-left text-[11px] font-mono text-slate-300 space-y-1">
-                  <div><span className="text-cyan-400">URL:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_URL</div>
-                  <div><span className="text-cyan-400">KEY:</span> VITE_SUPABASE_{activeCategoryMeta?.key.toUpperCase()}_ANON_KEY</div>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  Once set, the next APK or web build will automatically connect this music source.
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  This catalog is currently being prepared. Check back soon for new tracks!
                 </p>
               </div>
             </div>
@@ -779,7 +726,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
                         {/* Stream / Play Overlay button */}
                         <button
-                          onClick={() => onPlayCloudSong(song)}
+                          onClick={() => onPlayCloudSong(song, categoryAsSongQueue)}
                           className="absolute inset-0 bg-black/50 opacity-0 group-hover/cover:opacity-100 flex items-center justify-center transition cursor-pointer"
                           title="Stream track"
                         >
@@ -795,7 +742,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <h4
-                            onClick={() => onPlayCloudSong(song)}
+                            onClick={() => onPlayCloudSong(song, categoryAsSongQueue)}
                             className="text-sm font-bold text-white truncate cursor-pointer hover:underline"
                           >
                             {song.title}
@@ -840,7 +787,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     <div className="flex items-center gap-2.5 sm:self-center shrink-0 justify-end">
                       {/* Play Stream button */}
                       <button
-                        onClick={() => onPlayCloudSong(song)}
+                        onClick={() => onPlayCloudSong(song, categoryAsSongQueue)}
                         className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
                           isCurrentPlaying
                             ? 'bg-cyan-500 text-black border-cyan-400 font-bold'

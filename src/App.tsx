@@ -22,7 +22,6 @@ import { PlaylistModal } from './components/PlaylistModal';
 import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
-import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { PWAUpdateBanner } from './components/PWAUpdateBanner';
 import { repairExistingSongCovers } from './services/coverMigration';
 
@@ -81,9 +80,9 @@ export default function App() {
     isPersisted: false,
   });
 
-  // Supabase Cloud State
+  // Cloud State
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
-  const [isCloudSettingsOpen, setIsCloudSettingsOpen] = useState(false);
+  const mainContainerRef = useRef<HTMLElement | null>(null);
 
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
@@ -156,6 +155,7 @@ export default function App() {
   settingsRef.current = settings;
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const handleNextTrackRef = useRef<(isAutoAdvance?: boolean) => void>(() => {});
 
   // Synchronize cloud songs with local state & IndexedDB cache
   const syncCloudWithLocalSongs = async (cloudList: CloudSong[]) => {
@@ -209,6 +209,9 @@ export default function App() {
   useEffect(() => {
     async function initApp() {
       try {
+        // Purge any legacy localStorage overrides once on start so every device uses build-time config only
+        SupabaseService.purgeLegacyStorageOverrides();
+
         const storedSettings = await StorageService.getSettings();
         setSettings(storedSettings);
 
@@ -432,6 +435,13 @@ export default function App() {
     };
   }, []);
 
+  // Always reset scroll to top when Settings screen is opened (Requirement 4)
+  useEffect(() => {
+    if (isSettingsView && mainContainerRef.current) {
+      mainContainerRef.current.scrollTop = 0;
+    }
+  }, [isSettingsView]);
+
   // Listen for shared audio files from Service Worker Share Target or shortcut navigation
   useEffect(() => {
     const handlePopState = () => {
@@ -488,12 +498,16 @@ export default function App() {
     });
 
     const unsubEnded = audioEngine.onEnded(() => {
-      handleSongEnded();
+      handleNextTrackRef.current(true);
     });
 
     const unsubError = audioEngine.onError((errMsg) => {
-      setGlobalError(errMsg);
-      setTimeout(() => setGlobalError(null), 5000);
+      console.warn('audioEngine error listener:', errMsg);
+      setGlobalError(currentSongRef.current?.isCloud ? "Can't reach JTEC Cloud right now. Check your internet and try again." : "Audio error. Skipping to next song...");
+      setTimeout(() => setGlobalError(null), 3000);
+      setTimeout(() => {
+        handleNextTrackRef.current(true);
+      }, 600);
     });
 
     return () => {
@@ -548,61 +562,9 @@ export default function App() {
     };
   }, [isPlaying, persistSessionNow]);
 
-  // Handle Song Ended Flow (TASK 2: Auto-Next)
+  // Handle Song Ended Flow (Auto-Next strictly down the queue)
   const handleSongEnded = useCallback(() => {
-    const currentRepeat = repeatModeRef.current;
-    const currentQueue = queueRef.current;
-    const cur = currentSongRef.current;
-    const allSongs = songsRef.current;
-
-    // 1. Single track repeat mode ('one')
-    if (currentRepeat === 'one' && cur) {
-      audioEngine.seek(0);
-      audioEngine.play().catch((err) => console.warn('Repeat one playback error:', err));
-      return;
-    }
-
-    // 2. Check if Auto Next is enabled in Settings
-    const isAutoNextEnabled = settingsRef.current.autoplayNext ?? true;
-    if (!isAutoNextEnabled) {
-      setIsPlaying(false);
-      return;
-    }
-
-    // Determine active queue list (currentQueue if populated, fallback to library)
-    const activeQueue = currentQueue.length > 0 ? currentQueue : allSongs;
-    if (activeQueue.length === 0 || !cur) {
-      setIsPlaying(false);
-      return;
-    }
-
-    // 2. Shuffle mode with auto-next
-    if (isShuffleRef.current && activeQueue.length > 1) {
-      const curIndex = activeQueue.findIndex((s) => s.id === cur.id);
-      let rand = Math.floor(Math.random() * activeQueue.length);
-      while (rand === curIndex && activeQueue.length > 1) {
-        rand = Math.floor(Math.random() * activeQueue.length);
-      }
-      playSong(activeQueue[rand]);
-      return;
-    }
-
-    // 3. Play next song in the queue
-    const currentIndex = activeQueue.findIndex((s) => s.id === cur.id);
-    if (currentIndex !== -1 && currentIndex + 1 < activeQueue.length) {
-      playSong(activeQueue[currentIndex + 1]);
-      return;
-    }
-
-    // 4. Last song in queue: respect repeat setting!
-    // With repeat on ('all'), go back to the start. With repeat off ('off'), stop.
-    if (currentRepeat === 'all') {
-      playSong(activeQueue[0]);
-      return;
-    }
-
-    // Repeat is off: stop playback
-    setIsPlaying(false);
+    handleNextTrackRef.current(true);
   }, []);
 
   // Play a specific song with optional context queue and optional start position
@@ -646,21 +608,27 @@ export default function App() {
             const j = Math.floor(Math.random() * (i + 1));
             [others[i], others[j]] = [others[j], others[i]];
           }
-          setQueue([song, ...others]);
+          const nextQ = [song, ...others];
+          setQueue(nextQ);
+          queueRef.current = nextQ;
         } else {
           setQueue(contextQueue);
+          queueRef.current = contextQueue;
         }
       } else {
         setQueue((prev) => {
           if (prev.length <= 1 && songsRef.current.length > 1) {
             originalQueueRef.current = songsRef.current;
+            queueRef.current = songsRef.current;
             return songsRef.current;
           }
           if (!prev.some((s) => s.id === song.id)) {
             const nextQ = [song, ...prev];
             originalQueueRef.current = nextQ;
+            queueRef.current = nextQ;
             return nextQ;
           }
+          queueRef.current = prev;
           return prev;
         });
       }
@@ -702,14 +670,21 @@ export default function App() {
             }
           } catch (fetchErr) {
             console.warn('Audio fetch fallback error:', fetchErr);
-            setGlobalError("JTEC MUSIC couldn't load this audio track. Please check your connection or re-import it.");
-            setTimeout(() => setGlobalError(null), 5000);
+            setGlobalError("Can't reach JTEC Cloud right now. Check your internet and try again.");
+            setTimeout(() => setGlobalError(null), 3000);
+            setTimeout(() => {
+              handleNextTrackRef.current(true);
+            }, 600);
             return;
           }
         }
       } else {
-        setGlobalError("JTEC MUSIC couldn't find audio data for this track. Please download or re-import it.");
-        setTimeout(() => setGlobalError(null), 5000);
+        console.warn('Audio data missing for track:', song.title);
+        setGlobalError(song.isCloud ? "Can't reach JTEC Cloud right now. Check your internet and try again." : "Audio file unavailable. Skipping to next song...");
+        setTimeout(() => setGlobalError(null), 3000);
+        setTimeout(() => {
+          handleNextTrackRef.current(true);
+        }, 600);
         return;
       }
 
@@ -725,8 +700,11 @@ export default function App() {
         return;
       }
       console.warn('Failed to play song:', err);
-      setGlobalError("JTEC MUSIC couldn't play this file. The format may not be supported by your browser.");
-      setTimeout(() => setGlobalError(null), 5000);
+      setGlobalError(song.isCloud ? "Can't reach JTEC Cloud right now. Check your internet and try again." : "Audio file unavailable. Skipping to next song...");
+      setTimeout(() => setGlobalError(null), 3000);
+      setTimeout(() => {
+        handleNextTrackRef.current(true);
+      }, 600);
     }
   };
 
@@ -761,12 +739,25 @@ export default function App() {
   };
 
   // Next Track (advances strictly top-to-bottom through the active queue/list)
-  const handleNextTrack = () => {
-    const cur = currentSong;
-    const q = queue.length > 0 ? queue : songs;
+  const handleNextTrack = useCallback((isAutoAdvance = false) => {
+    const cur = currentSongRef.current;
+    const q = queueRef.current.length > 0 ? queueRef.current : songsRef.current;
     if (q.length === 0) return;
 
-    if (isShuffle && q.length > 1) {
+    if (isAutoAdvance) {
+      if (repeatModeRef.current === 'one' && cur) {
+        audioEngine.seek(0);
+        audioEngine.play().catch((err) => console.warn('Repeat one playback error:', err));
+        return;
+      }
+      const isAutoNextEnabled = settingsRef.current.autoplayNext ?? true;
+      if (!isAutoNextEnabled) {
+        setIsPlaying(false);
+        return;
+      }
+    }
+
+    if (isShuffleRef.current && q.length > 1) {
       const curIdx = cur ? q.findIndex((item) => item.id === cur.id) : -1;
       let rand = Math.floor(Math.random() * q.length);
       while (rand === curIdx && q.length > 1) {
@@ -783,30 +774,36 @@ export default function App() {
 
     const curIdx = q.findIndex((item) => item.id === cur.id);
     if (curIdx !== -1 && curIdx + 1 < q.length) {
-      // Next goes to the song below
+      // Next goes to the song below in order
       playSong(q[curIdx + 1]);
       return;
     }
 
-    // At the last song, respect repeat: repeat ON goes back to first song, repeat OFF stops/rewinds
-    if (repeatMode === 'all') {
-      playSong(q[0]);
+    // At the last song in queue:
+    if (isAutoAdvance) {
+      if (repeatModeRef.current === 'all') {
+        // Repeat all (default): loop back to top so playback never stops
+        playSong(q[0]);
+      } else {
+        // Repeat off: stop after the last song
+        audioEngine.pause();
+        setIsPlaying(false);
+      }
     } else {
-      // Repeat off: stop playback or do not advance past the bottom
-      audioEngine.pause();
-      setIsPlaying(false);
+      // Manual Next button: wrap around to first song
+      playSong(q[0]);
     }
-  };
+  }, []);
 
   // Previous Track (goes to the song above in top-to-bottom order)
-  const handlePreviousTrack = () => {
-    if (currentTime > 3) {
+  const handlePreviousTrack = useCallback(() => {
+    if (currentTimeRef.current > 3) {
       audioEngine.seek(0);
       return;
     }
 
-    const cur = currentSong;
-    const q = queue.length > 0 ? queue : songs;
+    const cur = currentSongRef.current;
+    const q = queueRef.current.length > 0 ? queueRef.current : songsRef.current;
     if (q.length === 0) return;
 
     if (!cur) {
@@ -821,13 +818,13 @@ export default function App() {
       return;
     }
 
-    // At the top song
-    if (repeatMode === 'all') {
-      playSong(q[q.length - 1]);
-    } else {
-      audioEngine.seek(0);
-    }
-  };
+    // At the top song: wrap around to bottom
+    playSong(q[q.length - 1]);
+  }, []);
+
+  useEffect(() => {
+    handleNextTrackRef.current = handleNextTrack;
+  }, [handleNextTrack]);
 
   // Toggle Shuffle with top-to-bottom restoration from current song
   const handleToggleShuffle = () => {
@@ -835,15 +832,17 @@ export default function App() {
       const nextShuffle = !prevShuffle;
       if (nextShuffle) {
         // Turning shuffle ON: create randomized order
-        const cur = currentSong;
-        const base = queue.length > 0 ? [...queue] : [...songs];
+        const cur = currentSongRef.current;
+        const base = queueRef.current.length > 0 ? [...queueRef.current] : [...songsRef.current];
         if (base.length > 1) {
           const others = cur ? base.filter((s) => s.id !== cur.id) : base;
           for (let i = others.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [others[i], others[j]] = [others[j], others[i]];
           }
-          setQueue(cur ? [cur, ...others] : others);
+          const shuffled = cur ? [cur, ...others] : others;
+          setQueue(shuffled);
+          queueRef.current = shuffled;
         }
       } else {
         // Turning shuffle OFF: go back to top-to-bottom from the current song
@@ -852,8 +851,11 @@ export default function App() {
           : songsRef.current;
         if (base.length > 0) {
           setQueue(base);
+          queueRef.current = base;
         }
       }
+      isShuffleRef.current = nextShuffle;
+      persistSessionNow();
       return nextShuffle;
     });
   };
@@ -1110,17 +1112,17 @@ export default function App() {
     setCloudSongs(fetched);
   };
 
-  const handlePlayCloudSong = async (cloudSong: CloudSong) => {
+  const handlePlayCloudSong = async (cloudSong: CloudSong, contextQueue?: Song[]) => {
     // Check if an offline downloaded copy exists
     const match = songs.find(
       (s) => s.cloudId === cloudSong.id || (cloudSong.file_hash && s.fileHash === cloudSong.file_hash)
     );
     if (match && match.hasStoredBlob) {
-      await playSong(match);
+      await playSong(match, contextQueue);
       return;
     }
 
-    // Stream from Supabase public audio_url
+    // Stream from public audio_url
     const streamedSong: Song = {
       id: `stream_${cloudSong.id}`,
       title: cloudSong.title,
@@ -1129,6 +1131,7 @@ export default function App() {
       duration: cloudSong.duration,
       genre: cloudSong.genre,
       artworkUrl: cloudSong.cover_url,
+      coverUrl: cloudSong.cover_url,
       format: (cloudSong.file_name.split('.').pop() || 'mp3').toLowerCase(),
       size: cloudSong.file_size,
       dateAdded: Date.now(),
@@ -1139,7 +1142,7 @@ export default function App() {
       fileHash: cloudSong.file_hash,
     };
 
-    await playSong(streamedSong);
+    await playSong(streamedSong, contextQueue);
   };
 
   const handleDownloadCloudSong = async (
@@ -1165,9 +1168,8 @@ export default function App() {
       const stats = await StorageService.getStorageStats();
       setStorageStats(stats);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not download song';
-      console.error('Failed to download cloud song:', err);
-      throw new Error(msg);
+      console.warn('Failed to download cloud song:', err);
+      throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
     }
   };
 
@@ -1273,14 +1275,13 @@ export default function App() {
       />
 
       {/* Main Body Content Router */}
-      <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
+      <main ref={mainContainerRef} className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
         {isSettingsView ? (
           <SettingsScreen
             settings={settings}
             storageStats={storageStats}
             onUpdateSettings={handleUpdateSettings}
             onClearLibrary={handleClearEntireLibrary}
-            onOpenCloudSettings={() => setIsCloudSettingsOpen(true)}
             sleepTimer={sleepTimer}
             onStartSleepTimer={handleStartSleepTimer}
             onCancelSleepTimer={handleCancelSleepTimer}
@@ -1293,7 +1294,7 @@ export default function App() {
             recentlyPlayed={recentlyPlayedSongs}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={(song) => playSong(song, songs)}
+            onPlaySong={(song, contextQueue) => playSong(song, contextQueue || songs)}
             onOpenImport={() => setIsImportOpen(true)}
             onOpenPlaylists={() => setCurrentTab('playlists')}
             onSelectPlaylist={handlePlayPlaylist}
@@ -1311,7 +1312,7 @@ export default function App() {
             recentlyPlayed={recentlyPlayedSongs}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={(song) => playSong(song, songs)}
+            onPlaySong={(song, contextQueue) => playSong(song, contextQueue || songs)}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenImport={() => setIsImportOpen(true)}
@@ -1355,7 +1356,7 @@ export default function App() {
             playlists={playlists}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onPlaySong={(song) => playSong(song, songs)}
+            onPlaySong={(song, contextQueue) => playSong(song, contextQueue || songs)}
             onSelectPlaylist={handlePlayPlaylist}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
@@ -1495,15 +1496,6 @@ export default function App() {
         onRemoveFromLibrary={handleRemoveSongFromLibrary}
         onUpdateCover={handleUpdateSongCover}
         onRemoveCover={handleRemoveSongCover}
-      />
-
-      {/* CLOUD SETTINGS MODAL */}
-      <CloudSettingsModal
-        isOpen={isCloudSettingsOpen}
-        onClose={() => setIsCloudSettingsOpen(false)}
-        onRefreshCloud={handleRefreshCloud}
-        onClearOfflineDownloads={handleClearOfflineDownloads}
-        onConfigChanged={handleRefreshCloud}
       />
 
       {/* PWA AUTOMATIC UPDATE BANNER */}

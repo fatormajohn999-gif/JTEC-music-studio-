@@ -58,7 +58,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               Bring Your <span className="text-gradient-cyan-purple">Vibe Offline</span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-md">
-              Zero streaming lag. True Web Audio Slow+Reverb DSP, custom visualizers, Supabase cloud sync, and offline storage.
+              Zero streaming lag. True Web Audio Slow+Reverb DSP, custom visualizers, JTEC Cloud sync, and offline storage.
             </p>
           </div>
 

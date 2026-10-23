@@ -1,17 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
-  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud, Settings2, Compass,
-  BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle, Activity
+  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
+  BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
+  ChevronDown, Play, Info
 } from 'lucide-react';
-import { NotificationPermissionManager } from '../services/notificationPermission';
+import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
 import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
 import { UserGuideView } from '../components/UserGuideView';
+import { ConnectionTestModal } from '../components/ConnectionTestModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
-import { SupabaseService, SourceDiagnosticResult } from '../services/supabase';
+import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
 
 interface SettingsScreenProps {
@@ -25,72 +27,154 @@ interface SettingsScreenProps {
   };
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClearLibrary: () => void;
-  onOpenCloudSettings?: () => void;
   sleepTimer: SleepTimerState;
   onStartSleepTimer: (minutes: number) => void;
   onCancelSleepTimer: () => void;
   onExtendSleepTimer: (minutes?: number) => void;
 }
 
+type SettingsGroup = 'playback' | 'visualizer' | 'storage' | 'notifications' | 'about';
+
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   settings,
   storageStats,
   onUpdateSettings,
   onClearLibrary,
-  onOpenCloudSettings,
   sleepTimer,
   onStartSleepTimer,
   onCancelSleepTimer,
   onExtendSleepTimer,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const lastScrollTopRef = useRef<number>(0);
+
   const [activeSubView, setActiveSubView] = useState<'main' | 'privacy' | 'guide'>('main');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [notificationDenied, setNotificationDenied] = useState(false);
   const [showHowToModal, setShowHowToModal] = useState(false);
-  const [isTestingConnections, setIsTestingConnections] = useState(false);
-  const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[] | null>(null);
-  const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
+  const [showConnectionTest, setShowConnectionTest] = useState(false);
+  const versionTapCountRef = useRef<number>(0);
+  const versionTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const handleVersionTap = () => {
+    versionTapCountRef.current += 1;
+    if (versionTapTimerRef.current) {
+      clearTimeout(versionTapTimerRef.current);
+    }
+    if (versionTapCountRef.current >= 7) {
+      versionTapCountRef.current = 0;
+      setShowConnectionTest(true);
+      return;
+    }
+    versionTapTimerRef.current = setTimeout(() => {
+      versionTapCountRef.current = 0;
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (versionTapTimerRef.current) {
+        clearTimeout(versionTapTimerRef.current);
+      }
+    };
+  }, []);
+
+  const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
+  const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>('prompt');
+  
+  // Wi-Fi only download setting
+  const [wifiOnly, setWifiOnly] = useState<boolean>(() => {
+    return SupabaseService.getCloudSettings().wifiOnly ?? false;
+  });
+
+  // Collapsible cards: first two (playback and visualizer) are open by default
+  const [openGroups, setOpenGroups] = useState<Record<SettingsGroup, boolean>>({
+    playback: true,
+    visualizer: true,
+    storage: false,
+    notifications: false,
+    about: false,
+  });
+
+  const toggleGroup = (group: SettingsGroup) => {
+    setOpenGroups((prev) => ({
+      ...prev,
+      [group]: !prev[group],
+    }));
+  };
+
+  // Reset scroll position to top on initial mount
+  useEffect(() => {
+    const scrollParent = containerRef.current?.closest('main');
+    if (scrollParent) {
+      scrollParent.scrollTop = 0;
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  // Sync persistent storage status
   useEffect(() => {
     StorageService.isStoragePersisted().then((p) => setPersistedStatus(p));
   }, [storageStats.isPersisted]);
+
+  // Sync notification status on focus and visibility
+  useEffect(() => {
+    let mounted = true;
+    const checkNotification = () => {
+      NotificationPermissionManager.getPermissionStatus().then((status) => {
+        if (mounted) setNotificationStatus(status);
+      });
+    };
+
+    checkNotification();
+
+    window.addEventListener('focus', checkNotification);
+    document.addEventListener('visibilitychange', checkNotification);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener('focus', checkNotification);
+      document.removeEventListener('visibilitychange', checkNotification);
+    };
+  }, []);
 
   const handleRequestPersist = async () => {
     const granted = await StorageService.requestPersistentStorage();
     setPersistedStatus(granted);
   };
 
-  const handleRunConnectionTest = async () => {
-    setIsTestingConnections(true);
-    try {
-      const results = await SupabaseService.testAllSources();
-      setConnectionResults(results);
-    } catch (err) {
-      console.error('Connection test error:', err);
-    } finally {
-      setIsTestingConnections(false);
+  const handleToggleWifiOnly = () => {
+    const nextVal = !wifiOnly;
+    setWifiOnly(nextVal);
+    SupabaseService.saveCloudSettings({ wifiOnly: nextVal });
+  };
+
+  const handleRequestNotificationPermission = async () => {
+    const status = await NotificationPermissionManager.requestPermission();
+    setNotificationStatus(status);
+    if (status === 'denied') {
+      setShowHowToModal(true);
     }
   };
 
-  useEffect(() => {
-    let mounted = true;
-    const checkStatus = () => {
-      NotificationPermissionManager.isPermissionDenied().then((denied) => {
-        if (mounted) setNotificationDenied(denied);
-      });
-    };
+  const handleOpenSubView = (view: 'privacy' | 'guide') => {
+    const scrollParent = containerRef.current?.closest('main');
+    lastScrollTopRef.current = scrollParent ? scrollParent.scrollTop : window.scrollY;
+    setActiveSubView(view);
+  };
 
-    checkStatus();
-
-    window.addEventListener('focus', checkStatus);
-    document.addEventListener('visibilitychange', checkStatus);
-
-    return () => {
-      mounted = false;
-      window.removeEventListener('focus', checkStatus);
-      document.removeEventListener('visibilitychange', checkStatus);
-    };
-  }, []);
+  const handleBackToMain = () => {
+    setActiveSubView('main');
+    setTimeout(() => {
+      const scrollParent = containerRef.current?.closest('main');
+      const target = Math.min(lastScrollTopRef.current, 320);
+      if (scrollParent) {
+        scrollParent.scrollTop = target;
+      } else {
+        window.scrollTo(0, target);
+      }
+    }, 50);
+  };
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 MB';
@@ -107,52 +191,32 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   };
 
   if (activeSubView === 'privacy') {
-    return <PrivacyPolicyView onBack={() => setActiveSubView('main')} />;
+    return <PrivacyPolicyView onBack={handleBackToMain} />;
   }
 
   if (activeSubView === 'guide') {
-    return <UserGuideView onBack={() => setActiveSubView('main')} />;
+    return <UserGuideView onBack={handleBackToMain} />;
   }
 
   return (
-    <div className="space-y-6 pb-36 px-4 pt-3 max-w-4xl mx-auto animate-in fade-in">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
+    <div ref={containerRef} className="space-y-4 pb-48 px-4 pt-3 max-w-3xl mx-auto animate-in fade-in">
+      {/* Header */}
+      <div className="flex items-center gap-3 pb-1">
+        <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-purple-600/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-lg shadow-cyan-500/10">
           <SettingsIcon className="w-5 h-5" />
         </div>
         <div>
           <h2 className="text-xl font-bold text-white tracking-wide">Player Settings</h2>
-          <p className="text-xs text-slate-400">Audio DSP, Visualizer, Performance & Storage</p>
+          <p className="text-xs text-slate-400">Audio DSP, Visualizer, Storage & Cloud Services</p>
         </div>
       </div>
-
-      {/* NOTIFICATIONS DENIED MESSAGE (NATIVE ANDROID) */}
-      {notificationDenied && (
-        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200">
-          <div className="flex items-center gap-2.5">
-            <BellOff className="w-5 h-5 text-amber-400 shrink-0" />
-            <p className="text-xs font-medium leading-relaxed">
-              Notifications are off. Turn them on to see music controls.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowHowToModal(true)}
-            className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold whitespace-nowrap transition cursor-pointer self-start sm:self-auto"
-          >
-            How to enable
-          </button>
-        </div>
-      )}
 
       {/* HOW TO ENABLE NOTIFICATIONS MODAL */}
       {showHowToModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl relative">
             <button
-              onClick={() => {
-                setShowHowToModal(false);
-                NotificationPermissionManager.isPermissionDenied().then(setNotificationDenied);
-              }}
+              onClick={() => setShowHowToModal(false)}
               className="absolute top-5 right-5 p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
               aria-label="Close"
             >
@@ -165,7 +229,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">Enable Notifications</h3>
-                <p className="text-xs text-slate-400">Lock screen & media controls</p>
+                <p className="text-xs text-slate-400">Lock screen & media playback controls</p>
               </div>
             </div>
 
@@ -191,7 +255,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <button
               onClick={() => {
                 setShowHowToModal(false);
-                NotificationPermissionManager.isPermissionDenied().then(setNotificationDenied);
+                NotificationPermissionManager.getPermissionStatus().then(setNotificationStatus);
               }}
               className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer"
             >
@@ -201,483 +265,613 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
       )}
 
-      {/* PERFORMANCE & BATTERY SAVER MODE */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center gap-2">
-          <Zap className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Engine & Battery Profile
-          </h3>
-        </div>
-        <p className="text-xs text-slate-400">
-          Optimize frame rates and canvas resolution for mobile battery longevity.
-        </p>
-
-        <div className="grid grid-cols-3 gap-2.5 pt-1">
-          {[
-            {
-              id: 'battery' as PerformanceMode,
-              label: 'Battery Saver',
-              desc: '30 FPS, lowest CPU',
-              icon: Battery,
-            },
-            {
-              id: 'balanced' as PerformanceMode,
-              label: 'Balanced',
-              desc: '60 FPS, optimal',
-              icon: Zap,
-            },
-            {
-              id: 'high' as PerformanceMode,
-              label: 'High Quality',
-              desc: 'Full dpr, peak glow',
-              icon: Sparkles,
-            },
-          ].map((profile) => {
-            const Icon = profile.icon;
-            const isSelected = settings.performanceMode === profile.id;
-            return (
-              <button
-                key={profile.id}
-                onClick={() => handlePerformanceChange(profile.id)}
-                className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 ${
-                  isSelected
-                    ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
-                    : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
-                }`}
-              >
-                <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
-                <span className="text-xs font-bold">{profile.label}</span>
-                <span className="text-[10px] text-slate-500 mt-0.5">{profile.desc}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* VISUALIZER PREFERENCES */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center gap-2">
-          <Eye className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Audio Visualizer Themes
-          </h3>
-        </div>
-        <p className="text-xs text-slate-400">
-          Render real-time frequency data synced to Web Audio API analyser. Choose your visual theme:
-        </p>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
-          {[
-            { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
-            { id: 'shadow_strike' as VisualizerMode, label: '🗡️ Shadow Strike' },
-            { id: 'shuriken_storm' as VisualizerMode, label: '⭐ Shuriken Storm' },
-            { id: 'smoke_vanish' as VisualizerMode, label: '💨 Smoke Vanish' },
-            { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
-            { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
-            { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
-            { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
-            { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
-            { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
-            { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
-            { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
-            { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
-            { id: 'aurora_skies' as VisualizerMode, label: '🌌 Aurora Skies' },
-            { id: 'thunder_storm' as VisualizerMode, label: '⚡ Thunder Storm' },
-            { id: 'dragon_spirit' as VisualizerMode, label: '🐉 Dragon Spirit' },
-            { id: 'hyperspace_warp' as VisualizerMode, label: '🚀 Hyperspace Warp' },
-            { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
-          ].map((v) => {
-            const isSelected = settings.visualizerMode === v.id;
-            return (
-              <button
-                key={v.id}
-                onClick={() => handleVisualizerChange(v.id)}
-                className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-between gap-1.5 ${
-                  isSelected
-                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
-                    : 'bg-slate-950/40 border-white/5 text-slate-400 hover:text-white'
-                }`}
-              >
-                <span className="truncate">{v.label}</span>
-                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* REACTION STRENGTH SETTING */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center gap-2">
-          <Sliders className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Reaction Strength
-          </h3>
-        </div>
-        <p className="text-xs text-slate-400">
-          Scale how dynamically visualizer effects react to audio frequencies, bass hits, and beats (0.6x, 1x, 1.5x).
-        </p>
-
-        <div className="grid grid-cols-3 gap-2.5 pt-1">
-          {[
-            {
-              id: 'low' as ReactionStrength,
-              label: 'Low',
-              desc: '0.6x reaction',
-            },
-            {
-              id: 'medium' as ReactionStrength,
-              label: 'Medium',
-              desc: '1.0x (default)',
-            },
-            {
-              id: 'high' as ReactionStrength,
-              label: 'High',
-              desc: '1.5x intense',
-            },
-          ].map((item) => {
-            const isSelected = (settings.reactionStrength || 'medium') === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onUpdateSettings({ ...settings, reactionStrength: item.id })}
-                className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 ${
-                  isSelected
-                    ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
-                    : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
-                }`}
-              >
-                <span className="text-xs font-bold">{item.label}</span>
-                <span className="text-[10px] text-slate-500 mt-0.5">{item.desc}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* SLEEP TIMER */}
-      <SleepTimerSection
-        timerState={sleepTimer}
-        onStart={onStartSleepTimer}
-        onCancel={onCancelSleepTimer}
-        onExtend={onExtendSleepTimer}
-      />
-
-      {/* PLAYBACK PREFERENCES */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-          Playback Controls
-        </h3>
-
-        {/* Dedicated Automatic Next Track Card */}
-        <div className="p-4 rounded-2xl bg-slate-950/60 border border-cyan-500/25 flex items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-white text-sm">Automatic Next Track</span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                settings.autoplayNext 
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' 
-                  : 'bg-slate-800 text-slate-400 border border-white/5'
-              }`}>
-                {settings.autoplayNext ? 'ACTIVE' : 'OFF'}
-              </span>
+      {/* =========================================================================
+          GROUP 1: PLAYBACK (Open by default)
+          Automatic Next, Sleep Timer, Remember Last Song, Neon Glow Aesthetics
+      ========================================================================= */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('playback')}
+          aria-expanded={openGroups.playback}
+          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
+              <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              When a track finishes, automatically queue and play the next song from your queue, playlist, or library without interruption.
-            </p>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
+                Playback
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Automatic Next, Sleep Timer & playback controls
+              </p>
+            </div>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0">
-            <input
-              type="checkbox"
-              checked={settings.autoplayNext}
-              onChange={(e) => onUpdateSettings({ ...settings, autoplayNext: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-cyan-500 peer-checked:to-purple-600"></div>
-          </label>
-        </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.playback ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
 
-        <div className="space-y-2 text-sm text-slate-300 pt-1">
-          <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
-            <div>
-              <div className="font-semibold text-white">Remember Last Song</div>
-              <div className="text-xs text-slate-400">Restore session state when reopening player</div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.rememberLastSong}
-              onChange={(e) => onUpdateSettings({ ...settings, rememberLastSong: e.target.checked })}
-              className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
-            />
-          </label>
-
-          <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
-            <div>
-              <div className="font-semibold text-white">Neon Glow Aesthetics</div>
-              <div className="text-xs text-slate-400">Enhanced atmospheric lighting in player</div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.neonGlow}
-              onChange={(e) => onUpdateSettings({ ...settings, neonGlow: e.target.checked })}
-              className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
-            />
-          </label>
-        </div>
-      </div>
-
-      {/* STORAGE & PRIVACY */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-4">
-        <div className="flex items-center gap-2">
-          <HardDrive className="w-4 h-4 text-blue-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Local Device Storage
-          </h3>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
-          <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
-            <span className="text-xs text-slate-400">Library Songs</span>
-            <div className="text-lg font-bold text-white font-mono">{storageStats.songCount}</div>
-            <span className="text-[10px] text-slate-500">Total catalog</span>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
-            <span className="text-xs text-slate-400">Downloads Storage</span>
-            <div className="text-lg font-bold text-cyan-300 font-mono">
-              {formatBytes(storageStats.downloadBytes ?? storageStats.estimatedBytes)}
-            </div>
-            <span className="text-[10px] text-slate-500">
-              {storageStats.downloadCount ?? storageStats.songCount} offline tracks
-            </span>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 col-span-2 sm:col-span-1">
-            <span className="text-xs text-slate-400">Persistent Storage</span>
-            <div className={`text-xs font-bold font-mono mt-1 flex items-center justify-center gap-1 ${
-              persistedStatus ? 'text-emerald-400' : 'text-amber-400'
-            }`}>
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>{persistedStatus ? 'Granted' : 'Standard'}</span>
-            </div>
-            {!persistedStatus ? (
-              <button
-                type="button"
-                onClick={handleRequestPersist}
-                className="text-[10px] text-cyan-400 hover:underline mt-0.5 cursor-pointer"
-              >
-                Request permanent
-              </button>
-            ) : (
-              <span className="text-[10px] text-slate-500">Protected</span>
-            )}
-          </div>
-        </div>
-
-        {/* Short Note: required offline storage notice */}
-        <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-xs text-slate-300">
-          <div className="flex items-start gap-2.5">
-            <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
-            <p className="leading-relaxed">
-              Downloads are saved inside the app. Uninstalling the app or clearing its data deletes them.
-            </p>
-          </div>
-        </div>
-
-        {/* Cloud Settings Link */}
-        {onOpenCloudSettings && (
-          <button
-            onClick={onOpenCloudSettings}
-            className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 to-purple-600/10 border border-cyan-500/30 text-white hover:border-cyan-400 transition text-xs font-semibold cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Cloud className="w-4 h-4 text-cyan-400" />
-              <span>JTEC CLOUD & Supabase Storage Settings</span>
-            </div>
-            <span className="text-cyan-300 text-[11px]">Configure →</span>
-          </button>
-        )}
-
-        {/* CONNECTION TEST DIAGNOSTICS CARD */}
-        <div className="p-4 rounded-2xl bg-slate-950/70 border border-white/10 space-y-3.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0">
-                <Activity className="w-4 h-4 text-cyan-400" />
+        {openGroups.playback && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+            {/* Automatic Next Track */}
+            <div className="p-4 rounded-2xl bg-slate-950/60 border border-cyan-500/25 flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-white text-sm">Automatic Next Track</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    settings.autoplayNext 
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' 
+                      : 'bg-slate-800 text-slate-400 border border-white/5'
+                  }`}>
+                    {settings.autoplayNext ? 'ACTIVE' : 'OFF'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  When a track finishes, automatically queue and play the next song from your queue, playlist, or library without interruption.
+                </p>
               </div>
-              <div>
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Supabase Diagnostics
-                </h4>
-                <p className="text-[11px] text-slate-400">
-                  Verify public read connectivity & HTTP status across all sources
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={settings.autoplayNext}
+                  onChange={(e) => onUpdateSettings({ ...settings, autoplayNext: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-cyan-500 peer-checked:to-purple-600"></div>
+              </label>
+            </div>
+
+            {/* Sleep Timer */}
+            <SleepTimerSection
+              timerState={sleepTimer}
+              onStart={onStartSleepTimer}
+              onCancel={onCancelSleepTimer}
+              onExtend={onExtendSleepTimer}
+            />
+
+            {/* Additional Playback Preferences: Session state and Aesthetics */}
+            <div className="space-y-2 text-sm text-slate-300 pt-1">
+              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
+                <div>
+                  <div className="font-semibold text-white text-xs sm:text-sm">Remember Last Song</div>
+                  <div className="text-[11px] text-slate-400">Restore exact track and seek position when reopening player</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.rememberLastSong}
+                  onChange={(e) => onUpdateSettings({ ...settings, rememberLastSong: e.target.checked })}
+                  className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
+                <div>
+                  <div className="font-semibold text-white text-xs sm:text-sm">Neon Glow Aesthetics</div>
+                  <div className="text-[11px] text-slate-400">Atmospheric cover-reactive lighting in full player and cards</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.neonGlow}
+                  onChange={(e) => onUpdateSettings({ ...settings, neonGlow: e.target.checked })}
+                  className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* =========================================================================
+          GROUP 2: VISUALIZER (Open by default)
+          Theme picker, Reaction Strength, Engine and Battery Profile
+      ========================================================================= */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('visualizer')}
+          aria-expanded={openGroups.visualizer}
+          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center shrink-0">
+              <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
+                Visualizer
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Themes, reaction dynamics & engine battery profile
+              </p>
+            </div>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.visualizer ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
+
+        {openGroups.visualizer && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-5 border-t border-white/5 animate-in fade-in duration-150">
+            {/* Visualizer Theme Picker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Audio Visualizer Themes
+                </span>
+                <span className="text-[10px] text-cyan-300 font-mono">18 Scenes</span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Render real-time frequency data synced to Web Audio API analyser:
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
+                {[
+                  { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
+                  { id: 'shadow_strike' as VisualizerMode, label: '🗡️ Shadow Strike' },
+                  { id: 'shuriken_storm' as VisualizerMode, label: '⭐ Shuriken Storm' },
+                  { id: 'smoke_vanish' as VisualizerMode, label: '💨 Smoke Vanish' },
+                  { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
+                  { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
+                  { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
+                  { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
+                  { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
+                  { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
+                  { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
+                  { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
+                  { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
+                  { id: 'aurora_skies' as VisualizerMode, label: '🌌 Aurora Skies' },
+                  { id: 'thunder_storm' as VisualizerMode, label: '⚡ Thunder Storm' },
+                  { id: 'dragon_spirit' as VisualizerMode, label: '🐉 Dragon Spirit' },
+                  { id: 'hyperspace_warp' as VisualizerMode, label: '🚀 Hyperspace Warp' },
+                  { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
+                ].map((v) => {
+                  const isSelected = settings.visualizerMode === v.id;
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => handleVisualizerChange(v.id)}
+                      className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-between gap-1.5 cursor-pointer ${
+                        isSelected
+                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
+                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:text-white hover:border-white/20'
+                      }`}
+                    >
+                      <span className="truncate">{v.label}</span>
+                      {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Reaction Strength */}
+            <div className="space-y-2 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Reaction Strength
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Scale how dynamically visualizer effects react to audio frequencies, bass hits, and beats (0.6x, 1.0x, 1.5x):
+              </p>
+
+              <div className="grid grid-cols-3 gap-2.5 pt-1">
+                {[
+                  { id: 'low' as ReactionStrength, label: 'Low', desc: '0.6x reaction' },
+                  { id: 'medium' as ReactionStrength, label: 'Medium', desc: '1.0x (default)' },
+                  { id: 'high' as ReactionStrength, label: 'High', desc: '1.5x intense' },
+                ].map((item) => {
+                  const isSelected = (settings.reactionStrength || 'medium') === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onUpdateSettings({ ...settings, reactionStrength: item.id })}
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 cursor-pointer ${
+                        isSelected
+                          ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
+                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
+                      }`}
+                    >
+                      <span className="text-xs font-bold">{item.label}</span>
+                      <span className="text-[10px] text-slate-500 mt-0.5">{item.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Engine & Battery Profile */}
+            <div className="space-y-2 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Engine & Battery Profile
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Optimize frame rates and canvas resolution for mobile battery longevity:
+              </p>
+
+              <div className="grid grid-cols-3 gap-2.5 pt-1">
+                {[
+                  { id: 'battery' as PerformanceMode, label: 'Battery Saver', desc: '30 FPS, lowest CPU', icon: Battery },
+                  { id: 'balanced' as PerformanceMode, label: 'Balanced', desc: '60 FPS, optimal', icon: Zap },
+                  { id: 'high' as PerformanceMode, label: 'High Quality', desc: 'Full dpr, peak glow', icon: Sparkles },
+                ].map((profile) => {
+                  const Icon = profile.icon;
+                  const isSelected = settings.performanceMode === profile.id;
+                  return (
+                    <button
+                      key={profile.id}
+                      onClick={() => handlePerformanceChange(profile.id)}
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 cursor-pointer ${
+                        isSelected
+                          ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
+                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
+                      }`}
+                    >
+                      <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
+                      <span className="text-xs font-bold">{profile.label}</span>
+                      <span className="text-[10px] text-slate-500 mt-0.5">{profile.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* =========================================================================
+          GROUP 3: DOWNLOADS AND STORAGE
+          Storage used, uninstall notice, Wi-Fi only, and dangerous clear library
+      ========================================================================= */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('storage')}
+          aria-expanded={openGroups.storage}
+          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center shrink-0">
+              <HardDrive className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
+                Downloads and Storage
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Local storage, offline files & download settings
+              </p>
+            </div>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.storage ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
+
+        {openGroups.storage && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+            {/* Storage Stats Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+                <span className="text-xs text-slate-400">Library Songs</span>
+                <div className="text-lg font-bold text-white font-mono">{storageStats.songCount}</div>
+                <span className="text-[10px] text-slate-500">Total catalog</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+                <span className="text-xs text-slate-400">Downloads Storage</span>
+                <div className="text-lg font-bold text-cyan-300 font-mono">
+                  {formatBytes(storageStats.downloadBytes ?? storageStats.estimatedBytes)}
+                </div>
+                <span className="text-[10px] text-slate-500">
+                  {storageStats.downloadCount ?? storageStats.songCount} offline tracks
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 col-span-2 sm:col-span-1">
+                <span className="text-xs text-slate-400">Persistent Storage</span>
+                <div className={`text-xs font-bold font-mono mt-1 flex items-center justify-center gap-1 ${
+                  persistedStatus ? 'text-emerald-400' : 'text-amber-400'
+                }`}>
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>{persistedStatus ? 'Granted' : 'Standard'}</span>
+                </div>
+                {!persistedStatus ? (
+                  <button
+                    type="button"
+                    onClick={handleRequestPersist}
+                    className="text-[10px] text-cyan-400 hover:underline mt-0.5 cursor-pointer"
+                  >
+                    Request permanent
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-slate-500">Protected</span>
+                )}
+              </div>
+            </div>
+
+            {/* Note: Required offline storage notice */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-xs text-slate-300">
+              <div className="flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
+                <p className="leading-relaxed">
+                  Downloads are saved inside the app. Uninstalling the app or clearing its data deletes them.
                 </p>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleRunConnectionTest}
-              disabled={isTestingConnections}
-              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 shadow-lg shadow-cyan-500/20"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isTestingConnections ? 'animate-spin' : ''}`} />
-              <span>{isTestingConnections ? 'Testing...' : 'Connection test'}</span>
-            </button>
-          </div>
-
-          {/* Connection Test Results */}
-          {connectionResults && (
-            <div className="space-y-2.5 pt-1 animate-in fade-in">
-              {connectionResults.map((res) => (
-                <div
-                  key={res.categoryKey}
-                  className={`p-3 rounded-xl border text-xs space-y-1.5 ${
-                    res.success
-                      ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
-                      : !res.isConfigured
-                      ? 'bg-amber-950/30 border-amber-500/30 text-amber-200'
-                      : 'bg-rose-950/30 border-rose-500/30 text-rose-200'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-white flex items-center gap-1.5">
-                      {res.success ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      ) : !res.isConfigured ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      ) : (
-                        <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                      )}
-                      <span>{res.sourceName}</span>
-                    </span>
-
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-black/40 border border-white/10 text-slate-300">
-                        HTTP {res.httpStatus}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          res.success
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : !res.isConfigured
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                        }`}
-                      >
-                        {res.success ? 'Read Succeeded' : !res.isConfigured ? 'Not Configured' : 'Read Failed'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Host: <strong className="font-mono text-slate-200">{res.projectHost}</strong></span>
-                    <span>Version: <strong className="font-mono text-cyan-300">{res.appVersion}</strong></span>
-                  </div>
-
-                  {res.errorMessage && (
-                    <div className="p-2 rounded-lg bg-black/50 text-[11px] text-slate-300 font-mono leading-relaxed border border-white/5">
-                      {res.errorMessage}
-                    </div>
-                  )}
+            {/* Wi-Fi Only Downloads Toggle */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Wifi className="w-4 h-4 text-cyan-400" />
+                  <span className="text-xs font-bold text-white">Download on Wi-Fi Only</span>
                 </div>
-              ))}
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Save mobile cellular data when downloading tracks for offline playback
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleWifiOnly}
+                className={`w-11 h-6 rounded-full transition-colors p-0.5 shrink-0 cursor-pointer ${
+                  wifiOnly ? 'bg-cyan-500' : 'bg-slate-800'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                    wifiOnly ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
 
-              <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-                <span>App Version: <strong className="text-slate-400">{APP_VERSION}</strong></span>
-                <span>Protected: No API keys or secrets are ever exposed</span>
+            {/* Dangerous Actions: Clear Offline Music Library */}
+            <div className="pt-2">
+              <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-950/20 space-y-3">
+                <div className="flex items-center gap-2 text-rose-400">
+                  <Trash2 className="w-4 h-4 shrink-0" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider">Dangerous Action</h4>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Remove all downloaded songs, playlists, and cached audio files stored in your device's IndexedDB.
+                </p>
+
+                {showClearConfirm ? (
+                  <div className="p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/50 space-y-3 animate-in fade-in">
+                    <p className="text-xs font-semibold text-rose-200">
+                      Are you sure? This will remove all imported songs, playlists, and cached audio files permanently from this device.
+                    </p>
+                    <div className="flex gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowClearConfirm(false)}
+                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClearLibrary();
+                          setShowClearConfirm(false);
+                        }}
+                        className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white transition active:scale-95 cursor-pointer shadow-lg shadow-rose-600/30"
+                      >
+                        Yes, Clear All
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowClearConfirm(true)}
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold transition active:scale-98 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Clear Offline Music Library</span>
+                  </button>
+                )}
               </div>
             </div>
-          )}
-        </div>
-
-        {/* Clear Library Button */}
-        {showClearConfirm ? (
-          <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-500/30 space-y-3">
-            <p className="text-xs text-rose-300 font-medium">
-              Are you sure? This will remove all imported songs, playlists, and cached metadata from IndexedDB.
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="flex-1 py-2 rounded-lg bg-slate-800 text-xs text-slate-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  onClearLibrary();
-                  setShowClearConfirm(false);
-                }}
-                className="flex-1 py-2 rounded-lg bg-rose-600 text-xs font-bold text-white hover:bg-rose-500"
-              >
-                Yes, Clear All
-              </button>
-            </div>
           </div>
-        ) : (
-          <button
-            onClick={() => setShowClearConfirm(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 text-xs font-semibold transition"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span>Clear Offline Music Library</span>
-          </button>
         )}
       </div>
 
-      {/* INFORMATION, PRIVACY & USER GUIDE */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-white/10 space-y-3">
-        <div className="flex items-center gap-2">
-          <Shield className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Information & Support
-          </h3>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Privacy Policy Card */}
-          <button
-            type="button"
-            onClick={() => setActiveSubView('privacy')}
-            className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                <ShieldCheck className="w-5 h-5 text-cyan-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">Privacy Policy</h4>
-                <p className="text-[10px] text-slate-400 mt-0.5">Local data, Supabase interaction & permissions</p>
-              </div>
+      {/* =========================================================================
+          GROUP 4: NOTIFICATIONS
+          Permission status and button to open phone's app settings if notifications off
+      ========================================================================= */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('notifications')}
+          aria-expanded={openGroups.notifications}
+          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
-          </button>
-
-          {/* How to Use JTEC MUSIC Card */}
-          <button
-            type="button"
-            onClick={() => setActiveSubView('guide')}
-            className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-purple-500/40 text-left transition active:scale-98 group cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                <BookOpen className="w-5 h-5 text-purple-400" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-white group-hover:text-purple-300 transition">How to Use JTEC MUSIC</h4>
-                <p className="text-[10px] text-slate-400 mt-0.5">Importing, playback, visualizers & effects</p>
-              </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
+                Notifications
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Notification permission & lock screen media controls
+              </p>
             </div>
-            <span className="text-purple-400 text-xs font-semibold pl-2">Guide →</span>
-          </button>
-        </div>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.notifications ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
+
+        {openGroups.notifications && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  {notificationStatus === 'granted' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : notificationStatus === 'denied' ? (
+                    <BellOff className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : (
+                    <Bell className="w-4 h-4 text-cyan-400 shrink-0" />
+                  )}
+                  <span className="text-xs font-bold text-white">Permission Status</span>
+                </div>
+
+                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  notificationStatus === 'granted'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : notificationStatus === 'denied'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                }`}>
+                  {notificationStatus === 'granted' ? 'ACTIVE / ALLOWED' : notificationStatus === 'denied' ? 'OFF / BLOCKED' : 'NOT CONFIGURED'}
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {notificationStatus === 'granted'
+                  ? 'Notifications are allowed. JTEC MUSIC displays track information, album art, and audio playback controls on your notification shade and lock screen.'
+                  : 'Notifications are currently off. Enabling notifications allows JTEC MUSIC to show media playback controls, track details, and album artwork on your lock screen.'}
+              </p>
+
+              {/* Action Button: Open Phone Settings or Request */}
+              {notificationStatus === 'denied' ? (
+                <button
+                  type="button"
+                  onClick={() => setShowHowToModal(true)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                >
+                  <BellOff className="w-4 h-4 text-amber-400" />
+                  <span>Open Phone App Settings Guide</span>
+                </button>
+              ) : notificationStatus === 'prompt' ? (
+                <button
+                  type="button"
+                  onClick={handleRequestNotificationPermission}
+                  className="w-full py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                >
+                  <Bell className="w-4 h-4" />
+                  <span>Enable Notifications</span>
+                </button>
+              ) : null}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="text-center text-xs text-slate-500 pb-10 space-y-3">
-        <p className="font-semibold text-slate-300">JTEC MUSIC • Your Music • Your Vibe • Offline</p>
-        <CheckForUpdatesButton />
+      {/* =========================================================================
+          GROUP 5: ABOUT AND SUPPORT (Always at the very bottom)
+          Privacy Policy, How to Use JTEC MUSIC, Check for updates, version & build
+      ========================================================================= */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('about')}
+          aria-expanded={openGroups.about}
+          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shrink-0">
+              <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
+                About and Support
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Privacy policy, user guide & software updates
+              </p>
+            </div>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.about ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
+
+        {openGroups.about && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Privacy Policy Card */}
+              <button
+                type="button"
+                onClick={() => handleOpenSubView('privacy')}
+                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                    <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">Privacy Policy</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Local data, cloud service & permissions</p>
+                  </div>
+                </div>
+                <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
+              </button>
+
+              {/* How to Use JTEC MUSIC Card */}
+              <button
+                type="button"
+                onClick={() => handleOpenSubView('guide')}
+                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-purple-500/40 text-left transition active:scale-98 group cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                    <BookOpen className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white group-hover:text-purple-300 transition">How to Use JTEC MUSIC</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Importing, playback, visualizers & effects</p>
+                  </div>
+                </div>
+                <span className="text-purple-400 text-xs font-semibold pl-2">Guide →</span>
+              </button>
+            </div>
+
+            {/* Check for updates button */}
+            <div className="pt-1 flex flex-col items-center justify-center space-y-2">
+              <CheckForUpdatesButton />
+              <div className="text-center text-[11px] text-slate-500 space-y-0.5 select-none">
+                <p
+                  onClick={handleVersionTap}
+                  className="cursor-default active:opacity-75 transition-opacity"
+                >
+                  Version <strong className="text-slate-300">{APP_VERSION}</strong> • Build <strong className="text-slate-300">{BUILD_DATE}</strong>
+                </p>
+                <p className="font-medium text-slate-400">JTEC MUSIC • Your Music • Your Vibe • Offline</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* Hidden Developer Connection Diagnostics modal (only opened via 7-tap Easter egg) */}
+      {showConnectionTest && (
+        <ConnectionTestModal
+          isOpen={showConnectionTest}
+          onClose={() => setShowConnectionTest(false)}
+        />
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ArrowLeft, BookOpen, Music, Play, Sliders, Sparkles, Disc, Cloud, Search, Moon, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface UserGuideViewProps {
@@ -6,8 +6,18 @@ interface UserGuideViewProps {
 }
 
 export const UserGuideView: React.FC<UserGuideViewProps> = ({ onBack }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    const scrollParent = containerRef.current?.closest('main');
+    if (scrollParent) {
+      scrollParent.scrollTop = 0;
+    }
+  }, []);
+
   return (
-    <div className="space-y-6 pb-36 px-4 pt-2 max-w-3xl mx-auto animate-in fade-in">
+    <div ref={containerRef} className="space-y-6 pb-48 px-4 pt-2 max-w-3xl mx-auto animate-in fade-in">
       {/* Top Navigation Bar with Back Button */}
       <div className="flex items-center gap-3 pb-3 border-b border-white/10">
         <button

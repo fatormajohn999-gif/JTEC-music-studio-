@@ -361,13 +361,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                       {/* Explicit Distinction: CLOUD MUSIC vs LOCAL MUSIC */}
                       {song.isCloud ? (
                         song.hasStoredBlob ? (
-                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in Supabase Cloud & Cached Offline">
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in JTEC Cloud & Cached Offline">
                             <Cloud className="w-2.5 h-2.5" />
                             <span>CLOUD</span>
                             <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 ml-0.5" />
                           </span>
                         ) : (
-                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in Supabase Cloud (Streamable)">
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.2 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-300 font-semibold font-mono flex items-center gap-0.5" title="Stored in JTEC Cloud (Streamable)">
                             <Cloud className="w-2.5 h-2.5" />
                             <span>CLOUD</span>
                           </span>

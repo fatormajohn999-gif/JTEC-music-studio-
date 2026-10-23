@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ArrowLeft, Shield, HardDrive, Cloud, Key, Trash2, Eye, Lock, FileText, CheckCircle2 } from 'lucide-react';
 
 interface PrivacyPolicyViewProps {
@@ -6,8 +6,18 @@ interface PrivacyPolicyViewProps {
 }
 
 export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    const scrollParent = containerRef.current?.closest('main');
+    if (scrollParent) {
+      scrollParent.scrollTop = 0;
+    }
+  }, []);
+
   return (
-    <div className="space-y-6 pb-36 px-4 pt-2 max-w-3xl mx-auto animate-in fade-in">
+    <div ref={containerRef} className="space-y-6 pb-48 px-4 pt-2 max-w-3xl mx-auto animate-in fade-in">
       {/* Top Navigation Bar with Back Button */}
       <div className="flex items-center gap-3 pb-3 border-b border-white/10">
         <button
@@ -75,25 +85,25 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
         </div>
       </section>
 
-      {/* Section 3: Cloud Features & Supabase Interaction */}
+      {/* Section 3: Cloud Features & Cloud Service Interaction */}
       <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
           <Cloud className="w-4 h-4 text-emerald-400" />
-          <h3>3. How Cloud Features Interact with Supabase</h3>
+          <h3>3. How Cloud Features Interact with the Cloud Service</h3>
         </div>
         <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
           <p>
-            JTEC MUSIC includes an optional <strong>Cloud Catalog</strong> feature that connects to Supabase via secure HTTPS endpoints. Here is how this interaction works:
+            JTEC MUSIC includes an optional <strong>Cloud Catalog</strong> feature that connects to our secure cloud service via HTTPS endpoints. Here is how this interaction works:
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
             <li>
-              <strong className="text-slate-200">Read-Only Catalog Access:</strong> The app queries the public <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">songs</code> table in Supabase solely to display available tracks across curated categories (NASHEED, LOVE & CHILL, and JTEC MUSIC).
+              <strong className="text-slate-200">Read-Only Catalog Access:</strong> The app queries the public <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">songs</code> table in the cloud service solely to display available tracks across curated categories (NASHEED, LOVE & CHILL, and JTEC MUSIC).
             </li>
             <li>
-              <strong className="text-slate-200">Streaming & Downloading:</strong> When you stream or download a cloud track, audio is fetched from the public Supabase storage bucket (<code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">music</code>). Downloaded tracks are cached locally into your device's IndexedDB for offline playback.
+              <strong className="text-slate-200">Streaming & Downloading:</strong> When you stream or download a cloud track, audio is fetched from the public cloud service storage bucket (<code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">music</code>). Downloaded tracks are cached locally into your device's IndexedDB for offline playback.
             </li>
             <li>
-              <strong className="text-slate-200">No Cloud Music Uploading:</strong> Cloud music uploading is not supported. Users cannot upload personal audio files from their device to Supabase or any other cloud storage through JTEC MUSIC.
+              <strong className="text-slate-200">No Cloud Music Uploading:</strong> Cloud music uploading is not supported. Users cannot upload personal audio files from their device to the cloud service or any other remote storage through JTEC MUSIC.
             </li>
             <li>
               <strong className="text-slate-200">No Authentication Required:</strong> You do not need to sign in, create an account, or share personal contact information to browse or stream public cloud music.

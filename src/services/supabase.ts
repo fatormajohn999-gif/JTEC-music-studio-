@@ -223,21 +223,10 @@ export interface SourceDiagnosticResult {
 export const SupabaseService = {
   /**
    * Retrieves configuration for a specific cloud category.
-   * Priority:
-   * 1. Category-specific LocalStorage (custom override for debugging or testing)
-   * 2. Category-specific Vite environment variables (direct import.meta.env references for static build replacement)
-   * 3. Fallback to general Supabase credentials (for jtec_main)
+   * Only build-time environment variables (injected at build time via Vite) are used.
+   * All localStorage overrides have been completely removed.
    */
   getCategoryConfig(categoryKey: CloudCategoryKey): CategoryProjectConfig {
-    if (typeof localStorage === 'undefined') {
-      return { url: '', anonKey: '', bucket: BUCKET_MUSIC, tableName: 'songs', isConfigured: false };
-    }
-
-    const lsUrl = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_url`) || '').trim();
-    const lsKey = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_anon_key`) || '').trim();
-    const lsBucket = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_bucket`) || '').trim();
-    const lsTable = (localStorage.getItem(`${LS_PREFIX}${categoryKey}_table`) || '').trim();
-
     // Check category-specific env vars with direct static property access so Vite replaces them at build time
     let envUrl = '';
     let envKey = '';
@@ -331,59 +320,46 @@ export const SupabaseService = {
                   dynamicEnv.SUPABASE_TABLE || '').trim();
     }
 
-    // Fallback to legacy single project credentials for jtec_main if not specifically configured
-    const legacyLsUrl = (localStorage.getItem('jtec_supabase_url') || '').trim();
-    const legacyLsKey = (localStorage.getItem('jtec_supabase_anon_key') || '').trim();
-
-    const rawUrl = lsUrl || envUrl || (categoryKey === 'jtec_main' ? legacyLsUrl : '');
-    const finalUrl = normalizeSupabaseUrl(rawUrl);
-    const finalKey = lsKey || envKey || (categoryKey === 'jtec_main' ? legacyLsKey : '');
-    const finalBucket = lsBucket || envBucket || BUCKET_MUSIC;
-    const finalTable = lsTable || envTable || 'songs';
+    const finalUrl = normalizeSupabaseUrl(envUrl);
+    const finalKey = envKey;
+    const finalBucket = envBucket || BUCKET_MUSIC;
+    const finalTable = envTable || 'songs';
 
     return {
       url: finalUrl,
       anonKey: finalKey,
-      bucket: finalBucket || BUCKET_MUSIC,
-      tableName: finalTable || 'songs',
+      bucket: finalBucket,
+      tableName: finalTable,
       isConfigured: Boolean(finalUrl && finalKey && finalUrl.startsWith('https://')),
     };
   },
 
   /**
-   * Saves custom configuration for a specific cloud category.
+   * Deletes all legacy 'jtec_supabase_*' keys from localStorage and clears cached Supabase clients.
+   * Guarantees every phone uses solely build-time environment variables.
    */
-  saveCategoryConfig(
-    categoryKey: CloudCategoryKey,
-    config: { url: string; anonKey: string; bucket?: string; tableName?: string }
-  ) {
+  purgeLegacyStorageOverrides(): void {
     if (typeof localStorage === 'undefined') return;
 
-    localStorage.setItem(`${LS_PREFIX}${categoryKey}_url`, config.url.trim());
-    localStorage.setItem(`${LS_PREFIX}${categoryKey}_anon_key`, config.anonKey.trim());
-    if (config.bucket) {
-      localStorage.setItem(`${LS_PREFIX}${categoryKey}_bucket`, config.bucket.trim());
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith(LS_PREFIX) || key === 'jtec_supabase_url' || key === 'jtec_supabase_anon_key')) {
+          keysToRemove.push(key);
+        }
+      }
+      for (const k of keysToRemove) {
+        localStorage.removeItem(k);
+      }
+      if (keysToRemove.length > 0) {
+        console.info(`[SupabaseService] Purged ${keysToRemove.length} legacy cloud overrides from localStorage.`);
+      }
+    } catch (e) {
+      console.warn('[SupabaseService] Error purging legacy cloud overrides:', e);
     }
-    if (config.tableName) {
-      localStorage.setItem(`${LS_PREFIX}${categoryKey}_table`, config.tableName.trim());
-    }
 
-    // Clear client cache for this category so new client is initialized
-    clientCache.delete(`${categoryKey}`);
-  },
-
-  /**
-   * Clears saved configuration for a specific cloud category.
-   */
-  clearCategoryConfig(categoryKey: CloudCategoryKey) {
-    if (typeof localStorage === 'undefined') return;
-
-    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_url`);
-    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_anon_key`);
-    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_bucket`);
-    localStorage.removeItem(`${LS_PREFIX}${categoryKey}_table`);
-
-    clientCache.delete(`${categoryKey}`);
+    clientCache.clear();
   },
 
   /**
@@ -494,7 +470,7 @@ export const SupabaseService = {
       } else if (error?.code === '42P01' || rawMsg.includes('does not exist') || rawMsg.includes('relation')) {
         cleanError = `Table not found (HTTP 404 / 42P01): Table "${config.tableName || 'songs'}" does not exist in this project.`;
       } else if (status === 503 || status === 500 || rawMsg.includes('paused')) {
-        cleanError = `Service unavailable (HTTP ${status}): Supabase project may be paused or starting up.`;
+        cleanError = `Service unavailable (HTTP ${status}): Cloud service project may be paused or starting up.`;
       } else if (rawMsg.includes('fetch') || rawMsg.includes('network')) {
         cleanError = `Network unreachable: Failed to contact host "${projectHost}".`;
       } else {
@@ -943,21 +919,8 @@ export const SupabaseService = {
           httpStatus: status,
         });
 
-        // Translate to clean user-facing error classification without secrets
-        const msg = (error.message || '').toLowerCase();
-        let userMessage = error.message;
-
-        if (status === 401 || msg.includes('jwt') || msg.includes('invalid api key')) {
-          userMessage = 'Authentication failed: Invalid or expired public anon key. Verify project settings.';
-        } else if (status === 403 || error.code === '42501' || msg.includes('permission denied')) {
-          userMessage = 'Permissions denied: Row Level Security policy blocks public read on "songs" table.';
-        } else if (error.code === '42P01' || msg.includes('does not exist')) {
-          userMessage = `Database table "${config.tableName || 'songs'}" does not exist yet. Run SQL setup in Supabase SQL editor.`;
-        } else if (status === 503 || msg.includes('paused')) {
-          userMessage = 'Supabase project is currently paused or waking up. Please check your Supabase dashboard.';
-        }
-
-        throw new Error(userMessage);
+        // Keep technical details only in console.log / developer logs
+        throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
       }
 
       const songs: CloudSong[] = (data || []).map((row) => {
@@ -1019,7 +982,8 @@ export const SupabaseService = {
 
     const response = await fetch(cloudSong.audio_url);
     if (!response.ok) {
-      throw new Error(`Download failed from cloud (HTTP ${response.status})`);
+      console.warn(`Download failed from cloud (HTTP ${response.status})`);
+      throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
     }
 
     const contentLength = response.headers.get('content-length');
@@ -1053,7 +1017,8 @@ export const SupabaseService = {
     }
 
     if (!audioBlob || audioBlob.size === 0) {
-      throw new Error('Downloaded audio file was empty (0 bytes).');
+      console.warn('Downloaded audio file was empty (0 bytes).');
+      throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
     }
 
     const localSong: Song = {
@@ -1111,12 +1076,6 @@ export const SupabaseService = {
   // Backward compatibility alias for single project checks if needed
   getConfig(): { url: string; anonKey: string; isConfigured: boolean } {
     return this.getCategoryConfig('jtec_main');
-  },
-  saveConfig(url: string, anonKey: string) {
-    this.saveCategoryConfig('jtec_main', { url, anonKey });
-  },
-  clearConfig() {
-    this.clearCategoryConfig('jtec_main');
   },
   getClient(): SupabaseClient | null {
     return this.getClientForCategory('jtec_main');
