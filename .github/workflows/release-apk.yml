@@ -1,0 +1,35 @@
+name: Publish APK Release
+
+on:
+  workflow_run:
+    workflows: ["Android Build"]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the APK from the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download ${{ github.event.workflow_run.id }} --repo ${{ github.repository }} -n jtec-music-apk -D apk
+          ls -la apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.0.${{ github.event.workflow_run.run_number }}"
+          cp apk/jtec-music-release.apk JTEC-MUSIC.apk
+          gh release create "$TAG" JTEC-MUSIC.apk \
+            --repo ${{ github.repository }} \
+            --target ${{ github.event.workflow_run.head_sha }} \
+            --title "JTEC MUSIC $TAG" \
+            --notes "Download JTEC-MUSIC.apk and install it over your old version." \
+            --latest
