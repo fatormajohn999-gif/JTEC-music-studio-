@@ -20,12 +20,13 @@ export interface NativeUpdateCheckResult {
   versionName: string;
   latestBuild: number;
   currentBuild: number;
+  currentVersionName: string;
   downloadUrl: string;
 }
 
 /**
- * Parses the release tag (e.g. "v1.0.57" or "1.0.57") and computes:
- * latestBuild = 100 + the last number of the tag.
+ * Parses the release tag (e.g. "v1.0.45" or "1.0.45") and computes:
+ * latestBuild = 100 + the last number of the tag. (tag "v1.0.45" means build 145).
  */
 export function parseTagBuildNumber(tagName: string): { versionName: string; latestBuild: number } | null {
   if (!tagName || typeof tagName !== 'string') return null;
@@ -40,13 +41,60 @@ export function parseTagBuildNumber(tagName: string): { versionName: string; lat
   };
 }
 
+/**
+ * Reads real version and build number:
+ * - When native (Capacitor.isNativePlatform()), reads from App.getInfo() (version = versionName, build = versionCode).
+ * - On web, uses build-time values already in the project.
+ */
+export async function getCurrentAppVersion(): Promise<{
+  version: string;
+  build: number;
+  formattedTag: string;
+}> {
+  let version = '1.0.1';
+  let build = 101;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const info = await App.getInfo();
+      if (info.version) {
+        version = info.version;
+      }
+      if (info.build) {
+        const parsedBuild = parseInt(info.build, 10);
+        if (!isNaN(parsedBuild) && parsedBuild > 0) {
+          build = parsedBuild;
+        }
+      }
+    } catch (e) {
+      console.warn('[NativeUpdate] Could not read App.getInfo():', e);
+    }
+  } else {
+    // Web version: use build-time values
+    const match = APP_VERSION.match(/^([^(]+)(?:\s*\(Build\s*(\d+)\))?/i);
+    if (match) {
+      version = match[1].trim();
+      if (match[2]) {
+        const parsedBuild = parseInt(match[2], 10);
+        if (!isNaN(parsedBuild)) build = parsedBuild;
+      }
+    } else {
+      version = APP_VERSION.trim();
+    }
+  }
+
+  const formattedTag = version.startsWith('v') ? version : `v${version}`;
+  return { version, build, formattedTag };
+}
+
 export const NativeUpdateService = {
   /**
    * Checks for an Android APK release on GitHub.
-   * If manual is false, respects the 6-hour check throttle and the 24-hour "Later" dismissal.
+   * If manual is false, respects the 6-hour check throttle and the 24-hour "Later" dismissal,
+   * and only runs on native platform.
    */
   async checkForUpdate(manual = false): Promise<NativeUpdateCheckResult | null> {
-    if (!Capacitor.isNativePlatform()) {
+    if (!Capacitor.isNativePlatform() && !manual) {
       return null;
     }
 
@@ -103,29 +151,21 @@ export const NativeUpdateService = {
       const tagName: string = releaseData?.tag_name || '';
 
       const parsed = parseTagBuildNumber(tagName);
+
+      // Read installed build and version number
+      const appInfo = await getCurrentAppVersion();
+      const currentBuild = appInfo.build;
+      const currentVersionName = appInfo.version;
+
       if (!parsed) {
         return {
           hasUpdate: false,
           versionName: tagName || 'latest',
           latestBuild: 0,
-          currentBuild: 0,
+          currentBuild,
+          currentVersionName,
           downloadUrl: APK_DOWNLOAD_URL,
         };
-      }
-
-      // Read installed build number (versionCode) from App.getInfo()
-      let currentBuild = 0;
-      try {
-        const appInfo = await App.getInfo();
-        currentBuild = parseInt(appInfo.build, 10);
-      } catch (e) {
-        console.warn('[NativeUpdate] Could not read App.getInfo(), falling back to APP_VERSION', e);
-      }
-
-      if (isNaN(currentBuild) || currentBuild <= 0) {
-        // Fallback: parse build number from APP_VERSION string (e.g. "1.0.1 (Build 101)")
-        const match = APP_VERSION.match(/Build\s+(\d+)/i);
-        currentBuild = match ? parseInt(match[1], 10) : 100;
       }
 
       const hasUpdate = parsed.latestBuild > currentBuild;
@@ -135,11 +175,11 @@ export const NativeUpdateService = {
         versionName: parsed.versionName,
         latestBuild: parsed.latestBuild,
         currentBuild,
+        currentVersionName,
         downloadUrl: APK_DOWNLOAD_URL,
       };
     } catch (err) {
       clearTimeout(timeoutId);
-      // Keep technical details only in console.log
       console.warn('[NativeUpdate] Check failed:', err);
       throw err;
     }

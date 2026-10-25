@@ -14,6 +14,7 @@ import { UserGuideView } from '../components/UserGuideView';
 import { ConnectionTestModal } from '../components/ConnectionTestModal';
 import { ManageDownloadsModal } from '../components/ManageDownloadsModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
+import { getCurrentAppVersion } from '../services/nativeUpdate';
 import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
 
@@ -82,6 +83,32 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       if (versionTapTimerRef.current) {
         clearTimeout(versionTapTimerRef.current);
       }
+    };
+  }, []);
+
+  const [appVersionInfo, setAppVersionInfo] = useState<{ version: string; build: number }>(() => {
+    const match = APP_VERSION.match(/^([^(]+)(?:\s*\(Build\s*(\d+)\))?/i);
+    let v = '1.0.1';
+    let b = 101;
+    if (match) {
+      v = match[1].trim();
+      if (match[2]) {
+        const parsed = parseInt(match[2], 10);
+        if (!isNaN(parsed)) b = parsed;
+      }
+    }
+    return { version: v, build: b };
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    getCurrentAppVersion().then((info) => {
+      if (isMounted) {
+        setAppVersionInfo({ version: info.version, build: info.build });
+      }
+    });
+    return () => {
+      isMounted = false;
     };
   }, []);
 
@@ -875,14 +902,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             {/* Check for updates button */}
             <div className="pt-1 flex flex-col items-center justify-center space-y-2">
               <CheckForUpdatesButton />
-              <div className="text-center text-[11px] text-slate-500 space-y-0.5 select-none">
+              <div className="text-center text-[11px] text-slate-500 select-none">
                 <p
                   onClick={handleVersionTap}
                   className="cursor-default active:opacity-75 transition-opacity"
                 >
-                  Version <strong className="text-slate-300">{APP_VERSION}</strong> • Build <strong className="text-slate-300">{BUILD_DATE}</strong>
+                  Version <strong className="text-slate-300 font-medium">{appVersionInfo.version}</strong> (Build <strong className="text-slate-300 font-medium">{appVersionInfo.build}</strong>) • Built <strong className="text-slate-300 font-medium">{BUILD_DATE}</strong>
                 </p>
-                <p className="font-medium text-slate-400">JTEC MUSIC • Your Music • Your Vibe • Offline</p>
               </div>
             </div>
           </div>
