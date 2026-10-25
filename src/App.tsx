@@ -1240,6 +1240,39 @@ export default function App() {
     setStorageStats(stats);
   };
 
+  const handleDeleteDownloadedSong = async (songId: string) => {
+    await StorageService.deleteSong(songId);
+    setSongs((prev) => prev.filter((s) => s.id !== songId));
+    setQueue((prev) => prev.filter((s) => s.id !== songId));
+    setPlaylists((prev) =>
+      prev.map((pl) => ({ ...pl, songIds: pl.songIds.filter((id) => id !== songId) }))
+    );
+    setRecentlyPlayedIds((prev) => prev.filter((id) => id !== songId));
+    if (currentSong?.id === songId) {
+      audioEngine.pause();
+      setCurrentSong(null);
+    }
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
+  };
+
+  const handleDeleteMultipleDownloadedSongs = async (songIds: string[]) => {
+    const idSet = new Set(songIds);
+    await StorageService.deleteMultipleSongs(songIds);
+    setSongs((prev) => prev.filter((s) => !idSet.has(s.id)));
+    setQueue((prev) => prev.filter((s) => !idSet.has(s.id)));
+    setPlaylists((prev) =>
+      prev.map((pl) => ({ ...pl, songIds: pl.songIds.filter((id) => !idSet.has(id)) }))
+    );
+    setRecentlyPlayedIds((prev) => prev.filter((id) => !idSet.has(id)));
+    if (currentSong && idSet.has(currentSong.id)) {
+      audioEngine.pause();
+      setCurrentSong(null);
+    }
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
+  };
+
   const handleDeleteCloudSong = async (cloudSong: CloudSong, deleteOfflineCopy = false) => {
     try {
       await SupabaseService.deleteSongFromCloud(cloudSong);
@@ -1338,6 +1371,9 @@ export default function App() {
           <SettingsScreen
             settings={settings}
             storageStats={storageStats}
+            songs={songs}
+            onDeleteSong={handleDeleteDownloadedSong}
+            onDeleteMultipleSongs={handleDeleteMultipleDownloadedSongs}
             onUpdateSettings={handleUpdateSettings}
             onClearLibrary={handleClearEntireLibrary}
             sleepTimer={sleepTimer}
@@ -1389,6 +1425,7 @@ export default function App() {
             onPlaySong={playSong}
             onPlayCloudSong={handlePlayCloudSong}
             onDownloadSong={handleDownloadCloudSong}
+            downloadOnWifiOnly={settings.downloadOnWifiOnly}
           />
         ) : currentTab === 'playlists' ? (
           <PlaylistsScreen

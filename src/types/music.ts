@@ -148,4 +148,5 @@ export interface AppSettings {
   rememberLastSong: boolean;
   neonGlow: boolean;
   reducedMotion: boolean;
+  downloadOnWifiOnly?: boolean;
 }

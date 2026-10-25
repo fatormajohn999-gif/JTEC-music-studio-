@@ -105,9 +105,78 @@ export const StorageService = {
   async deleteSong(songId: string): Promise<void> {
     const db = await getDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['songs', 'audio_blobs'], 'readwrite');
+      const tx = db.transaction(['songs', 'audio_blobs', 'playlists', 'kv_store'], 'readwrite');
       tx.objectStore('songs').delete(songId);
       tx.objectStore('audio_blobs').delete(songId);
+
+      // Clean from playlists
+      const plStore = tx.objectStore('playlists');
+      const plReq = plStore.openCursor();
+      plReq.onsuccess = (e) => {
+        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          const pl: Playlist = cursor.value;
+          if (pl.songIds && pl.songIds.includes(songId)) {
+            pl.songIds = pl.songIds.filter((id) => id !== songId);
+            cursor.update(pl);
+          }
+          cursor.continue();
+        }
+      };
+
+      // Clean from recently_played
+      const kvStore = tx.objectStore('kv_store');
+      const rpReq = kvStore.get('recently_played');
+      rpReq.onsuccess = () => {
+        const list: string[] = rpReq.result || [];
+        if (list.includes(songId)) {
+          kvStore.put(list.filter((id) => id !== songId), 'recently_played');
+        }
+      };
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  async deleteMultipleSongs(songIds: string[]): Promise<void> {
+    if (songIds.length === 0) return;
+    const idSet = new Set(songIds);
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['songs', 'audio_blobs', 'playlists', 'kv_store'], 'readwrite');
+      const songStore = tx.objectStore('songs');
+      const blobStore = tx.objectStore('audio_blobs');
+      for (const id of songIds) {
+        songStore.delete(id);
+        blobStore.delete(id);
+      }
+
+      // Clean from playlists
+      const plStore = tx.objectStore('playlists');
+      const plReq = plStore.openCursor();
+      plReq.onsuccess = (e) => {
+        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          const pl: Playlist = cursor.value;
+          if (pl.songIds && pl.songIds.some((id) => idSet.has(id))) {
+            pl.songIds = pl.songIds.filter((id) => !idSet.has(id));
+            cursor.update(pl);
+          }
+          cursor.continue();
+        }
+      };
+
+      // Clean from recently_played
+      const kvStore = tx.objectStore('kv_store');
+      const rpReq = kvStore.get('recently_played');
+      rpReq.onsuccess = () => {
+        const list: string[] = rpReq.result || [];
+        if (list.some((id) => idSet.has(id))) {
+          kvStore.put(list.filter((id) => !idSet.has(id)), 'recently_played');
+        }
+      };
+
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -308,6 +377,7 @@ export const StorageService = {
       rememberLastSong: true,
       neonGlow: true,
       reducedMotion: false,
+      downloadOnWifiOnly: false,
     };
     try {
       const db = await getDB();

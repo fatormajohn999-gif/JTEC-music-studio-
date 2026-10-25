@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
   RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
-  Sparkles, Disc
+  Sparkles, Disc, Wifi, X
 } from 'lucide-react';
+import { Network } from '@capacitor/network';
 import { CloudSong, Song } from '../types/music';
 import { 
   SupabaseService, 
@@ -21,6 +22,7 @@ interface CloudScreenProps {
   onPlaySong: (song: Song, contextQueue?: Song[]) => void;
   onPlayCloudSong: (cloudSong: CloudSong, contextQueue?: Song[]) => void;
   onDownloadSong: (cloudSong: CloudSong, onProgress?: (percent: number) => void) => Promise<void>;
+  downloadOnWifiOnly?: boolean;
 }
 
 export const CloudScreen: React.FC<CloudScreenProps> = ({
@@ -30,6 +32,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   onPlaySong,
   onPlayCloudSong,
   onDownloadSong,
+  downloadOnWifiOnly = false,
 }) => {
   // Navigation state: null = Cloud Home, string = Category Page
   const [selectedCategory, setSelectedCategory] = useState<CloudCategoryKey | null>(null);
@@ -60,6 +63,33 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     jtec_main: null,
   });
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+
+  // File size cache (from song records or HEAD requests)
+  const [fileSizes, setFileSizes] = useState<Record<string, number>>({});
+
+  // Mobile data confirmation prompt state
+  const [showMobileDataPrompt, setShowMobileDataPrompt] = useState(false);
+  const pendingDownloadActionRef = useRef<(() => void) | null>(null);
+
+  // Batch "Download all" state
+  const [batchState, setBatchState] = useState<{
+    isActive: boolean;
+    isPaused: boolean;
+    total: number;
+    completed: number;
+    currentSong: CloudSong | null;
+    currentProgress: number;
+  }>({
+    isActive: false,
+    isPaused: false,
+    total: 0,
+    completed: 0,
+    currentSong: null,
+    currentProgress: 0,
+  });
+
+  const batchCancelledRef = useRef<boolean>(false);
+  const batchPausedRef = useRef<boolean>(false);
 
   // Check all three category connections
   const checkAllConnections = useCallback(async () => {
@@ -122,16 +152,46 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     [offlineSet, justDownloaded]
   );
 
+  // Fetch file size: use song record size or HEAD request
+  const fetchSongSize = useCallback(async (song: CloudSong): Promise<number | undefined> => {
+    if (song.file_size && song.file_size > 0) return song.file_size;
+    if (fileSizes[song.id] && fileSizes[song.id] > 0) return fileSizes[song.id];
+
+    try {
+      const res = await fetch(song.audio_url, { method: 'HEAD' });
+      const cl = res.headers.get('content-length');
+      if (cl) {
+        const bytes = parseInt(cl, 10);
+        if (!isNaN(bytes) && bytes > 0) {
+          setFileSizes((prev) => ({ ...prev, [song.id]: bytes }));
+          return bytes;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }, [fileSizes]);
+
+  // Pre-fetch file sizes for songs in category that lack file_size
+  useEffect(() => {
+    if (!selectedCategory) return;
+    const tracks = categorySongs[selectedCategory] || [];
+    tracks.forEach((track) => {
+      if (!track.file_size && !fileSizes[track.id]) {
+        fetchSongSize(track);
+      }
+    });
+  }, [selectedCategory, categorySongs, fetchSongSize, fileSizes]);
+
   // Fetch songs for a specific category
   const loadCategorySongs = useCallback(async (catKey: CloudCategoryKey, force = false) => {
     const config = SupabaseService.getCategoryConfig(catKey);
     if (!config.isConfigured) {
-      // Unconfigured category: keep errorMap null so friendly "coming soon" card shows
       setErrorMap((prev) => ({ ...prev, [catKey]: null }));
       return;
     }
 
-    // Return cached if not forced
     if (!force && categorySongs[catKey].length > 0) {
       return;
     }
@@ -199,10 +259,36 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     setSearchQuery('');
   };
 
-  // Safe download handler
-  const handleDownload = async (cs: CloudSong) => {
+  // Wi-Fi policy checker: if "Download on Wi-Fi only" is on and device is on mobile cellular data, ask
+  const executeWithWifiCheck = async (action: () => void) => {
+    if (downloadOnWifiOnly) {
+      try {
+        const status = await Network.getStatus();
+        if (status.connected && status.connectionType === 'cellular') {
+          pendingDownloadActionRef.current = action;
+          setShowMobileDataPrompt(true);
+          return;
+        }
+      } catch (e) {
+        console.warn('Network status check error:', e);
+      }
+    }
+    action();
+  };
+
+  // Safe single download handler
+  const handleDownload = (cs: CloudSong) => {
+    executeWithWifiCheck(() => {
+      runSingleDownload(cs);
+    });
+  };
+
+  const runSingleDownload = async (cs: CloudSong) => {
     if (isSongDownloaded(cs)) return;
     if (downloadProgress.has(cs.id)) return; // Already downloading
+
+    // Ensure file size is known before download starts
+    await fetchSongSize(cs);
 
     // Clear previous error if any
     setDownloadErrors((prev) => {
@@ -211,7 +297,6 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
       return next;
     });
 
-    // Set initial progress
     setDownloadProgress((prev) => new Map(prev).set(cs.id, 5));
 
     try {
@@ -238,6 +323,130 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     }
   };
 
+  // Batch "Download all" handler
+  const handleDownloadAll = (songsToDownload: CloudSong[]) => {
+    executeWithWifiCheck(() => {
+      runBatchDownload(songsToDownload);
+    });
+  };
+
+  const runBatchDownload = async (songsList: CloudSong[]) => {
+    if (songsList.length === 0) return;
+    batchCancelledRef.current = false;
+    batchPausedRef.current = false;
+
+    setBatchState({
+      isActive: true,
+      isPaused: false,
+      total: songsList.length,
+      completed: 0,
+      currentSong: null,
+      currentProgress: 0,
+    });
+
+    for (let i = 0; i < songsList.length; i++) {
+      if (batchCancelledRef.current) break;
+      const current = songsList[i];
+
+      if (isSongDownloaded(current)) {
+        setBatchState((prev) => ({ ...prev, completed: prev.completed + 1 }));
+        continue;
+      }
+
+      // Ensure file size is known before download starts
+      await fetchSongSize(current);
+
+      let complete = false;
+      while (!complete && !batchCancelledRef.current) {
+        // If connection dropped, wait until internet returns
+        while (batchPausedRef.current && !batchCancelledRef.current) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (batchCancelledRef.current) break;
+
+        setBatchState((prev) => ({
+          ...prev,
+          currentSong: current,
+          currentProgress: 5,
+          isPaused: false,
+        }));
+
+        try {
+          await onDownloadSong(current, (pct) => {
+            setBatchState((prev) => ({ ...prev, currentProgress: pct }));
+          });
+
+          // A song only counts as downloaded when it is complete!
+          complete = true;
+          setJustDownloaded((prev) => new Set(prev).add(current.id));
+          setBatchState((prev) => ({
+            ...prev,
+            completed: prev.completed + 1,
+            currentProgress: 100,
+          }));
+        } catch (err) {
+          if (batchCancelledRef.current) break;
+
+          // Check if connection dropped
+          const status = await Network.getStatus().catch(() => ({ connected: false }));
+          if (!status.connected) {
+            batchPausedRef.current = true;
+            setBatchState((prev) => ({ ...prev, isPaused: true, currentProgress: 0 }));
+          } else {
+            // Other error, wait 2 seconds and retry this song
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      }
+    }
+
+    setBatchState({
+      isActive: false,
+      isPaused: false,
+      total: 0,
+      completed: 0,
+      currentSong: null,
+      currentProgress: 0,
+    });
+  };
+
+  const handleCancelBatch = () => {
+    batchCancelledRef.current = true;
+    batchPausedRef.current = false;
+    setBatchState({
+      isActive: false,
+      isPaused: false,
+      total: 0,
+      completed: 0,
+      currentSong: null,
+      currentProgress: 0,
+    });
+  };
+
+  // Network listener to auto-pause on drop and resume on return
+  useEffect(() => {
+    let removeHandler: (() => void) | null = null;
+    Network.addListener('networkStatusChange', (status) => {
+      if (!status.connected) {
+        if (!batchCancelledRef.current && batchState.isActive) {
+          batchPausedRef.current = true;
+          setBatchState((prev) => ({ ...prev, isPaused: true }));
+        }
+      } else {
+        if (batchPausedRef.current) {
+          batchPausedRef.current = false;
+          setBatchState((prev) => ({ ...prev, isPaused: false }));
+        }
+      }
+    }).then((handle) => {
+      removeHandler = () => handle.remove();
+    });
+
+    return () => {
+      if (removeHandler) removeHandler();
+    };
+  }, [batchState.isActive]);
+
   // Active category details
   const activeCategoryMeta = useMemo(() => {
     if (!selectedCategory) return null;
@@ -260,6 +469,11 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     );
   }, [selectedCategory, categorySongs, searchQuery]);
 
+  // Songs remaining to download in active category
+  const songsToDownload = useMemo(() => {
+    return filteredCategoryTracks.filter((s) => !isSongDownloaded(s));
+  }, [filteredCategoryTracks, isSongDownloaded]);
+
   // Map active category tracks to Song queue in exact top-to-bottom order
   const categoryAsSongQueue = useMemo(() => {
     return filteredCategoryTracks.map((cs) => {
@@ -279,7 +493,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
         artworkUrl: cs.cover_url,
         coverUrl: cs.cover_url,
         format: (cs.file_name.split('.').pop() || 'mp3').toLowerCase(),
-        size: cs.file_size,
+        size: cs.file_size || fileSizes[cs.id],
         dateAdded: Date.now(),
         hasStoredBlob: false,
         cloudId: cs.id,
@@ -288,7 +502,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
         fileHash: cs.file_hash,
       } as Song;
     });
-  }, [filteredCategoryTracks, offlineSongs]);
+  }, [filteredCategoryTracks, offlineSongs, fileSizes]);
 
   // Format seconds to mm:ss
   const formatTime = (secs: number) => {
@@ -319,201 +533,135 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
       {!selectedCategory ? (
         <div className="space-y-6">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-lg shadow-cyan-500/10 shrink-0">
-                <Cloud className="w-6 h-6" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-cyan-400" />
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-wide">
+                  JTEC CLOUD
+                </h1>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-black text-white tracking-wide">
-                    Cloud Discovery
-                  </h1>
-                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
-                    JTEC Cloud
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Stream & download curated music directly into your offline library
-                </p>
-              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Stream or download curated tracks directly into your offline library
+              </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={checkAllConnections}
-                disabled={isCheckingStatus}
-                className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer disabled:opacity-50 shadow-sm"
-                title="Refresh JTEC Cloud"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isCheckingStatus ? 'animate-spin' : ''}`} />
-                <span>{isCheckingStatus ? 'Updating...' : 'Refresh'}</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={checkAllConnections}
+              disabled={isCheckingStatus}
+              className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-white/10 self-start sm:self-auto disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin text-cyan-400' : ''}`} />
+              <span>{isCheckingStatus ? 'Checking cloud...' : 'Check Status'}</span>
+            </button>
           </div>
 
-          {/* Three Music Category Cards — Image-based, Full-bleed, Zero decorative moon/heart icons */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
-            {CLOUD_CATEGORIES.map((category) => {
-              const config = SupabaseService.getCategoryConfig(category.key);
+          {/* Categories Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {CLOUD_CATEGORIES.map((cat) => {
+              const config = SupabaseService.getCategoryConfig(cat.key);
               const isConfigured = config.isConfigured;
-              const diag = statusMap[category.key];
-              const count = categorySongs[category.key]?.length || 0;
+              const trackCount = categorySongs[cat.key]?.length || 0;
+              const diag = statusMap[cat.key];
 
               return (
                 <div
-                  key={category.key}
-                  onClick={() => handleOpenCategory(category.key)}
-                  className={`group relative rounded-3xl overflow-hidden border ${category.borderColor} shadow-2xl ${category.glowColor} transition-all duration-300 hover:-translate-y-1.5 cursor-pointer flex flex-col justify-between min-h-[300px] sm:min-h-[320px]`}
+                  key={cat.key}
+                  onClick={() => handleOpenCategory(cat.key)}
+                  className={`group relative rounded-3xl overflow-hidden border ${cat.borderColor} bg-slate-900/60 shadow-xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl flex flex-col justify-between min-h-[300px]`}
                 >
-                  {/* Full-bleed Background Image with Zoom on Hover */}
+                  {/* Background Cover Image */}
                   <div className="absolute inset-0 w-full h-full bg-slate-950">
                     <img
-                      src={category.imagePath}
-                      alt={category.title}
-                      className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-                      loading="lazy"
+                      src={cat.imagePath}
+                      alt={cat.title}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       onError={(e) => {
-                        // Tasteful fallback if image is unavailable
                         (e.target as HTMLElement).style.display = 'none';
                       }}
                     />
                   </div>
 
-                  {/* High-Contrast Multi-stop Dark Gradients for Crystal Clear Legibility */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/30" />
-                  <div className={`absolute inset-0 bg-gradient-to-br ${category.accentBg} opacity-50 mix-blend-overlay`} />
+                  {/* Gradient Overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-slate-950/20" />
+                  <div className={`absolute inset-0 bg-gradient-to-br ${cat.accentBg} opacity-40 mix-blend-overlay`} />
 
-                  {/* Card Content Top: Badge and Status */}
-                  <div className="relative z-10 p-5 sm:p-6 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm ${getBadgeStyle(category.key)}`}>
-                        {category.badge}
-                      </span>
+                  {/* Top: Badges */}
+                  <div className="relative z-10 p-5 flex items-center justify-between gap-2">
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm ${getBadgeStyle(cat.key)}`}>
+                      {cat.badge}
+                    </span>
 
-                      {/* Connection Status Pill */}
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-medium text-slate-300">
-                        <span
-                          className={`w-2 h-2 rounded-full ${isCheckingStatus ? 'animate-pulse' : ''}`}
-                          style={{
-                            backgroundColor: !isConfigured
-                              ? '#94a3b8'
-                              : isCheckingStatus
-                              ? '#38bdf8'
-                              : diag?.status === 'error'
-                              ? '#f43f5e'
-                              : '#10b981',
-                          }}
-                        />
-                        <span className="truncate max-w-[120px]">
-                          {!isConfigured
-                            ? 'Coming Soon'
-                            : isCheckingStatus
-                            ? 'Updating...'
-                            : diag?.status === 'error'
-                            ? 'Offline'
-                            : 'Ready'}
-                        </span>
-                      </div>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-slate-200">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          backgroundColor: isConfigured
+                            ? diag?.status === 'connected'
+                              ? '#10b981'
+                              : '#06b6d4'
+                            : '#94a3b8',
+                        }}
+                      />
+                      <span>{isConfigured ? `${trackCount} tracks` : 'Coming Soon'}</span>
                     </div>
                   </div>
 
-                  {/* Card Content Bottom: Title, Subtitle, Description, CTA */}
-                  <div className="relative z-10 p-5 sm:p-6 pt-0 space-y-3">
-                    <div className="space-y-1">
-                      <h2 className="text-2xl font-black text-white tracking-wider drop-shadow-md">
-                        {category.title}
-                      </h2>
-                      <p
-                        className="text-xs font-bold tracking-wide"
-                        style={{ color: category.themeColor }}
-                      >
-                        {category.subtitle}
-                      </p>
-                    </div>
-
-                    <p className="text-xs text-slate-300/90 leading-relaxed line-clamp-2">
-                      {category.description}
+                  {/* Bottom: Title & Description */}
+                  <div className="relative z-10 p-5 space-y-2">
+                    <h3 className="text-xl font-black text-white tracking-wide group-hover:text-cyan-300 transition drop-shadow-md">
+                      {cat.title}
+                    </h3>
+                    <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow">
+                      {cat.description}
                     </p>
 
-                    {/* Metadata and Explore CTA */}
-                    <div className="pt-3 border-t border-white/10 flex items-center justify-between">
-                      <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                        {isConfigured ? (
-                          <span>
-                            {count > 0 ? `${count} tracks available` : 'Curated collection'}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">Curated collection</span>
-                        )}
-                      </div>
-
-                      <div
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm group-hover:brightness-110"
-                        style={{
-                          backgroundColor: `${category.themeColor}25`,
-                          color: category.themeColor,
-                          border: `1px solid ${category.themeColor}50`,
-                        }}
-                      >
-                        <span>Explore</span>
-                        <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
-                      </div>
+                    <div className="pt-2 flex items-center justify-between text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition">
+                      <span>Explore Catalog</span>
+                      <span>→</span>
                     </div>
                   </div>
                 </div>
               );
             })}
           </div>
-
-          {/* Safety & Persistence Information Banner */}
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-start sm:items-center gap-3.5 text-slate-400 text-xs">
-            <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />
-            <div className="space-y-0.5 leading-relaxed">
-              <span className="text-slate-200 font-semibold">100% Offline Persistence: </span>
-              <span>
-                Downloaded songs are stored directly into your device's persistent offline storage.
-                They will always remain playable offline even without internet and after the app restarts.
-              </span>
-            </div>
-          </div>
         </div>
       ) : (
         /* =========================================================================
-            VIEW 2: CATEGORY MUSIC LIST WITH MATCHING CINEMATIC BANNER IMAGE
+            VIEW 2: CATEGORY TRACKS LIST
            ========================================================================= */
-        <div className="space-y-5 animate-in fade-in">
-          {/* Back Navigation Bar */}
+        <div className="space-y-4">
+          {/* Top navigation */}
           <div className="flex items-center justify-between gap-3">
             <button
+              type="button"
               onClick={handleBackToHome}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition cursor-pointer border border-white/10 shadow-sm"
+              className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-white/10"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Back to Vaults</span>
+              <span>Back to Catalogs</span>
             </button>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => loadCategorySongs(selectedCategory, true)}
-                disabled={loadingMap[selectedCategory]}
-                className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
-                title="Refresh tracks"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${loadingMap[selectedCategory] ? 'animate-spin text-cyan-400' : ''}`}
-                />
-                <span className="hidden sm:inline">Refresh</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => loadCategorySongs(selectedCategory, true)}
+              disabled={loadingMap[selectedCategory]}
+              className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
+              title="Refresh tracks"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${loadingMap[selectedCategory] ? 'animate-spin text-cyan-400' : ''}`}
+              />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
           </div>
 
-          {/* Cinematic Category Banner Image — Full-bleed Matching Background */}
+          {/* Cinematic Category Banner Image */}
           {activeCategoryMeta && (
             <div
               className={`rounded-3xl overflow-hidden relative border ${activeCategoryMeta.borderColor} shadow-2xl min-h-[180px] sm:min-h-[210px] flex flex-col justify-end p-6 sm:p-7`}
             >
-              {/* Full-bleed Background Image */}
               <div className="absolute inset-0 w-full h-full bg-slate-950">
                 <img
                   src={activeCategoryMeta.imagePath}
@@ -525,11 +673,9 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 />
               </div>
 
-              {/* Multi-stop dark gradient overlay */}
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/25" />
               <div className={`absolute inset-0 bg-gradient-to-r ${activeCategoryMeta.accentBg} opacity-60 mix-blend-overlay`} />
 
-              {/* Banner Details */}
               <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2.5">
@@ -578,23 +724,88 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
             </div>
           )}
 
-          {/* Search bar inside category */}
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`Search ${activeCategoryMeta?.title || ''} tracks by title, artist, or album...`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-cyan-400 transition shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded cursor-pointer"
-              >
-                Clear
-              </button>
+          {/* Batch Download Progress Banner (Active during Download All) */}
+          {batchState.isActive && (
+            <div className="p-4 rounded-2xl bg-cyan-950/60 border border-cyan-500/40 shadow-xl space-y-2.5 animate-in fade-in">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <RefreshCw className={`w-4 h-4 text-cyan-400 shrink-0 ${batchState.isPaused ? '' : 'animate-spin'}`} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white truncate">
+                      {batchState.isPaused ? (
+                        <span className="text-amber-300">Connection dropped. Paused — will resume automatically when internet returns...</span>
+                      ) : (
+                        <span>Downloading all: {batchState.completed} of {batchState.total}</span>
+                      )}
+                    </p>
+                    {batchState.currentSong && (
+                      <p className="text-[11px] text-cyan-300/80 truncate mt-0.5">
+                        {batchState.currentSong.title} ({batchState.currentProgress}%)
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelBatch}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer shrink-0 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.round(((batchState.completed + (batchState.currentProgress / 100)) / Math.max(1, batchState.total)) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Category Action Bar: Search & Download All button */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            {/* Search bar inside category */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={`Search ${activeCategoryMeta?.title || ''} tracks by title, artist, or album...`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-cyan-400 transition shadow-inner"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Download All Button */}
+            {SupabaseService.getCategoryConfig(selectedCategory).isConfigured && !batchState.isActive && (
+              <div className="shrink-0 flex items-center justify-end">
+                {songsToDownload.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadAll(songsToDownload)}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 active:scale-95 transition cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download all ({songsToDownload.length})</span>
+                  </button>
+                ) : filteredCategoryTracks.length > 0 ? (
+                  <div className="px-3.5 py-2 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center gap-1.5 select-none">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>All downloaded</span>
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
 
@@ -619,7 +830,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               ))}
             </div>
           ) : errorMap[selectedCategory] ? (
-            /* Friendly Error State — No technical backend details */
+            /* Friendly Error State */
             <div className="p-8 rounded-3xl bg-rose-500/10 border border-rose-500/30 space-y-4 max-w-md mx-auto text-center">
               <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-300 mx-auto flex items-center justify-center">
                 <AlertCircle className="w-6 h-6" />
@@ -632,6 +843,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               </div>
               <div className="pt-2">
                 <button
+                  type="button"
                   onClick={() => loadCategorySongs(selectedCategory, true)}
                   className="px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer active:scale-95 shadow-lg shadow-cyan-500/20"
                 >
@@ -675,6 +887,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               </p>
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => setSearchQuery('')}
                   className="px-3.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
                 >
@@ -692,6 +905,9 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 const downloadError = downloadErrors.get(song.id);
                 const isCurrentPlaying =
                   currentSong?.cloudId === song.id || currentSong?.audioUrl === song.audio_url;
+
+                // File size: show from song record or from HEAD request
+                const displaySize = song.file_size || fileSizes[song.id];
 
                 return (
                   <div
@@ -726,6 +942,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
                         {/* Stream / Play Overlay button */}
                         <button
+                          type="button"
                           onClick={() => onPlayCloudSong(song, categoryAsSongQueue)}
                           className="absolute inset-0 bg-black/50 opacity-0 group-hover/cover:opacity-100 flex items-center justify-center transition cursor-pointer"
                           title="Stream track"
@@ -755,7 +972,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                           )}
                         </div>
 
-                        {/* Unboxed metadata with typographic separators */}
+                        {/* Metadata line with formatted file size */}
                         <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5 truncate">
                           <span className="truncate">{song.artist || 'Unknown Artist'}</span>
                           <span aria-hidden="true" className="text-slate-600">·</span>
@@ -766,10 +983,10 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                               <span>{formatTime(song.duration)}</span>
                             </>
                           )}
-                          {song.file_size > 0 && (
+                          {displaySize !== undefined && displaySize > 0 && (
                             <>
                               <span aria-hidden="true" className="text-slate-600">·</span>
-                              <span>{formatBytes(song.file_size)}</span>
+                              <span className="text-cyan-300/90 font-mono font-medium">{formatBytes(displaySize)}</span>
                             </>
                           )}
                         </div>
@@ -787,6 +1004,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     <div className="flex items-center gap-2.5 sm:self-center shrink-0 justify-end">
                       {/* Play Stream button */}
                       <button
+                        type="button"
                         onClick={() => onPlayCloudSong(song, categoryAsSongQueue)}
                         className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
                           isCurrentPlaying
@@ -821,6 +1039,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                         </div>
                       ) : downloadError ? (
                         <button
+                          type="button"
                           onClick={() => handleDownload(song)}
                           className="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                         >
@@ -829,6 +1048,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => handleDownload(song)}
                           className="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer hover:brightness-110 active:scale-95"
                           style={{
@@ -846,6 +1066,47 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Confirmation Modal: Cellular / Mobile Data Download Warning */}
+      {showMobileDataPrompt && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-cyan-500/40 p-6 space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 text-cyan-400 mx-auto flex items-center justify-center">
+              <Wifi className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-white">Mobile Data Alert</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                You are on mobile data. Download anyway?
+              </p>
+            </div>
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileDataPrompt(false);
+                  pendingDownloadActionRef.current = null;
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileDataPrompt(false);
+                  const action = pendingDownloadActionRef.current;
+                  pendingDownloadActionRef.current = null;
+                  if (action) action();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-cyan-500 text-slate-950 text-xs font-bold transition shadow-lg shadow-cyan-500/25 cursor-pointer active:scale-95"
+              >
+                Download anyway
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

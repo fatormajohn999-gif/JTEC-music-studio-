@@ -5,6 +5,12 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom'],
+  },
   envPrefix: ['VITE_', 'SUPABASE_', 'NASHEED_', 'LOVE_CHILL_', 'LOVE_', 'JTEC_'],
   server: {
     port: 3000,

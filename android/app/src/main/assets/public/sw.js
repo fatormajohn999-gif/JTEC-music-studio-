@@ -32,11 +32,18 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // Do not intercept audio blobs, cloud storage, or dev server websockets
+  // Never intercept or cache Supabase, REST API, cross-origin API requests, or media streams
   if (
+    url.hostname.includes('supabase') ||
+    url.pathname.includes('/rest/v') ||
+    url.pathname.includes('/storage/v') ||
+    url.pathname.includes('/auth/v') ||
+    url.pathname.startsWith('/api/') ||
+    url.searchParams.has('apikey') ||
+    request.headers.has('apikey') ||
+    url.origin !== self.location.origin ||
     url.pathname.includes('/@vite/') || 
     url.pathname.includes('/@fs/') ||
-    url.pathname.startsWith('/api/') ||
     url.protocol === 'ws:' || 
     url.protocol === 'wss:'
   ) {

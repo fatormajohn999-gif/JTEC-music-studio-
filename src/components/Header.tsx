@@ -51,23 +51,23 @@ export const Header: React.FC<HeaderProps> = ({
           role="button"
           tabIndex={0}
           aria-label="JTEC MUSIC Home"
-          className="flex flex-col min-w-0 cursor-pointer select-none group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810] rounded-xl pr-1"
+          className="flex flex-col min-w-0 flex-1 overflow-hidden cursor-pointer select-none group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060810] rounded-xl pr-2"
         >
           {/* Main Title Row: JTEC + MUSIC + PRO badge */}
-          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap min-w-0">
-            <h1 className="text-xl sm:text-2xl font-black tracking-wide leading-tight whitespace-nowrap">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 overflow-hidden">
+            <h1 className="text-lg sm:text-2xl font-black tracking-wide leading-tight truncate shrink-0">
               <span className="text-white">JTEC </span>
               <span className="text-gradient-cyan-purple">MUSIC</span>
             </h1>
 
-            <span className="text-[10px] sm:text-[11px] font-mono font-bold px-2 py-0.5 rounded-full border border-cyan-500/40 text-cyan-300 bg-cyan-950/40 shrink-0 tracking-wider shadow-sm shadow-cyan-500/10">
+            <span className="text-[10px] sm:text-[11px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded-full border border-cyan-500/40 text-cyan-300 bg-cyan-950/40 shrink-0 tracking-wider shadow-sm shadow-cyan-500/10">
               PRO
             </span>
           </div>
 
           {/* Subtitle */}
           <p className="text-[11px] sm:text-xs text-slate-400 font-medium tracking-wide leading-tight truncate mt-0.5">
-            Your Music • Your Vibe • Offline
+            Your Music • Your Vibe
           </p>
         </div>
 

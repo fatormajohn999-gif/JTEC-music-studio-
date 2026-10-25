@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
-import { Browser } from '@capacitor/browser';
+import { AppLauncher } from '@capacitor/app-launcher';
 import { APP_VERSION } from '../version';
 
 export const GITHUB_LATEST_RELEASE_URL =
@@ -146,16 +146,17 @@ export const NativeUpdateService = {
   },
 
   /**
-   * Opens the latest APK release direct download URL in external browser.
+   * Opens the latest APK release direct download URL with AppLauncher.
+   * If it fails, falls back to window.open(url, "_blank").
    */
   async openDownloadPage(): Promise<void> {
     try {
-      await Browser.open({
+      await AppLauncher.openUrl({
         url: APK_DOWNLOAD_URL,
       });
     } catch (err) {
-      console.warn('[NativeUpdate] Failed to open browser:', err);
-      window.open(APK_DOWNLOAD_URL, '_system');
+      console.warn('[NativeUpdate] Failed to open with AppLauncher:', err);
+      window.open(APK_DOWNLOAD_URL, '_blank');
     }
   },
 

@@ -3,15 +3,16 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
   BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
-  ChevronDown, Play, Info
+  ChevronDown, ChevronRight, Play, Info
 } from 'lucide-react';
 import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
-import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState } from '../types/music';
+import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState, Song } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
 import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
 import { UserGuideView } from '../components/UserGuideView';
 import { ConnectionTestModal } from '../components/ConnectionTestModal';
+import { ManageDownloadsModal } from '../components/ManageDownloadsModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
@@ -25,6 +26,9 @@ interface SettingsScreenProps {
     downloadBytes?: number;
     isPersisted?: boolean;
   };
+  songs?: Song[];
+  onDeleteSong?: (songId: string) => Promise<void>;
+  onDeleteMultipleSongs?: (songIds: string[]) => Promise<void>;
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClearLibrary: () => void;
   sleepTimer: SleepTimerState;
@@ -38,6 +42,9 @@ type SettingsGroup = 'playback' | 'visualizer' | 'storage' | 'notifications' | '
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   settings,
   storageStats,
+  songs = [],
+  onDeleteSong,
+  onDeleteMultipleSongs,
   onUpdateSettings,
   onClearLibrary,
   sleepTimer,
@@ -81,10 +88,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>('prompt');
   
-  // Wi-Fi only download setting
-  const [wifiOnly, setWifiOnly] = useState<boolean>(() => {
-    return SupabaseService.getCloudSettings().wifiOnly ?? false;
-  });
+  const [showManageDownloads, setShowManageDownloads] = useState(false);
+  const downloadedSongs = (songs || []).filter((s) => s.hasStoredBlob);
+
+  // Wi-Fi only download setting (default off)
+  const wifiOnly = settings.downloadOnWifiOnly ?? false;
 
   // Collapsible cards: first two (playback and visualizer) are open by default
   const [openGroups, setOpenGroups] = useState<Record<SettingsGroup, boolean>>({
@@ -145,7 +153,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleToggleWifiOnly = () => {
     const nextVal = !wifiOnly;
-    setWifiOnly(nextVal);
+    onUpdateSettings({ ...settings, downloadOnWifiOnly: nextVal });
     SupabaseService.saveCloudSettings({ wifiOnly: nextVal });
   };
 
@@ -611,6 +619,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               </div>
             </div>
 
+            {/* Manage Downloads Entry Button */}
+            <button
+              type="button"
+              onClick={() => setShowManageDownloads(true)}
+              className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 via-slate-900 to-cyan-500/10 hover:from-cyan-500/15 hover:to-cyan-500/15 border border-cyan-500/30 text-white font-bold text-xs transition cursor-pointer active:scale-98 shadow-sm shadow-cyan-500/10"
+            >
+              <div className="flex items-center gap-2.5">
+                <HardDrive className="w-4 h-4 text-cyan-400" />
+                <span className="text-white text-xs font-bold">Manage downloads</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-normal">
+                <span>{downloadedSongs.length} downloaded</span>
+                <ChevronRight className="w-4 h-4 text-cyan-400" />
+              </div>
+            </button>
+
             {/* Wi-Fi Only Downloads Toggle */}
             <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-3">
               <div className="space-y-0.5">
@@ -870,6 +894,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         <ConnectionTestModal
           isOpen={showConnectionTest}
           onClose={() => setShowConnectionTest(false)}
+        />
+      )}
+
+      {/* Manage Downloads Modal */}
+      {showManageDownloads && (
+        <ManageDownloadsModal
+          isOpen={showManageDownloads}
+          onClose={() => setShowManageDownloads(false)}
+          downloadedSongs={downloadedSongs}
+          onDeleteSong={async (id) => {
+            if (onDeleteSong) await onDeleteSong(id);
+          }}
+          onDeleteMultipleSongs={async (ids) => {
+            if (onDeleteMultipleSongs) await onDeleteMultipleSongs(ids);
+          }}
         />
       )}
     </div>
