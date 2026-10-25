@@ -23,6 +23,8 @@ import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
 import { PWAUpdateBanner } from './components/PWAUpdateBanner';
+import { NativeUpdateBottomSheet } from './components/NativeUpdateBottomSheet';
+import { NativeUpdateService } from './services/nativeUpdate';
 import { repairExistingSongCovers } from './services/coverMigration';
 
 // Screens
@@ -59,6 +61,62 @@ export default function App() {
     isUpdating: isPWAUpdating,
     updateApp: handleUpdateApp,
   } = usePWAUpdate();
+
+  // Native Android Update Controller
+  const [nativeUpdate, setNativeUpdate] = useState<{
+    isOpen: boolean;
+    versionName: string;
+  }>({
+    isOpen: false,
+    versionName: '',
+  });
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let isMounted = true;
+
+    // Check for new version on app open (throttled to at most once every 6 hours; respects 24h snooze)
+    NativeUpdateService.checkForUpdate(false)
+      .then((result) => {
+        if (isMounted && result && result.hasUpdate) {
+          setNativeUpdate({
+            isOpen: true,
+            versionName: result.versionName,
+          });
+        }
+      })
+      .catch(() => {
+        // Stay completely silent on app open if check fails or there is no internet
+      });
+
+    // Listen for manual update checks triggered from Settings
+    const handleShowNativeUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ versionName?: string }>;
+      if (isMounted && customEvent.detail?.versionName) {
+        setNativeUpdate({
+          isOpen: true,
+          versionName: customEvent.detail.versionName,
+        });
+      }
+    };
+
+    window.addEventListener('jtec:show-native-update', handleShowNativeUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('jtec:show-native-update', handleShowNativeUpdate);
+    };
+  }, []);
+
+  const handleNativeUpdateNow = async () => {
+    await NativeUpdateService.openDownloadPage();
+    setNativeUpdate((prev) => ({ ...prev, isOpen: false }));
+  };
+
+  const handleNativeUpdateLater = () => {
+    NativeUpdateService.dismissForLater();
+    setNativeUpdate((prev) => ({ ...prev, isOpen: false }));
+  };
 
   // Sleep Timer Controller
   const {
@@ -1509,6 +1567,14 @@ export default function App() {
 
       {/* STARTUP / SPLASH SCREEN */}
       {showStartup && <StartupScreen onComplete={() => setShowStartup(false)} />}
+
+      {/* NATIVE ANDROID UPDATE BOTTOM SHEET */}
+      <NativeUpdateBottomSheet
+        isOpen={nativeUpdate.isOpen}
+        versionName={nativeUpdate.versionName}
+        onUpdateNow={handleNativeUpdateNow}
+        onLater={handleNativeUpdateLater}
+      />
     </div>
   );
 }

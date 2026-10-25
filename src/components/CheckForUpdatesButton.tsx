@@ -3,6 +3,8 @@ import { RefreshCw, Loader2, Check, AlertCircle } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { APP_VERSION, BUILD_DATE } from '../version';
 
+import { NativeUpdateService } from '../services/nativeUpdate';
+
 type UpdateCheckStatus = 'idle' | 'checking' | 'updating' | 'up-to-date' | 'error';
 
 function isNewerVersion(remote: string, current: string): boolean {
@@ -47,13 +49,30 @@ export const CheckForUpdatesButton: React.FC = () => {
       clearTimeout(timerRef.current);
     }
 
-    // On native Capacitor app, files are bundled natively inside the app:
-    // skip PWA update-check logic and show up to date immediately.
+    // On native Capacitor app, check for newer APK release on GitHub
     if (Capacitor.isNativePlatform()) {
-      setStatus('up-to-date');
-      timerRef.current = setTimeout(() => {
-        setStatus('idle');
-      }, 3000);
+      setStatus('checking');
+      try {
+        const result = await NativeUpdateService.checkForUpdate(true);
+        if (result && result.hasUpdate) {
+          setStatus('idle');
+          window.dispatchEvent(
+            new CustomEvent('jtec:show-native-update', {
+              detail: { versionName: result.versionName },
+            })
+          );
+        } else {
+          setStatus('up-to-date');
+          timerRef.current = setTimeout(() => {
+            setStatus('idle');
+          }, 3000);
+        }
+      } catch (err) {
+        setStatus('error');
+        timerRef.current = setTimeout(() => {
+          setStatus('idle');
+        }, 3000);
+      }
       return;
     }
 
@@ -197,7 +216,7 @@ export const CheckForUpdatesButton: React.FC = () => {
         {status === 'error' && (
           <>
             <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-            <span>Couldn&apos;t check. Check your internet.</span>
+            <span>Couldn&apos;t check right now.</span>
           </>
         )}
 
