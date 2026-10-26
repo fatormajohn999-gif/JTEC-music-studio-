@@ -14,6 +14,10 @@ import {
   CategoryMetadata,
   CategoryConnectionDiagnostic
 } from '../services/supabase';
+import { JamendoCatalogView } from '../components/JamendoCatalogView';
+import { StorageService } from '../services/storage';
+
+export type CloudViewCategory = CloudCategoryKey | 'jamendo';
 
 interface CloudScreenProps {
   offlineSongs: Song[];
@@ -23,6 +27,8 @@ interface CloudScreenProps {
   onPlayCloudSong: (cloudSong: CloudSong, contextQueue?: Song[]) => void;
   onDownloadSong: (cloudSong: CloudSong, onProgress?: (percent: number) => void) => Promise<void>;
   downloadOnWifiOnly?: boolean;
+  onPauseMainPlayer?: () => void;
+  onSaveDownloadedSong?: (song: Song, blob: Blob) => Promise<void>;
 }
 
 export const CloudScreen: React.FC<CloudScreenProps> = ({
@@ -33,9 +39,11 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   onPlayCloudSong,
   onDownloadSong,
   downloadOnWifiOnly = false,
+  onPauseMainPlayer,
+  onSaveDownloadedSong,
 }) => {
   // Navigation state: null = Cloud Home, string = Category Page
-  const [selectedCategory, setSelectedCategory] = useState<CloudCategoryKey | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<CloudViewCategory | null>(null);
 
   // Cached tracks per category
   const [categorySongs, setCategorySongs] = useState<Record<CloudCategoryKey, CloudSong[]>>({
@@ -175,7 +183,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // Pre-fetch file sizes for songs in category that lack file_size
   useEffect(() => {
-    if (!selectedCategory) return;
+    if (!selectedCategory || selectedCategory === 'jamendo') return;
     const tracks = categorySongs[selectedCategory] || [];
     tracks.forEach((track) => {
       if (!track.file_size && !fileSizes[track.id]) {
@@ -215,7 +223,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // When a category is opened, fetch its tracks
   useEffect(() => {
-    if (selectedCategory) {
+    if (selectedCategory && selectedCategory !== 'jamendo') {
       loadCategorySongs(selectedCategory);
     }
   }, [selectedCategory, loadCategorySongs]);
@@ -248,7 +256,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [selectedCategory]);
 
-  const handleOpenCategory = (catKey: CloudCategoryKey) => {
+  const handleOpenCategory = (catKey: CloudViewCategory) => {
     setSelectedCategory(catKey);
     setSearchQuery('');
     window.history.pushState({ category: catKey }, '');
@@ -449,13 +457,13 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // Active category details
   const activeCategoryMeta = useMemo(() => {
-    if (!selectedCategory) return null;
+    if (!selectedCategory || selectedCategory === 'jamendo') return null;
     return CLOUD_CATEGORIES.find((c) => c.key === selectedCategory) || null;
   }, [selectedCategory]);
 
   // Filtered tracks in active category
   const filteredCategoryTracks = useMemo(() => {
-    if (!selectedCategory) return [];
+    if (!selectedCategory || selectedCategory === 'jamendo') return [];
     const list = categorySongs[selectedCategory] || [];
     if (!searchQuery.trim()) return list;
 
@@ -558,7 +566,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
           </div>
 
           {/* Categories Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
             {CLOUD_CATEGORIES.map((cat) => {
               const config = SupabaseService.getCategoryConfig(cat.key);
               const isConfigured = config.isConfigured;
@@ -625,8 +633,70 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 </div>
               );
             })}
+
+            {/* Category 4: JAMENDO */}
+            <div
+              key="jamendo"
+              onClick={() => handleOpenCategory('jamendo')}
+              className="group relative rounded-3xl overflow-hidden border border-amber-500/30 hover:border-amber-400/60 bg-slate-900/60 shadow-xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl flex flex-col justify-between min-h-[300px]"
+            >
+              {/* Background Cover Image */}
+              <div className="absolute inset-0 w-full h-full bg-slate-950">
+                <img
+                  src="./images/cloud/jamendo.jpg"
+                  alt="Jamendo Music"
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+              </div>
+
+              {/* Gradient Overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-slate-950/20" />
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-950/80 via-purple-950/40 to-slate-950 opacity-50 mix-blend-overlay" />
+
+              {/* Top: Badges */}
+              <div className="relative z-10 p-5 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm bg-amber-500/20 text-amber-300 border-amber-500/40">
+                  Free & Legal
+                </span>
+
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-slate-200">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span>Jamendo Catalog</span>
+                </div>
+              </div>
+
+              {/* Bottom: Title & Description */}
+              <div className="relative z-10 p-5 space-y-2">
+                <h3 className="text-xl font-black text-white tracking-wide group-hover:text-amber-300 transition drop-shadow-md">
+                  JAMENDO
+                </h3>
+                <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow">
+                  Explore and download independent music across multiple genres directly from Jamendo.
+                </p>
+
+                <div className="pt-2 flex items-center justify-between text-xs font-bold text-amber-400 group-hover:translate-x-1 transition">
+                  <span>Explore Jamendo</span>
+                  <span>→</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+      ) : selectedCategory === 'jamendo' ? (
+        <JamendoCatalogView
+          offlineSongs={offlineSongs}
+          isPlaying={isPlaying}
+          onPlaySong={onPlaySong}
+          onPauseMainPlayer={onPauseMainPlayer || (() => {})}
+          onSaveDownloadedSong={onSaveDownloadedSong || (async (song, blob) => {
+            await StorageService.saveSong(song, blob);
+          })}
+          onBack={handleBackToHome}
+          downloadOnWifiOnly={downloadOnWifiOnly}
+        />
       ) : (
         /* =========================================================================
             VIEW 2: CATEGORY TRACKS LIST

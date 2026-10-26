@@ -1231,6 +1231,23 @@ export default function App() {
     }
   };
 
+  const handleSaveDownloadedSong = async (song: Song, blob: Blob) => {
+    await StorageService.saveSong(song, blob);
+    setSongs((prev) => {
+      const existingIdx = prev.findIndex(
+        (s) => s.id === song.id || (song.cloudId && s.cloudId === song.cloudId)
+      );
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = song;
+        return next;
+      }
+      return [song, ...prev];
+    });
+    const stats = await StorageService.getStorageStats();
+    setStorageStats(stats);
+  };
+
   const handleRemoveOfflineSong = async (songId: string) => {
     await StorageService.removeOfflineBlobOnly(songId);
     setSongs((prev) =>
@@ -1426,6 +1443,8 @@ export default function App() {
             onPlayCloudSong={handlePlayCloudSong}
             onDownloadSong={handleDownloadCloudSong}
             downloadOnWifiOnly={settings.downloadOnWifiOnly}
+            onPauseMainPlayer={() => audioEngine.pause()}
+            onSaveDownloadedSong={handleSaveDownloadedSong}
           />
         ) : currentTab === 'playlists' ? (
           <PlaylistsScreen

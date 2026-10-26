@@ -53,6 +53,9 @@ jobs:
           # Fallbacks / legacy variables
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
+
+          # Category 4: JAMENDO — Jamendo Catalog Client ID
+          VITE_JAMENDO_CLIENT_ID: ${{ secrets.VITE_JAMENDO_CLIENT_ID || vars.VITE_JAMENDO_CLIENT_ID }}
         run: npm run build
 
       - name: Add Android project if missing

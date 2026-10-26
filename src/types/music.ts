@@ -99,6 +99,27 @@ export interface Song {
   palette?: ArtworkPalette;
   year?: string | number;
   coverUrl?: string;
+  source?: string;
+  license?: string;
+  jamendoUrl?: string;
+}
+
+export interface JamendoTrack {
+  id: string;
+  name: string;
+  duration: number;
+  artist_id: string;
+  artist_name: string;
+  album_id?: string;
+  album_name?: string;
+  album_image?: string;
+  image: string;
+  audio: string;
+  audiodownload: string;
+  audiodownload_allowed: boolean;
+  license_ccurl?: string;
+  shareurl?: string;
+  shorturl?: string;
 }
 
 export interface Playlist {
