@@ -638,14 +638,14 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
             <div
               key="jamendo"
               onClick={() => handleOpenCategory('jamendo')}
-              className="group relative rounded-3xl overflow-hidden border border-amber-500/30 hover:border-amber-400/60 bg-slate-900/60 shadow-xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl flex flex-col justify-between min-h-[300px]"
+              className="group relative rounded-3xl overflow-hidden border border-cyan-500/30 hover:border-cyan-400/60 bg-slate-900/60 shadow-xl shadow-cyan-950/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl hover:shadow-cyan-500/20 flex flex-col justify-between min-h-[300px]"
             >
               {/* Background Cover Image */}
               <div className="absolute inset-0 w-full h-full bg-slate-950">
                 <img
                   src="./images/cloud/jamendo.jpg"
                   alt="Jamendo Music"
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 opacity-80"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
@@ -653,31 +653,31 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               </div>
 
               {/* Gradient Overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-slate-950/20" />
-              <div className="absolute inset-0 bg-gradient-to-br from-amber-950/80 via-purple-950/40 to-slate-950 opacity-50 mix-blend-overlay" />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-950/20" />
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-950/80 via-purple-950/40 to-slate-950 opacity-60 mix-blend-overlay" />
 
               {/* Top: Badges */}
               <div className="relative z-10 p-5 flex items-center justify-between gap-2">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm bg-amber-500/20 text-amber-300 border-amber-500/40">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border-cyan-500/40">
                   Free & Legal
                 </span>
 
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-slate-200">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="w-2 h-2 rounded-full bg-cyan-400" />
                   <span>Jamendo Catalog</span>
                 </div>
               </div>
 
               {/* Bottom: Title & Description */}
               <div className="relative z-10 p-5 space-y-2">
-                <h3 className="text-xl font-black text-white tracking-wide group-hover:text-amber-300 transition drop-shadow-md">
+                <h3 className="text-xl font-black text-white tracking-wide group-hover:text-cyan-300 transition drop-shadow-md">
                   JAMENDO
                 </h3>
                 <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow">
                   Explore and download independent music across multiple genres directly from Jamendo.
                 </p>
 
-                <div className="pt-2 flex items-center justify-between text-xs font-bold text-amber-400 group-hover:translate-x-1 transition">
+                <div className="pt-2 flex items-center justify-between text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition">
                   <span>Explore Jamendo</span>
                   <span>→</span>
                 </div>

@@ -7,8 +7,13 @@ import { extractPaletteFromImage } from './colorExtractor';
 export const JAMENDO_BASE_URL = 'https://api.jamendo.com/v3.0/tracks/';
 export const JAMENDO_WEBSITE_URL = 'https://www.jamendo.com';
 
-// Cache the first page of results in memory while the app is open
-const firstPageCache = new Map<string, JamendoTrack[]>();
+// Cache results for each query and page for 10 minutes while the app is open
+interface CacheEntry {
+  tracks: JamendoTrack[];
+  timestamp: number;
+}
+const queryPageCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface JamendoQueryParams {
   order?: 'popularity_total' | 'releasedate_desc';
@@ -30,7 +35,7 @@ export function formatLicenseLabel(licenseUrl?: string): string {
   if (lower.includes('by-nc')) return 'CC BY-NC';
   if (lower.includes('by-sa')) return 'CC BY-SA';
   if (lower.includes('by-nd')) return 'CC BY-ND';
-  if (lower.includes('zero') || lower.includes('cc0')) return 'CC0 Public Domain';
+  if (lower.includes('zero') || lower.includes('cc0')) return 'CC0';
   if (lower.includes('by')) return 'CC BY';
   return 'Creative Commons';
 }
@@ -60,9 +65,10 @@ export const JamendoService = {
 
   /**
    * Fetches tracks from Jamendo API v3.0 with paging and filtering.
-   * Caches the first page while the app is open.
+   * Caches results for each query and page for 10 minutes.
+   * Retries up to 3 times with increasing delays on failure.
    */
-  async fetchTracks(params: JamendoQueryParams = {}): Promise<JamendoTrack[]> {
+  async fetchTracks(params: JamendoQueryParams = {}, skipCache = false): Promise<JamendoTrack[]> {
     const clientId = this.getClientId();
     const limit = params.limit || 20;
     const offset = params.offset || 0;
@@ -71,85 +77,106 @@ export const JamendoService = {
     const artistName = (params.artist_name || '').trim();
     const genre = (params.genre || '').trim().toLowerCase();
 
-    const cacheKey = `${order}::${search}::${artistName}::${genre}`;
+    const cacheKey = `${order}::${search}::${artistName}::${genre}::${offset}`;
 
-    // Return cached first page if available
-    if (offset === 0 && firstPageCache.has(cacheKey)) {
-      return firstPageCache.get(cacheKey)!;
+    // Return cached results if still fresh within 10 minutes
+    if (!skipCache) {
+      const cached = queryPageCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        return cached.tracks;
+      }
     }
 
-    // Friendly error check if offline
+    // Friendly offline check
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       throw new Error("Can't load Jamendo right now. Check your internet.");
     }
 
-    try {
-      const url = new URL(JAMENDO_BASE_URL);
-      url.searchParams.set('client_id', clientId);
-      url.searchParams.set('format', 'json');
-      url.searchParams.set('limit', String(limit));
-      url.searchParams.set('offset', String(offset));
-      url.searchParams.set('imagesize', '300');
-      url.searchParams.set('include', 'licenses');
-      url.searchParams.set('audioformat', 'mp32');
+    const url = new URL(JAMENDO_BASE_URL);
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('imagesize', '300');
+    url.searchParams.set('include', 'licenses');
+    url.searchParams.set('audioformat', 'mp32');
 
-      if (artistName) {
-        url.searchParams.set('artist_name', artistName);
-      } else if (search) {
-        url.searchParams.set('namesearch', search);
-      }
-
-      if (genre && genre !== 'all') {
-        const tagMap: Record<string, string> = {
-          'hip hop': 'hiphop',
-        };
-        const tag = tagMap[genre] || genre;
-        url.searchParams.set('tags', tag);
-      }
-
-      if (!search && !artistName) {
-        url.searchParams.set('order', order);
-      }
-
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        throw new Error("Can't load Jamendo right now. Check your internet.");
-      }
-
-      const data = await res.json();
-      if (data?.headers?.status === 'failed') {
-        console.warn('[Jamendo API warning]:', data?.headers?.error_message);
-        throw new Error("Can't load Jamendo right now. Check your internet.");
-      }
-
-      const tracks: JamendoTrack[] = (data.results || []).map((t: any) => ({
-        id: String(t.id),
-        name: t.name || 'Untitled Track',
-        duration: Number(t.duration) || 0,
-        artist_id: String(t.artist_id || ''),
-        artist_name: t.artist_name || 'Unknown Artist',
-        album_id: t.album_id ? String(t.album_id) : undefined,
-        album_name: t.album_name || 'Single',
-        album_image: t.album_image || '',
-        image: t.image || t.album_image || '',
-        audio: t.audio || '',
-        audiodownload: t.audiodownload || t.audio || '',
-        audiodownload_allowed: Boolean(t.audiodownload_allowed),
-        license_ccurl: t.license_ccurl || '',
-        shareurl: t.shareurl || `${JAMENDO_WEBSITE_URL}/track/${t.id}`,
-        shorturl: t.shorturl || '',
-      }));
-
-      // Cache first page
-      if (offset === 0) {
-        firstPageCache.set(cacheKey, tracks);
-      }
-
-      return tracks;
-    } catch (err: unknown) {
-      console.warn('[JamendoService] Track fetch failure:', err);
-      throw new Error("Can't load Jamendo right now. Check your internet.");
+    if (artistName) {
+      url.searchParams.set('artist_name', artistName);
+    } else if (search) {
+      url.searchParams.set('namesearch', search);
     }
+
+    if (genre && genre !== 'all') {
+      const tagMap: Record<string, string> = {
+        'hip hop': 'hiphop',
+      };
+      const tag = tagMap[genre] || genre;
+      url.searchParams.set('tags', tag);
+    }
+
+    if (!search && !artistName) {
+      url.searchParams.set('order', order);
+    }
+
+    // Retry up to 3 times with increasing delays (400ms, 800ms, 1600ms)
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(url.toString());
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data?.headers?.status === 'failed') {
+          console.warn('[Jamendo API notice]:', data?.headers?.error_message);
+          throw new Error("Can't load Jamendo right now. Check your internet.");
+        }
+
+        const tracks: JamendoTrack[] = (data.results || []).map((t: any) => ({
+          id: String(t.id),
+          name: t.name || 'Untitled Track',
+          duration: Number(t.duration) || 0,
+          artist_id: String(t.artist_id || ''),
+          artist_name: t.artist_name || 'Unknown Artist',
+          album_id: t.album_id ? String(t.album_id) : undefined,
+          album_name: t.album_name || 'Single',
+          album_image: t.album_image || '',
+          image: t.image || t.album_image || '',
+          audio: t.audio || '',
+          audiodownload: t.audiodownload || t.audio || '',
+          audiodownload_allowed: Boolean(t.audiodownload_allowed),
+          license_ccurl: t.license_ccurl || '',
+          shareurl: t.shareurl || `${JAMENDO_WEBSITE_URL}/track/${t.id}`,
+          shorturl: t.shorturl || '',
+        }));
+
+        // Store in 10-minute cache
+        queryPageCache.set(cacheKey, {
+          tracks,
+          timestamp: Date.now(),
+        });
+
+        return tracks;
+      } catch (err: unknown) {
+        lastError = err;
+        if (attempt < 2) {
+          // Exponential backoff delay
+          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 400));
+        }
+      }
+    }
+
+    console.warn('[JamendoService] Request failed after 3 attempts:', lastError);
+    throw new Error("Can't load Jamendo right now. Check your internet.");
+  },
+
+  /**
+   * Clears the in-memory 10-minute cache.
+   */
+  clearCache(): void {
+    queryPageCache.clear();
   },
 
   /**
