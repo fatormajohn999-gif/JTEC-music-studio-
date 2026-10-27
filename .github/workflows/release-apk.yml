@@ -14,6 +14,11 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout the built commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
       - name: Download the APK from the build
         env:
           GH_TOKEN: ${{ github.token }}
@@ -27,9 +32,14 @@ jobs:
         run: |
           TAG="v1.0.${{ github.event.workflow_run.run_number }}"
           cp apk/jtec-music-release.apk JTEC-MUSIC.apk
+          if [ -f RELEASE_NOTES.md ]; then
+            cp RELEASE_NOTES.md notes.md
+          else
+            printf -- "- Improved: general improvements and fixes.\n" > notes.md
+          fi
           gh release create "$TAG" JTEC-MUSIC.apk \
             --repo ${{ github.repository }} \
             --target ${{ github.event.workflow_run.head_sha }} \
             --title "JTEC MUSIC $TAG" \
-            --notes "Download JTEC-MUSIC.apk and install it over your old version." \
+            --notes-file notes.md \
             --latest
