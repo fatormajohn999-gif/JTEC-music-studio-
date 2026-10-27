@@ -1,0 +1,3 @@
+- New: Update inside the app. A card on Home shows what changed, and one tap updates JTEC MUSIC.
+- Improved: Home screen and cloud cards.
+- Fixed: small bugs.
