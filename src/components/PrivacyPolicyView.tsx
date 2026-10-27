@@ -165,7 +165,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
           <h3>6. Policy Updates & Inquiries</h3>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          Any future revisions to this policy will be documented within this screen. If you have questions about how JTEC MUSIC handles data or device storage, refer to this documentation or review the open client-side application source code.
+          Any future revisions to this policy will be documented within this screen. If you have questions about how JTEC MUSIC handles data or device storage, contact the developer at <a href="mailto:fatormajohn999@gmail.com" className="text-cyan-400 hover:underline font-mono">fatormajohn999@gmail.com</a>.
         </p>
         <div className="pt-2">
           <button

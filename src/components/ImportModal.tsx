@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, X, Music, CheckCircle2, AlertCircle, FileAudio, Sparkles, Cloud, HardDrive } from 'lucide-react';
+import { Upload, X, Music, CheckCircle2, AlertCircle, FileAudio, Cloud, HardDrive } from 'lucide-react';
 import { Song, ArtworkPalette } from '../types/music';
 import { extractAudioMetadata } from '../services/id3Parser';
 import { extractPaletteFromImage } from '../services/colorExtractor';

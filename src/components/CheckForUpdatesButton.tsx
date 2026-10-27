@@ -4,7 +4,15 @@ import { NativeUpdateService, getCurrentAppVersion } from '../services/nativeUpd
 
 type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'error';
 
-export const CheckForUpdatesButton: React.FC = () => {
+interface CheckForUpdatesButtonProps {
+  label?: string;
+  className?: string;
+}
+
+export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
+  label = 'Check for updates',
+  className = '',
+}) => {
   const [status, setStatus] = useState<UpdateCheckStatus>('idle');
   const [currentTag, setCurrentTag] = useState<string>('v1.0.1');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,7 +66,7 @@ export const CheckForUpdatesButton: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center pt-1 pb-1">
+    <div className={`flex flex-col items-center justify-center pt-1 pb-1 ${className}`}>
       <button
         type="button"
         onClick={handleCheckForUpdates}
@@ -97,7 +105,7 @@ export const CheckForUpdatesButton: React.FC = () => {
         {status === 'idle' && (
           <>
             <RefreshCw className="w-3.5 h-3.5 text-cyan-400 group-hover:rotate-180 transition-transform duration-500" />
-            <span>Check for updates</span>
+            <span>{label}</span>
           </>
         )}
       </button>

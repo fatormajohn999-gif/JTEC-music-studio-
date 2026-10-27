@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft, Search, RefreshCw, Play, Pause, Download, CheckCircle2,
-  ExternalLink, Music, AlertCircle, X, Sparkles, Loader2,
+  ExternalLink, Music, AlertCircle, X, Loader2,
   Wifi, Filter
 } from 'lucide-react';
 import { Network } from '@capacitor/network';
@@ -851,21 +851,18 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
 
       {/* Attribution & Legal Notice at bottom of card */}
       <div className="pt-4 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 text-center sm:text-left select-none">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-          <span>
-            Music provided freely by{' '}
-            <a
-              href={JAMENDO_WEBSITE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-cyan-400 hover:underline font-bold"
-            >
-              Jamendo
-            </a>{' '}
+        <p>
+          Music provided freely by{' '}
+          <a
+            href={JAMENDO_WEBSITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cyan-400 hover:underline font-bold"
+          >
+            Jamendo
+          </a>{' '}
             under Creative Commons licenses.
-          </span>
-        </div>
+        </p>
         <a
           href="https://www.jamendo.com/legal/licenses"
           target="_blank"

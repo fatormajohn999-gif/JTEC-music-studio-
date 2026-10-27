@@ -3,7 +3,7 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
   BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Play, Info
+  ChevronDown, ChevronRight, Play, Info, User, Download
 } from 'lucide-react';
 import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState, Song } from '../types/music';
@@ -11,12 +11,17 @@ import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
 import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
 import { UserGuideView } from '../components/UserGuideView';
+import { AboutDeveloperView } from '../components/AboutDeveloperView';
+import { InstallGuideView } from '../components/InstallGuideView';
+import { HowToUpdateView } from '../components/HowToUpdateView';
 import { ConnectionTestModal } from '../components/ConnectionTestModal';
 import { ManageDownloadsModal } from '../components/ManageDownloadsModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { getCurrentAppVersion } from '../services/nativeUpdate';
 import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
+
+export type SettingsSubView = 'main' | 'privacy' | 'guide' | 'developer' | 'install' | 'update';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -56,7 +61,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef<number>(0);
 
-  const [activeSubView, setActiveSubView] = useState<'main' | 'privacy' | 'guide'>('main');
+  const [activeSubView, setActiveSubView] = useState<SettingsSubView>('main');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showHowToModal, setShowHowToModal] = useState(false);
   const [showConnectionTest, setShowConnectionTest] = useState(false);
@@ -192,7 +197,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
-  const handleOpenSubView = (view: 'privacy' | 'guide') => {
+  const handleOpenSubView = (view: SettingsSubView) => {
     const scrollParent = containerRef.current?.closest('main');
     lastScrollTopRef.current = scrollParent ? scrollParent.scrollTop : window.scrollY;
     setActiveSubView(view);
@@ -231,6 +236,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   if (activeSubView === 'guide') {
     return <UserGuideView onBack={handleBackToMain} />;
+  }
+
+  if (activeSubView === 'developer') {
+    return <AboutDeveloperView onBack={handleBackToMain} />;
+  }
+
+  if (activeSubView === 'install') {
+    return <InstallGuideView onBack={handleBackToMain} />;
+  }
+
+  if (activeSubView === 'update') {
+    return <HowToUpdateView onBack={handleBackToMain} />;
   }
 
   return (
@@ -848,7 +865,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 About and Support
               </h3>
               <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Privacy policy, user guide & software updates
+                Guides, developer info, privacy & updates
               </p>
             </div>
           </div>
@@ -862,22 +879,58 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         {openGroups.about && (
           <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Privacy Policy Card */}
+              {/* About the Developer Card */}
               <button
                 type="button"
-                onClick={() => handleOpenSubView('privacy')}
+                onClick={() => handleOpenSubView('developer')}
                 className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                    <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                    <User className="w-5 h-5 text-cyan-400" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">Privacy Policy</h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Local data, cloud service & permissions</p>
+                    <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">About the Developer</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Creator info, contact & app sharing</p>
                   </div>
                 </div>
-                <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
+                <span className="text-cyan-400 text-xs font-semibold pl-2">About →</span>
+              </button>
+
+              {/* Install Guide Card */}
+              <button
+                type="button"
+                onClick={() => handleOpenSubView('install')}
+                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-emerald-500/40 text-left transition active:scale-98 group cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                    <Download className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white group-hover:text-emerald-300 transition">Install Guide</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Android APK, website app & iPhone</p>
+                  </div>
+                </div>
+                <span className="text-emerald-400 text-xs font-semibold pl-2">Guide →</span>
+              </button>
+
+              {/* How to Update Card */}
+              <button
+                type="button"
+                onClick={() => handleOpenSubView('update')}
+                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-amber-500/40 text-left transition active:scale-98 group cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                    <RefreshCw className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white group-hover:text-amber-300 transition">How to Update</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Update instructions & version check</p>
+                  </div>
+                </div>
+                <span className="text-amber-400 text-xs font-semibold pl-2">Update →</span>
               </button>
 
               {/* How to Use JTEC MUSIC Card */}
@@ -896,6 +949,24 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   </div>
                 </div>
                 <span className="text-purple-400 text-xs font-semibold pl-2">Guide →</span>
+              </button>
+
+              {/* Privacy Policy Card */}
+              <button
+                type="button"
+                onClick={() => handleOpenSubView('privacy')}
+                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer sm:col-span-2"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
+                    <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">Privacy Policy</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Local data, cloud service & permissions</p>
+                  </div>
+                </div>
+                <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
               </button>
             </div>
 

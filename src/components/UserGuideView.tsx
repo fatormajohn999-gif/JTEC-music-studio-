@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { ArrowLeft, BookOpen, Music, Play, Sliders, Sparkles, Disc, Cloud, Search, Moon, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, BookOpen, Music, Play, Sliders, Disc, Cloud, Search, Moon, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface UserGuideViewProps {
   onBack: () => void;
@@ -36,8 +36,7 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({ onBack }) => {
 
       {/* Welcome Banner */}
       <div className="p-5 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-purple-950/30 to-slate-900/60 border border-cyan-500/30 space-y-2">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-cyan-400" />
+        <h3 className="text-sm font-bold text-white">
           Welcome to Your Premium Offline Audio Experience
         </h3>
         <p className="text-xs text-slate-300 leading-relaxed">

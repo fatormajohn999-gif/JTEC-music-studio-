@@ -145,8 +145,7 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
           {/* Presets Grid */}
           <div>
             <div className="flex items-center justify-between mb-2.5">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Vibe Presets
               </span>
               <span className="text-xs text-purple-400 font-medium">

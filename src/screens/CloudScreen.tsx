@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
   RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
-  Sparkles, Disc, Wifi, X
+  Disc, Wifi, X
 } from 'lucide-react';
 import { Network } from '@capacitor/network';
 import { CloudSong, Song } from '../types/music';

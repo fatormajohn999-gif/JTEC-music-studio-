@@ -1,6 +1,6 @@
 import React from 'react';
 import { 
-  Upload, Play, Heart, Disc, Sparkles, Clock, Music2, MoreVertical, Flame 
+  Upload, Play, Heart, Disc, Clock, Music2, MoreVertical, Flame 
 } from 'lucide-react';
 import { Song, Playlist } from '../types/music';
 import { PWAInstallButton } from '../components/PWAInstallButton';
@@ -44,14 +44,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
       {/* Hero Welcome / Big Import & Cloud CTA */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0c122c] via-[#090d20] to-[#140b28] border border-cyan-500/25 p-6 sm:p-8 shadow-2xl">
+        {/* Background Artwork */}
+        <picture className="absolute inset-0 w-full h-full pointer-events-none">
+          <source srcSet="./images/home-hero.webp" type="image/webp" />
+          <img
+            src="./images/home-hero.jpg"
+            alt=""
+            aria-hidden="true"
+            className="w-full h-full object-cover object-center"
+          />
+        </picture>
+
+        {/* Dark Navy Overlay (55-70%, stronger at bottom for text readability) */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#070b19]/60 via-[#070b19]/70 to-[#050813]/90 pointer-events-none" />
+
         {/* Glow lights */}
         <div className="absolute top-0 right-0 w-60 h-60 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-60 h-60 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="text-center sm:text-left space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold">
               <span>Offline Master Audio Engine • JTEC CLOUD</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
