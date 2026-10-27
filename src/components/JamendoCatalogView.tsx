@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ArrowLeft, Search, RefreshCw, Play, Pause, Download, CheckCircle2,
   ExternalLink, Music, AlertCircle, X, Loader2,
@@ -11,6 +11,7 @@ import {
   formatLicenseLabel,
   JAMENDO_WEBSITE_URL
 } from '../services/jamendo';
+import { CLOUD_CATALOGS } from '../config/cloudCatalogs';
 
 interface JamendoCatalogViewProps {
   offlineSongs: Song[];
@@ -49,6 +50,13 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
   onBack,
   downloadOnWifiOnly = false,
 }) => {
+  // Reset main container scroll position to top on open
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    if (main) main.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, []);
+
   // Query & Filter States
   const [activeTab, setActiveTab] = useState<'popularity_total' | 'releasedate_desc'>('popularity_total');
   const [searchQuery, setSearchQuery] = useState('');
@@ -435,19 +443,19 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
       </div>
 
       {/* Toned Down Hero Banner: Smaller height with app navy & cyan/purple gradient overlay */}
-      <div className="rounded-3xl overflow-hidden relative border border-cyan-500/25 shadow-xl min-h-[120px] sm:min-h-[140px] flex flex-col justify-end p-4 sm:p-5 bg-[#0c122c]">
+      <div className="rounded-3xl overflow-hidden relative border border-cyan-500/30 shadow-xl min-h-[120px] sm:min-h-[140px] flex flex-col justify-end p-4 sm:p-5 bg-[#0c122c]">
         {/* Background artwork */}
-        <div className="absolute inset-0 w-full h-full">
+        <div className="absolute inset-0 w-full h-full bg-[#0a0f24]">
           <img
-            src="./images/cloud/jamendo.jpg"
+            src={CLOUD_CATALOGS.find((c) => c.key === 'jamendo')?.image || './images/cards/jamendo.webp'}
             alt="Jamendo Music"
-            className="w-full h-full object-cover opacity-40 mix-blend-luminosity"
+            className="w-full h-full object-cover"
             onError={(e) => {
               (e.target as HTMLElement).style.display = 'none';
             }}
           />
         </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0c122c] via-[#0c122c]/85 to-[#0c122c]/40" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/70 to-slate-950/55" />
         <div className="absolute inset-0 bg-gradient-to-r from-cyan-950/60 via-purple-950/40 to-[#0c122c]/80 mix-blend-overlay" />
 
         <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-3">

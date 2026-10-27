@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { 
   Song, Playlist, AudioEffectsConfig, VisualizerMode, PerformanceMode, RepeatMode, AppSettings, 
   ArtworkPalette, CinematicScene, CloudSong, PlaybackSessionState 
@@ -24,7 +24,14 @@ import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
 import { PWAUpdateBanner } from './components/PWAUpdateBanner';
 import { NativeUpdateBottomSheet } from './components/NativeUpdateBottomSheet';
-import { NativeUpdateService } from './services/nativeUpdate';
+import { 
+  NativeUpdateService, 
+  NativeUpdateInfo, 
+  isCellularConnection 
+} from './services/nativeUpdate';
+import { WhatsNewModal } from './components/WhatsNewModal';
+import { CellularDataConfirmModal } from './components/CellularDataConfirmModal';
+import { RequiredUpdateOverlay } from './components/RequiredUpdateOverlay';
 import { repairExistingSongCovers } from './services/coverMigration';
 
 // Screens
@@ -35,6 +42,7 @@ import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
 import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import { useSleepTimer } from './hooks/useSleepTimer';
 import { usePWAUpdate } from './hooks/usePWAUpdate';
 
@@ -63,60 +71,177 @@ export default function App() {
   } = usePWAUpdate();
 
   // Native Android Update Controller
-  const [nativeUpdate, setNativeUpdate] = useState<{
+  const [nativeUpdateInfo, setNativeUpdateInfo] = useState<NativeUpdateInfo | null>(null);
+  const [isDownloadingNativeUpdate, setIsDownloadingNativeUpdate] = useState(false);
+  const [nativeDownloadProgress, setNativeDownloadProgress] = useState(0);
+  const [isNativeUpdateDownloaded, setIsNativeUpdateDownloaded] = useState(false);
+  const [nativeDownloadError, setNativeDownloadError] = useState<string | null>(null);
+  const [showCellularConfirm, setShowCellularConfirm] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Settings update sheet state (for manual checks from Settings when not on Home)
+  const [isSettingsUpdateSheetOpen, setIsSettingsUpdateSheetOpen] = useState(false);
+
+  // Post-update "What's new" state
+  const [whatsNewData, setWhatsNewData] = useState<{
     isOpen: boolean;
     versionName: string;
+    bullets: string[];
   }>({
     isOpen: false,
     versionName: '',
+    bullets: [],
   });
 
+  // Track online status for required update overlay
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-
-    let isMounted = true;
-
-    // Check for new version on app open (throttled to at most once every 6 hours; respects 24h snooze)
-    NativeUpdateService.checkForUpdate(false)
-      .then((result) => {
-        if (isMounted && result && result.hasUpdate) {
-          setNativeUpdate({
-            isOpen: true,
-            versionName: result.versionName,
-          });
-        }
-      })
-      .catch(() => {
-        // Stay completely silent on app open if check fails or there is no internet
-      });
-
-    // Listen for manual update checks triggered from Settings
-    const handleShowNativeUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent<{ versionName?: string }>;
-      if (isMounted && customEvent.detail?.versionName) {
-        setNativeUpdate({
-          isOpen: true,
-          versionName: customEvent.detail.versionName,
-        });
-      }
-    };
-
-    window.addEventListener('jtec:show-native-update', handleShowNativeUpdate);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
     return () => {
-      isMounted = false;
-      window.removeEventListener('jtec:show-native-update', handleShowNativeUpdate);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  const handleNativeUpdateNow = async () => {
-    await NativeUpdateService.openDownloadPage();
-    setNativeUpdate((prev) => ({ ...prev, isOpen: false }));
-  };
+  // Update check runner
+  const runNativeUpdateCheck = useCallback(async (manual = false) => {
+    if (!Capacitor.isNativePlatform() && !manual) return null;
+    try {
+      const result = await NativeUpdateService.checkForUpdate(manual);
+      if (result && result.hasUpdate) {
+        setNativeUpdateInfo(result);
+        return result;
+      }
+    } catch {
+      // Stay silent on errors
+    }
+    return null;
+  }, []);
 
-  const handleNativeUpdateLater = () => {
+  // Lifecycle update checks: on mount, post-update check, and on app foreground
+  useEffect(() => {
+    let isMounted = true;
+
+    // Check if app was just updated to a newer build
+    NativeUpdateService.checkPostUpdate().then((post) => {
+      if (isMounted && post && post.showWhatsNew) {
+        setWhatsNewData({
+          isOpen: true,
+          versionName: post.versionName,
+          bullets: post.notesBullets,
+        });
+      }
+    });
+
+    if (Capacitor.isNativePlatform()) {
+      // Check for update on app open (throttled to at most once every 6 hours)
+      runNativeUpdateCheck(false);
+
+      // Check for update when app comes back to the foreground
+      const handleStateChange = (state: { isActive: boolean }) => {
+        if (state.isActive) {
+          runNativeUpdateCheck(false);
+        }
+      };
+
+      const listenerPromise = CapApp.addListener('appStateChange', handleStateChange);
+
+      return () => {
+        isMounted = false;
+        listenerPromise.then((handle) => handle.remove()).catch(() => {});
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [runNativeUpdateCheck]);
+
+  // Listen for manual update checks triggered from Settings
+  useEffect(() => {
+    const handleManualUpdateEvent = async (e: Event) => {
+      const result = await runNativeUpdateCheck(true);
+      if (result && result.hasUpdate) {
+        setNativeUpdateInfo(result);
+        if (isSettingsView) {
+          setIsSettingsUpdateSheetOpen(true);
+        }
+      }
+    };
+
+    window.addEventListener('jtec:show-native-update', handleManualUpdateEvent);
+    return () => {
+      window.removeEventListener('jtec:show-native-update', handleManualUpdateEvent);
+    };
+  }, [runNativeUpdateCheck, isSettingsView]);
+
+  // Execute APK download and installation
+  const executeApkDownload = useCallback(async (info: NativeUpdateInfo) => {
+    setIsDownloadingNativeUpdate(true);
+    setNativeDownloadProgress(0);
+    setNativeDownloadError(null);
+
+    try {
+      await NativeUpdateService.downloadApk({
+        downloadUrl: info.downloadUrl,
+        expectedSizeBytes: info.fileSizeBytes,
+        onProgress: (pct) => {
+          setNativeDownloadProgress(pct);
+        },
+      });
+
+      setIsDownloadingNativeUpdate(false);
+      setIsNativeUpdateDownloaded(true);
+
+      // Launch package installer immediately
+      await NativeUpdateService.installDownloadedApk();
+    } catch (err: any) {
+      console.warn('[NativeUpdate] Download/install failed:', err);
+      setIsDownloadingNativeUpdate(false);
+      setNativeDownloadError(err?.message || 'Download failed. Please check your internet connection.');
+    }
+  }, []);
+
+  // Main trigger: check mobile data first
+  const handleTriggerNativeUpdate = useCallback(async () => {
+    if (!nativeUpdateInfo) return;
+
+    if (isNativeUpdateDownloaded) {
+      // If already downloaded, launch installer directly
+      await NativeUpdateService.installDownloadedApk();
+      return;
+    }
+
+    const isCellular = await isCellularConnection();
+    if (isCellular) {
+      setShowCellularConfirm(true);
+      return;
+    }
+
+    await executeApkDownload(nativeUpdateInfo);
+  }, [nativeUpdateInfo, isNativeUpdateDownloaded, executeApkDownload]);
+
+  // Confirmed mobile data download
+  const handleConfirmCellularDownload = useCallback(async () => {
+    setShowCellularConfirm(false);
+    if (nativeUpdateInfo) {
+      await executeApkDownload(nativeUpdateInfo);
+    }
+  }, [nativeUpdateInfo, executeApkDownload]);
+
+  // Acknowledge What's New dialog
+  const handleAcknowledgeWhatsNew = useCallback(async () => {
+    await NativeUpdateService.markWhatsNewAcknowledged();
+    setWhatsNewData({ isOpen: false, versionName: '', bullets: [] });
+  }, []);
+
+  // Dismiss manual settings update sheet for later
+  const handleDismissSettingsUpdateSheet = useCallback(() => {
+    setIsSettingsUpdateSheetOpen(false);
     NativeUpdateService.dismissForLater();
-    setNativeUpdate((prev) => ({ ...prev, isOpen: false }));
-  };
+  }, []);
 
   // Sleep Timer Controller
   const {
@@ -141,6 +266,16 @@ export default function App() {
   // Cloud State
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
   const mainContainerRef = useRef<HTMLElement | null>(null);
+
+  // Reset scroll of the main content container whenever switching to Cloud tab
+  useLayoutEffect(() => {
+    if (currentTab === 'cloud') {
+      if (mainContainerRef.current) {
+        mainContainerRef.current.scrollTop = 0;
+      }
+      window.scrollTo(0, 0);
+    }
+  }, [currentTab]);
 
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
@@ -1415,6 +1550,15 @@ export default function App() {
               setIsSettingsView(false);
               setCurrentTab('cloud');
             }}
+            nativeUpdateInfo={nativeUpdateInfo}
+            isDownloadingUpdate={isDownloadingNativeUpdate}
+            updateDownloadProgress={nativeDownloadProgress}
+            isUpdateDownloaded={isNativeUpdateDownloaded}
+            updateDownloadError={nativeDownloadError}
+            onTriggerUpdate={handleTriggerNativeUpdate}
+            isPWAUpdateAvailable={updateAvailable}
+            isPWAUpdating={isPWAUpdating}
+            onReloadPWA={handleUpdateApp}
           />
         ) : currentTab === 'library' ? (
           <LibraryScreen
@@ -1624,12 +1768,45 @@ export default function App() {
       {/* STARTUP / SPLASH SCREEN */}
       {showStartup && <StartupScreen onComplete={() => setShowStartup(false)} />}
 
-      {/* NATIVE ANDROID UPDATE BOTTOM SHEET */}
+      {/* WHAT'S NEW MODAL (POST-UPDATE) */}
+      <WhatsNewModal
+        isOpen={whatsNewData.isOpen}
+        versionName={whatsNewData.versionName}
+        notesBullets={whatsNewData.bullets}
+        onAcknowledge={handleAcknowledgeWhatsNew}
+      />
+
+      {/* CELLULAR DATA CONFIRMATION MODAL */}
+      <CellularDataConfirmModal
+        isOpen={showCellularConfirm}
+        formattedSize={nativeUpdateInfo?.formattedSize || ''}
+        onConfirm={handleConfirmCellularDownload}
+        onCancel={() => setShowCellularConfirm(false)}
+      />
+
+      {/* FULL-SCREEN REQUIRED UPDATE OVERLAY */}
+      {nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired && isOnline && (
+        <RequiredUpdateOverlay
+          versionName={nativeUpdateInfo.versionName}
+          notesBullets={nativeUpdateInfo.notesBullets}
+          formattedSize={nativeUpdateInfo.formattedSize}
+          isDownloading={isDownloadingNativeUpdate}
+          downloadProgress={nativeDownloadProgress}
+          isDownloaded={isNativeUpdateDownloaded}
+          downloadError={nativeDownloadError}
+          onUpdateNow={handleTriggerNativeUpdate}
+        />
+      )}
+
+      {/* NATIVE ANDROID UPDATE BOTTOM SHEET (For manual check from Settings) */}
       <NativeUpdateBottomSheet
-        isOpen={nativeUpdate.isOpen}
-        versionName={nativeUpdate.versionName}
-        onUpdateNow={handleNativeUpdateNow}
-        onLater={handleNativeUpdateLater}
+        isOpen={isSettingsUpdateSheetOpen}
+        versionName={nativeUpdateInfo?.versionName || ''}
+        onUpdateNow={() => {
+          setIsSettingsUpdateSheetOpen(false);
+          handleTriggerNativeUpdate();
+        }}
+        onLater={handleDismissSettingsUpdateSheet}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
   RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
@@ -14,10 +14,12 @@ import {
   CategoryMetadata,
   CategoryConnectionDiagnostic
 } from '../services/supabase';
+import { CLOUD_CATALOGS } from '../config/cloudCatalogs';
 import { JamendoCatalogView } from '../components/JamendoCatalogView';
+import { ArchiveNasheedCatalogView } from '../components/ArchiveNasheedCatalogView';
 import { StorageService } from '../services/storage';
 
-export type CloudViewCategory = CloudCategoryKey | 'jamendo';
+export type CloudViewCategory = CloudCategoryKey | 'jamendo' | 'archive_nasheed';
 
 interface CloudScreenProps {
   offlineSongs: Song[];
@@ -223,7 +225,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // When a category is opened, fetch its tracks
   useEffect(() => {
-    if (selectedCategory && selectedCategory !== 'jamendo') {
+    if (selectedCategory && selectedCategory !== 'jamendo' && selectedCategory !== 'archive_nasheed') {
       loadCategorySongs(selectedCategory);
     }
   }, [selectedCategory, loadCategorySongs]);
@@ -256,15 +258,30 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [selectedCategory]);
 
+  // Reset main scrolling container to top (0) whenever category opens or closes
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    if (main) {
+      main.scrollTop = 0;
+    }
+    window.scrollTo(0, 0);
+  }, [selectedCategory]);
+
   const handleOpenCategory = (catKey: CloudViewCategory) => {
     setSelectedCategory(catKey);
     setSearchQuery('');
     window.history.pushState({ category: catKey }, '');
+    const main = document.querySelector('main');
+    if (main) main.scrollTop = 0;
+    window.scrollTo(0, 0);
   };
 
   const handleBackToHome = () => {
     setSelectedCategory(null);
     setSearchQuery('');
+    const main = document.querySelector('main');
+    if (main) main.scrollTop = 0;
+    window.scrollTo(0, 0);
   };
 
   // Wi-Fi policy checker: if "Download on Wi-Fi only" is on and device is on mobile cellular data, ask
@@ -521,15 +538,17 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
   };
 
   // Helper for category badge styling
-  const getBadgeStyle = (categoryKey: CloudCategoryKey) => {
+  const getBadgeStyle = (categoryKey: string) => {
     switch (categoryKey) {
       case 'nasheed':
         return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
       case 'love_chill':
         return 'bg-pink-500/20 text-pink-300 border-pink-500/40';
+      case 'archive_nasheed':
+      case 'jamendo':
       case 'jtec_main':
       default:
-        return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
+        return 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border-cyan-500/40';
     }
   };
 
@@ -566,33 +585,36 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
           </div>
 
           {/* Categories Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-            {CLOUD_CATEGORIES.map((cat) => {
-              const config = SupabaseService.getCategoryConfig(cat.key);
-              const isConfigured = config.isConfigured;
-              const trackCount = categorySongs[cat.key]?.length || 0;
-              const diag = statusMap[cat.key];
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5">
+            {CLOUD_CATALOGS.map((cat) => {
+              const isSupabaseCategory = cat.key === 'nasheed' || cat.key === 'love_chill' || cat.key === 'jtec_main';
+              const config = isSupabaseCategory ? SupabaseService.getCategoryConfig(cat.key as CloudCategoryKey) : null;
+              const isConfigured = config ? config.isConfigured : true;
+              const trackCount = isSupabaseCategory ? (categorySongs[cat.key as CloudCategoryKey]?.length || 0) : 0;
+              const diag = isSupabaseCategory ? statusMap[cat.key as CloudCategoryKey] : null;
 
               return (
                 <div
                   key={cat.key}
                   onClick={() => handleOpenCategory(cat.key)}
-                  className={`group relative rounded-3xl overflow-hidden border ${cat.borderColor} bg-slate-900/60 shadow-xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl flex flex-col justify-between min-h-[300px]`}
+                  className="group relative rounded-3xl overflow-hidden border border-cyan-500/30 hover:border-cyan-400/60 bg-slate-900/60 shadow-xl shadow-cyan-950/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl hover:shadow-cyan-500/20 flex flex-col justify-between min-h-[300px]"
                 >
                   {/* Background Cover Image */}
-                  <div className="absolute inset-0 w-full h-full bg-slate-950">
-                    <img
-                      src={cat.imagePath}
-                      alt={cat.title}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
+                  <div className="absolute inset-0 w-full h-full bg-[#0a0f24]">
+                    {cat.image ? (
+                      <img
+                        src={cat.image}
+                        alt={cat.title}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : null}
                   </div>
 
-                  {/* Gradient Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-slate-950/20" />
+                  {/* Dark navy gradient overlay (55% to 70% dark) */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/70 to-slate-950/55" />
                   <div className={`absolute inset-0 bg-gradient-to-br ${cat.accentBg} opacity-40 mix-blend-overlay`} />
 
                   {/* Top: Badges */}
@@ -605,14 +627,22 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                       <span
                         className="w-2 h-2 rounded-full"
                         style={{
-                          backgroundColor: isConfigured
-                            ? diag?.status === 'connected'
-                              ? '#10b981'
-                              : '#06b6d4'
-                            : '#94a3b8',
+                          backgroundColor: isSupabaseCategory
+                            ? isConfigured
+                              ? diag?.status === 'connected'
+                                ? '#10b981'
+                                : '#06b6d4'
+                              : '#94a3b8'
+                            : '#00f0ff',
                         }}
                       />
-                      <span>{isConfigured ? `${trackCount} tracks` : 'Coming Soon'}</span>
+                      <span>
+                        {isSupabaseCategory
+                          ? isConfigured
+                            ? `${trackCount} tracks`
+                            : 'Coming Soon'
+                          : cat.tag}
+                      </span>
                     </div>
                   </div>
 
@@ -621,72 +651,34 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                     <h3 className="text-xl font-black text-white tracking-wide group-hover:text-cyan-300 transition drop-shadow-md">
                       {cat.title}
                     </h3>
-                    <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow">
+                    <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow line-clamp-3">
                       {cat.description}
                     </p>
 
                     <div className="pt-2 flex items-center justify-between text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition">
-                      <span>Explore Catalog</span>
+                      <span>{cat.actionText}</span>
                       <span>→</span>
                     </div>
                   </div>
                 </div>
               );
             })}
-
-            {/* Category 4: JAMENDO */}
-            <div
-              key="jamendo"
-              onClick={() => handleOpenCategory('jamendo')}
-              className="group relative rounded-3xl overflow-hidden border border-cyan-500/30 hover:border-cyan-400/60 bg-slate-900/60 shadow-xl shadow-cyan-950/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl hover:shadow-cyan-500/20 flex flex-col justify-between min-h-[300px]"
-            >
-              {/* Background Cover Image */}
-              <div className="absolute inset-0 w-full h-full bg-slate-950">
-                <img
-                  src="./images/cloud/jamendo.jpg"
-                  alt="Jamendo Music"
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 opacity-80"
-                  onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
-                  }}
-                />
-              </div>
-
-              {/* Gradient Overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-950/20" />
-              <div className="absolute inset-0 bg-gradient-to-br from-cyan-950/80 via-purple-950/40 to-slate-950 opacity-60 mix-blend-overlay" />
-
-              {/* Top: Badges */}
-              <div className="relative z-10 p-5 flex items-center justify-between gap-2">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border shadow-sm bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border-cyan-500/40">
-                  Free & Legal
-                </span>
-
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-slate-200">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                  <span>Jamendo Catalog</span>
-                </div>
-              </div>
-
-              {/* Bottom: Title & Description */}
-              <div className="relative z-10 p-5 space-y-2">
-                <h3 className="text-xl font-black text-white tracking-wide group-hover:text-cyan-300 transition drop-shadow-md">
-                  JAMENDO
-                </h3>
-                <p className="text-xs text-slate-300 font-medium leading-relaxed drop-shadow">
-                  Explore and download independent music across multiple genres directly from Jamendo.
-                </p>
-
-                <div className="pt-2 flex items-center justify-between text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition">
-                  <span>Explore Jamendo</span>
-                  <span>→</span>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       ) : selectedCategory === 'jamendo' ? (
         <JamendoCatalogView
+          offlineSongs={offlineSongs}
+          isPlaying={isPlaying}
+          onPlaySong={onPlaySong}
+          onPauseMainPlayer={onPauseMainPlayer || (() => {})}
+          onSaveDownloadedSong={onSaveDownloadedSong || (async (song, blob) => {
+            await StorageService.saveSong(song, blob);
+          })}
+          onBack={handleBackToHome}
+          downloadOnWifiOnly={downloadOnWifiOnly}
+        />
+      ) : selectedCategory === 'archive_nasheed' ? (
+        <ArchiveNasheedCatalogView
           offlineSongs={offlineSongs}
           isPlaying={isPlaying}
           onPlaySong={onPlaySong}
@@ -730,11 +722,14 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
           {/* Cinematic Category Banner Image */}
           {activeCategoryMeta && (
             <div
-              className={`rounded-3xl overflow-hidden relative border ${activeCategoryMeta.borderColor} shadow-2xl min-h-[180px] sm:min-h-[210px] flex flex-col justify-end p-6 sm:p-7`}
+              className="rounded-3xl overflow-hidden relative border border-cyan-500/30 shadow-2xl min-h-[160px] sm:min-h-[190px] flex flex-col justify-end p-5 sm:p-7 bg-[#0a0f24]"
             >
-              <div className="absolute inset-0 w-full h-full bg-slate-950">
+              <div className="absolute inset-0 w-full h-full bg-[#0a0f24]">
                 <img
-                  src={activeCategoryMeta.imagePath}
+                  src={
+                    CLOUD_CATALOGS.find((c) => c.key === activeCategoryMeta.key)?.image ||
+                    activeCategoryMeta.imagePath
+                  }
                   alt={activeCategoryMeta.title}
                   className="w-full h-full object-cover"
                   onError={(e) => {
@@ -743,8 +738,8 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                 />
               </div>
 
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/25" />
-              <div className={`absolute inset-0 bg-gradient-to-r ${activeCategoryMeta.accentBg} opacity-60 mix-blend-overlay`} />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/70 to-slate-950/55" />
+              <div className={`absolute inset-0 bg-gradient-to-r ${activeCategoryMeta.accentBg} opacity-50 mix-blend-overlay`} />
 
               <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="space-y-1.5">
