@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Song, Playlist } from '../types/music';
 import { PWAInstallButton } from '../components/PWAInstallButton';
-import { NativeUpdateInfo } from '../services/nativeUpdate';
+import { NativeUpdateInfo, NativeUpdateService } from '../services/nativeUpdate';
 
 interface HomeScreenProps {
   songs: Song[];
@@ -28,6 +28,7 @@ interface HomeScreenProps {
   isUpdateDownloaded?: boolean;
   updateDownloadError?: string | null;
   onTriggerUpdate?: () => void;
+  onOpenBrowserDownload?: () => void;
 
   // PWA update props
   isPWAUpdateAvailable?: boolean;
@@ -55,6 +56,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   isUpdateDownloaded = false,
   updateDownloadError = null,
   onTriggerUpdate,
+  onOpenBrowserDownload,
 
   isPWAUpdateAvailable = false,
   isPWAUpdating = false,
@@ -156,11 +158,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </div>
               )}
 
-              {/* Download Error Notice */}
+              {/* Download Error Notice & Browser Download Link */}
               {updateDownloadError && (
-                <p className="text-xs text-rose-300 font-medium">
-                  {updateDownloadError}
-                </p>
+                <div className="space-y-1.5 pt-0.5 text-center sm:text-left">
+                  <p className="text-xs text-rose-300 font-medium leading-relaxed">
+                    {updateDownloadError}
+                  </p>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onOpenBrowserDownload) {
+                          onOpenBrowserDownload();
+                        } else {
+                          NativeUpdateService.openBrowserDownload();
+                        }
+                      }}
+                      className="text-[11px] text-cyan-400 hover:text-cyan-300 underline font-semibold cursor-pointer active:opacity-75 transition inline-block"
+                    >
+                      Download from browser instead
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Action Buttons & Hint */}
@@ -172,7 +191,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     className={`w-full sm:w-auto px-7 py-3.5 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition flex items-center justify-center gap-2.5 shrink-0 cursor-pointer ${
                       isDownloadingUpdate
                         ? 'bg-slate-800 text-slate-400 cursor-wait'
-                        : isUpdateDownloaded
+                        : isUpdateDownloaded && !updateDownloadError
                         ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-emerald-500/25 hover:shadow-emerald-400/40'
                         : 'bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white shadow-cyan-500/25 hover:shadow-cyan-400/40'
                     }`}
@@ -182,7 +201,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
                         <span>Downloading ({updateDownloadProgress}%)...</span>
                       </>
-                    ) : isUpdateDownloaded ? (
+                    ) : isUpdateDownloaded && !updateDownloadError ? (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
                         <span>Install update</span>

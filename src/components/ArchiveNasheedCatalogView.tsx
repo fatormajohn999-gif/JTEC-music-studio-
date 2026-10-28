@@ -20,6 +20,12 @@ import {
   cleanTrackTitle
 } from '../services/archiveOrg';
 import { CLOUD_CATALOGS } from '../config/cloudCatalogs';
+import { 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from '../services/navigation';
 
 interface ArchiveNasheedCatalogViewProps {
   offlineSongs: Song[];
@@ -112,22 +118,42 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
     archiveSessionState.sort = sort;
   }, [sort]);
 
-  // Results & Paging
-  const [items, setItems] = useState<ArchiveItemDoc[]>([]);
+  // Results & Paging initialized from session memory
+  const [items, setItems] = useState<ArchiveItemDoc[]>(archiveSessionState.items);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [totalFound, setTotalFound] = useState(0);
+  const [page, setPage] = useState(archiveSessionState.page);
+  const [hasMore, setHasMore] = useState(archiveSessionState.hasMore);
+  const [totalFound, setTotalFound] = useState(archiveSessionState.totalFound);
 
   // Item details cache: identifier -> ArchiveItemDetail
   const [itemDetailsMap, setItemDetailsMap] = useState<Map<string, ArchiveItemDetail>>(new Map());
   const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
 
   // Selected item modal for multi-file albums/collections
-  const [activeDetailItem, setActiveDetailItem] = useState<ArchiveItemDetail | null>(null);
+  const [activeDetailItem, setActiveDetailItem] = useState<ArchiveItemDetail | null>(
+    archiveSessionState.activeDetailItem
+  );
+
+  // Sync state back into in-memory session object
+  useEffect(() => { archiveSessionState.items = items; }, [items]);
+  useEffect(() => { archiveSessionState.page = page; }, [page]);
+  useEffect(() => { archiveSessionState.hasMore = hasMore; }, [hasMore]);
+  useEffect(() => { archiveSessionState.totalFound = totalFound; }, [totalFound]);
+  useEffect(() => { archiveSessionState.activeDetailItem = activeDetailItem; }, [activeDetailItem]);
+
+  // Restore scroll position on mount if saved
+  useLayoutEffect(() => {
+    if (!archiveSessionState.activeDetailItem) {
+      const main = document.querySelector('main');
+      const saved = getSavedScrollPosition('cloud:archive:list');
+      if (saved > 0) {
+        restoreScroll(main, saved);
+      }
+    }
+  }, []);
 
   // In-card Preview HTML Audio Player (plain HTML audio, zero Web Audio, zero visualizer canvas)
   const [previewTrack, setPreviewTrack] = useState<{
@@ -205,13 +231,7 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
   // Saved scroll position for restoring when going back from item detail
   const savedScrollPositionRef = useRef<number>(0);
-
-  // Reset main scrolling area to top (0) on open
-  useLayoutEffect(() => {
-    const main = document.querySelector('main');
-    if (main) main.scrollTop = 0;
-    window.scrollTo(0, 0);
-  }, []);
+  const isInitialMountRef = useRef<boolean>(true);
 
   // Fetch search items
   const loadSearch = useCallback(
@@ -269,6 +289,12 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
   // Reload when search, chip, ccOnly or sort changes
   useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      if (archiveSessionState.items.length > 0) {
+        return;
+      }
+    }
     loadSearch(true);
   }, [debouncedSearch, activeChip, ccOnly, sort]);
 
@@ -378,6 +404,7 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
   const handleOpenItem = async (doc: ArchiveItemDoc) => {
     const main = document.querySelector('main');
     if (main) {
+      saveScrollPosition('cloud:archive:list', main.scrollTop);
       savedScrollPositionRef.current = main.scrollTop;
     }
 
@@ -400,14 +427,37 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
   // Close item detail and restore the previous scroll position of the list
   const handleCloseDetail = () => {
+    stopPreview();
     setActiveDetailItem(null);
-    requestAnimationFrame(() => {
-      const main = document.querySelector('main');
-      if (main && savedScrollPositionRef.current) {
-        main.scrollTop = savedScrollPositionRef.current;
-      }
-    });
+    const main = document.querySelector('main');
+    const saved = getSavedScrollPosition('cloud:archive:list') || savedScrollPositionRef.current;
+    if (main && saved > 0) {
+      restoreScroll(main, saved);
+    }
   };
+
+  const handleBackToCatalogs = () => {
+    stopPreview();
+    const main = document.querySelector('main');
+    if (main) {
+      saveScrollPosition('cloud:archive:list', main.scrollTop);
+    }
+    onBack();
+  };
+
+  // Register back handler
+  useEffect(() => {
+    if (activeDetailItem) {
+      return registerBackHandler(() => {
+        handleCloseDetail();
+        return true;
+      }, 60);
+    }
+    return registerBackHandler(() => {
+      handleBackToCatalogs();
+      return true;
+    }, 40);
+  }, [activeDetailItem, onBack]);
 
   // Execute download with safety checks
   const performDownload = async (item: ArchiveItemDetail, file: ArchiveAudioFile) => {
@@ -531,7 +581,7 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
       <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
         <button
           type="button"
-          onClick={onBack}
+          onClick={handleBackToCatalogs}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition cursor-pointer"
         >
           <ArrowLeft className="w-3.5 h-3.5" />

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useR
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
   RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
-  Disc, Wifi, X
+  Disc, Wifi, X, BarChart2
 } from 'lucide-react';
 import { Network } from '@capacitor/network';
 import { CloudSong, Song } from '../types/music';
@@ -17,9 +17,16 @@ import {
 import { CLOUD_CATALOGS } from '../config/cloudCatalogs';
 import { JamendoCatalogView } from '../components/JamendoCatalogView';
 import { ArchiveNasheedCatalogView } from '../components/ArchiveNasheedCatalogView';
+import { UsageStatsView } from '../components/UsageStatsView';
 import { StorageService } from '../services/storage';
+import { 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from '../services/navigation';
 
-export type CloudViewCategory = CloudCategoryKey | 'jamendo' | 'archive_nasheed';
+export type CloudViewCategory = CloudCategoryKey | 'jamendo' | 'archive_nasheed' | 'usage_stats';
 
 interface CloudScreenProps {
   offlineSongs: Song[];
@@ -185,7 +192,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // Pre-fetch file sizes for songs in category that lack file_size
   useEffect(() => {
-    if (!selectedCategory || selectedCategory === 'jamendo') return;
+    if (!selectedCategory || selectedCategory === 'jamendo' || selectedCategory === 'archive_nasheed' || selectedCategory === 'usage_stats') return;
     const tracks = categorySongs[selectedCategory] || [];
     tracks.forEach((track) => {
       if (!track.file_size && !fileSizes[track.id]) {
@@ -225,7 +232,7 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // When a category is opened, fetch its tracks
   useEffect(() => {
-    if (selectedCategory && selectedCategory !== 'jamendo' && selectedCategory !== 'archive_nasheed') {
+    if (selectedCategory && selectedCategory !== 'jamendo' && selectedCategory !== 'archive_nasheed' && selectedCategory !== 'usage_stats') {
       loadCategorySongs(selectedCategory);
     }
   }, [selectedCategory, loadCategorySongs]);
@@ -246,42 +253,33 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     });
   }, []);
 
-  // Handle hardware & browser back buttons
+  // Register back button handler when a category is open
   useEffect(() => {
-    const handlePopState = () => {
-      if (selectedCategory) {
-        setSelectedCategory(null);
-      }
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [selectedCategory]);
-
-  // Reset main scrolling container to top (0) whenever category opens or closes
-  useLayoutEffect(() => {
-    const main = document.querySelector('main');
-    if (main) {
-      main.scrollTop = 0;
+    if (selectedCategory !== null) {
+      return registerBackHandler('cloud_category', 40, () => {
+        handleBackToHome();
+        return true;
+      });
     }
-    window.scrollTo(0, 0);
   }, [selectedCategory]);
 
   const handleOpenCategory = (catKey: CloudViewCategory) => {
+    const main = document.querySelector('main');
+    saveScrollPosition('cloud:overview', main ? main.scrollTop : 0);
     setSelectedCategory(catKey);
     setSearchQuery('');
     window.history.pushState({ category: catKey }, '');
-    const main = document.querySelector('main');
-    if (main) main.scrollTop = 0;
-    window.scrollTo(0, 0);
+    restoreScroll(main, 0);
   };
 
   const handleBackToHome = () => {
+    const main = document.querySelector('main');
+    if (selectedCategory) {
+      saveScrollPosition(`cloud:${selectedCategory}`, main ? main.scrollTop : 0);
+    }
     setSelectedCategory(null);
     setSearchQuery('');
-    const main = document.querySelector('main');
-    if (main) main.scrollTop = 0;
-    window.scrollTo(0, 0);
+    restoreScroll(main, getSavedScrollPosition('cloud:overview'));
   };
 
   // Wi-Fi policy checker: if "Download on Wi-Fi only" is on and device is on mobile cellular data, ask
@@ -474,19 +472,19 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 
   // Active category details
   const activeCategoryMeta = useMemo(() => {
-    if (!selectedCategory || selectedCategory === 'jamendo') return null;
+    if (!selectedCategory || selectedCategory === 'jamendo' || selectedCategory === 'archive_nasheed' || selectedCategory === 'usage_stats') return null;
     return CLOUD_CATEGORIES.find((c) => c.key === selectedCategory) || null;
   }, [selectedCategory]);
 
   // Filtered tracks in active category
   const filteredCategoryTracks = useMemo(() => {
-    if (!selectedCategory || selectedCategory === 'jamendo') return [];
-    const list = categorySongs[selectedCategory] || [];
+    if (!selectedCategory || selectedCategory === 'jamendo' || selectedCategory === 'archive_nasheed' || selectedCategory === 'usage_stats') return [];
+    const list = (categorySongs as any)[selectedCategory] || [];
     if (!searchQuery.trim()) return list;
 
     const q = searchQuery.toLowerCase().trim();
     return list.filter(
-      (s) =>
+      (s: any) =>
         s.title.toLowerCase().includes(q) ||
         s.artist.toLowerCase().includes(q) ||
         s.album.toLowerCase().includes(q) ||
@@ -573,15 +571,27 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={checkAllConnections}
-              disabled={isCheckingStatus}
-              className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-white/10 self-start sm:self-auto disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin text-cyan-400' : ''}`} />
-              <span>{isCheckingStatus ? 'Checking cloud...' : 'Check Status'}</span>
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleOpenCategory('usage_stats')}
+                className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-cyan-500/30 hover:border-cyan-400/60 shadow-lg shadow-cyan-950/20"
+                title="View anonymous usage statistics and app version management (Admin sign-in required)"
+              >
+                <BarChart2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Usage Stats</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={checkAllConnections}
+                disabled={isCheckingStatus}
+                className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-white/10 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin text-cyan-400' : ''}`} />
+                <span>{isCheckingStatus ? 'Checking cloud...' : 'Check Status'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Categories Grid */}
@@ -665,6 +675,8 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
             })}
           </div>
         </div>
+      ) : selectedCategory === 'usage_stats' ? (
+        <UsageStatsView onBack={handleBackToHome} />
       ) : selectedCategory === 'jamendo' ? (
         <JamendoCatalogView
           offlineSongs={offlineSongs}

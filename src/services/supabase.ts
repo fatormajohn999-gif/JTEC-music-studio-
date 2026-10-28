@@ -77,6 +77,30 @@ const LS_PREFIX = 'jtec_supabase_';
 // Client singleton cache keyed by url+anonKey to avoid multiple GoTrueClient warnings
 const clientCache = new Map<string, SupabaseClient>();
 
+// Admin client singleton with auth persistence for JTEC Main admin session
+let jtecAdminClient: SupabaseClient | null = null;
+
+export function getJtecAdminClient(): SupabaseClient | null {
+  const config = SupabaseService.getCategoryConfig('jtec_main');
+  if (!config.isConfigured || !config.url || !config.anonKey) return null;
+  if (!jtecAdminClient) {
+    try {
+      jtecAdminClient = createClient(config.url, config.anonKey, {
+        auth: {
+          storageKey: 'jtec_admin_session',
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: false,
+        },
+      });
+    } catch (err) {
+      console.warn('Failed to initialize JTEC admin Supabase client:', err);
+      return null;
+    }
+  }
+  return jtecAdminClient;
+}
+
 export type ConnectionErrorType =
   | 'configuration'
   | 'authentication'
@@ -388,6 +412,15 @@ export const SupabaseService = {
       return null;
     }
   },
+
+  /**
+   * Returns an admin SupabaseClient for JTEC Main with session persistence enabled.
+   * Uses only the public anon key with the signed-in admin session, never a service_role key.
+   */
+  getAdminClient(): SupabaseClient | null {
+    return getJtecAdminClient();
+  },
+
 
   /**
    * Tests a simple public read (SELECT limit 1) on a Supabase source using only the anon key.

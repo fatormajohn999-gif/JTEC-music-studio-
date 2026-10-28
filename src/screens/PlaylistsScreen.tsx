@@ -1,8 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Disc, Plus, Play, Trash2, Edit2, Music, MoreVertical, Heart, X, Check, ArrowUp, ArrowDown 
 } from 'lucide-react';
 import { Playlist, Song } from '../types/music';
+import { 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from '../services/navigation';
 
 interface PlaylistsScreenProps {
   playlists: Playlist[];
@@ -36,6 +42,33 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+
+  const handleSelectPlaylist = (id: string) => {
+    const main = document.querySelector('main');
+    if (main) {
+      saveScrollPosition('playlists:overview', main.scrollTop);
+      main.scrollTop = 0;
+    }
+    setSelectedPlaylistId(id);
+  };
+
+  const handleBackToOverview = () => {
+    setSelectedPlaylistId(null);
+    const main = document.querySelector('main');
+    const saved = getSavedScrollPosition('playlists:overview');
+    if (main && saved > 0) {
+      restoreScroll(main, saved);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedPlaylistId !== null) {
+      return registerBackHandler(() => {
+        handleBackToOverview();
+        return true;
+      }, 40);
+    }
+  }, [selectedPlaylistId]);
 
   const selectedPlaylist = playlists.find((p) => p.id === selectedPlaylistId);
 
@@ -94,7 +127,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
               </button>
 
               <button
-                onClick={() => setSelectedPlaylistId(null)}
+                onClick={handleBackToOverview}
                 className="p-3 rounded-2xl bg-slate-800 text-slate-300 hover:text-white"
               >
                 Back
@@ -210,7 +243,7 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({
                 className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 hover:border-cyan-500/30 transition flex items-center justify-between group"
               >
                 <div
-                  onClick={() => setSelectedPlaylistId(pl.id)}
+                  onClick={() => handleSelectPlaylist(pl.id)}
                   className="flex items-center gap-3.5 flex-1 min-w-0 cursor-pointer"
                 >
                   <div className={`w-14 h-14 rounded-2xl bg-gradient-to-tr ${pl.coverGradient || 'from-cyan-500 to-purple-600'} flex items-center justify-center text-white shadow-lg shrink-0 group-hover:scale-105 transition`}>

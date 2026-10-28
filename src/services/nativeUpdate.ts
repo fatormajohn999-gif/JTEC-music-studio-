@@ -303,7 +303,7 @@ export const NativeUpdateService = {
       throw new Error('Native download is only supported on Android devices');
     }
 
-    // 1. Delete previous APK file if exists
+    // 1. Delete previous APK file if exists (ignore errors if it doesn't exist)
     try {
       await Filesystem.deleteFile({
         path: 'update/JTEC-MUSIC.apk',
@@ -313,7 +313,18 @@ export const NativeUpdateService = {
       // Ignored if file does not exist
     }
 
-    // 2. Setup progress listener
+    // 2. Before downloading, create the folder: Filesystem.mkdir({ path: 'update', directory: Directory.Cache, recursive: true }), and ignore the error if it already exists
+    try {
+      await Filesystem.mkdir({
+        path: 'update',
+        directory: Directory.Cache,
+        recursive: true,
+      });
+    } catch {
+      // Ignored if it already exists
+    }
+
+    // 3. Setup progress listener
     let progressHandle: { remove: () => Promise<void> } | null = null;
     try {
       progressHandle = await Filesystem.addListener('progress', (status) => {
@@ -332,8 +343,8 @@ export const NativeUpdateService = {
     }
 
     try {
-      // 3. Download the file via Capacitor Filesystem
-      const downloadResult = await Filesystem.downloadFile({
+      // 4. Download the file via Capacitor Filesystem passing recursive: true
+      await Filesystem.downloadFile({
         url: downloadUrl,
         path: 'update/JTEC-MUSIC.apk',
         directory: Directory.Cache,
@@ -341,26 +352,29 @@ export const NativeUpdateService = {
         recursive: true,
       });
 
-      // 4. Verify file size
-      try {
-        const stat = await Filesystem.stat({
-          path: 'update/JTEC-MUSIC.apk',
-          directory: Directory.Cache,
-        });
+      // 5. After download: check that the file exists and that its size matches the release asset size
+      const stat = await Filesystem.stat({
+        path: 'update/JTEC-MUSIC.apk',
+        directory: Directory.Cache,
+      });
 
-        if (expectedSizeBytes > 0 && stat.size > 0) {
-          // If less than 85% of expected size, it was truncated
-          if (stat.size < expectedSizeBytes * 0.85) {
-            throw new Error(
-              `Downloaded APK appears incomplete (${formatBytes(stat.size)} of ${formatBytes(expectedSizeBytes)})`
-            );
-          }
-        }
-      } catch (statErr) {
-        console.warn('[NativeUpdate] Could not verify stat:', statErr);
+      if (!stat || stat.size <= 0) {
+        throw new Error('Downloaded APK file does not exist or is empty.');
       }
 
-      return downloadResult.path || 'update/JTEC-MUSIC.apk';
+      if (expectedSizeBytes > 0 && stat.size !== expectedSizeBytes) {
+        throw new Error(
+          `Downloaded APK size (${stat.size} bytes) does not match release asset size (${expectedSizeBytes} bytes).`
+        );
+      }
+
+      // 6. Get the file's real address with Filesystem.getUri and return it for the installer
+      const uriResult = await Filesystem.getUri({
+        path: 'update/JTEC-MUSIC.apk',
+        directory: Directory.Cache,
+      });
+
+      return uriResult.uri;
     } finally {
       if (progressHandle) {
         await progressHandle.remove().catch(() => {});
@@ -371,18 +385,29 @@ export const NativeUpdateService = {
   /**
    * Opens the downloaded APK file with the system package installer.
    */
-  async installDownloadedApk(): Promise<void> {
+  async installDownloadedApk(apkUri?: string): Promise<void> {
     if (!Capacitor.isNativePlatform()) {
       return;
     }
 
     try {
-      const uriResult = await Filesystem.getUri({
+      let uri = apkUri;
+      if (!uri) {
+        const uriResult = await Filesystem.getUri({
+          path: 'update/JTEC-MUSIC.apk',
+          directory: Directory.Cache,
+        });
+        uri = uriResult.uri;
+      }
+
+      const stat = await Filesystem.stat({
         path: 'update/JTEC-MUSIC.apk',
         directory: Directory.Cache,
       });
 
-      const uri = uriResult.uri;
+      if (!stat || stat.size <= 0) {
+        throw new Error('APK file not found or empty when attempting install');
+      }
 
       // Open with FileOpener
       await FileOpener.openFile({
@@ -390,11 +415,27 @@ export const NativeUpdateService = {
         mimeType: 'application/vnd.android.package-archive',
       });
     } catch (err) {
-      console.warn('[NativeUpdate] FileOpener failed, falling back to launcher:', err);
-      try {
+      console.error('[NativeUpdate] Technical details of installation error:', err);
+      throw err;
+    }
+  },
+
+  /**
+   * Opens the direct APK download URL in the browser via AppLauncher.openUrl.
+   */
+  async openBrowserDownload(): Promise<void> {
+    try {
+      if (Capacitor.isNativePlatform()) {
         await AppLauncher.openUrl({ url: APK_DOWNLOAD_URL });
-      } catch {
+      } else {
         window.open(APK_DOWNLOAD_URL, '_blank');
+      }
+    } catch (err) {
+      console.error('[NativeUpdate] AppLauncher openUrl error:', err);
+      try {
+        window.open(APK_DOWNLOAD_URL, '_blank');
+      } catch (fallbackErr) {
+        console.error('[NativeUpdate] window.open fallback error:', fallbackErr);
       }
     }
   },

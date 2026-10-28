@@ -24,6 +24,31 @@ export interface JamendoQueryParams {
   limit?: number;
 }
 
+export interface JamendoSessionState {
+  tracks: JamendoTrack[];
+  activeTab: 'popularity_total' | 'releasedate_desc';
+  searchQuery: string;
+  activeGenre: string;
+  selectedArtist: string | null;
+  downloadableOnly: boolean;
+  offset: number;
+  hasMore: boolean;
+}
+
+/**
+ * Persisted in-memory Jamendo session state while the app remains open.
+ */
+export const jamendoSessionState: JamendoSessionState = {
+  tracks: [],
+  activeTab: 'popularity_total',
+  searchQuery: '',
+  activeGenre: 'all',
+  selectedArtist: null,
+  downloadableOnly: false,
+  offset: 0,
+  hasMore: true,
+};
+
 /**
  * Extracts a friendly human-readable Creative Commons license label from the Jamendo license_ccurl.
  */

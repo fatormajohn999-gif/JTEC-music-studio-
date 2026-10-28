@@ -158,11 +158,22 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
         </div>
       </section>
 
-      {/* Section 6: Contact & Updates */}
+      {/* Section 6: Anonymous Install Counting */}
+      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <Shield className="w-4 h-4 text-cyan-400" />
+          <h3>6. Anonymous Install Counting</h3>
+        </div>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          JTEC MUSIC counts installs with a random anonymous ID and the app version. It does not collect your name, email, phone number or location.
+        </p>
+      </section>
+
+      {/* Section 7: Contact & Updates */}
       <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
           <FileText className="w-4 h-4 text-cyan-400" />
-          <h3>6. Policy Updates & Inquiries</h3>
+          <h3>7. Policy Updates & Inquiries</h3>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
           Any future revisions to this policy will be documented within this screen. If you have questions about how JTEC MUSIC handles data or device storage, contact the developer at <a href="mailto:fatormajohn999@gmail.com" className="text-cyan-400 hover:underline font-mono">fatormajohn999@gmail.com</a>.

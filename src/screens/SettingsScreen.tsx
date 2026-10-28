@@ -20,6 +20,12 @@ import { APP_VERSION, BUILD_DATE } from '../version';
 import { getCurrentAppVersion } from '../services/nativeUpdate';
 import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
+import { 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from '../services/navigation';
 
 export type SettingsSubView = 'main' | 'privacy' | 'guide' | 'developer' | 'install' | 'update';
 
@@ -142,13 +148,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }));
   };
 
-  // Reset scroll position to top on initial mount
+  // Restore scroll position on initial mount if saved
   useEffect(() => {
     const scrollParent = containerRef.current?.closest('main');
-    if (scrollParent) {
-      scrollParent.scrollTop = 0;
-    } else {
-      window.scrollTo(0, 0);
+    const saved = getSavedScrollPosition('settings:main');
+    if (saved > 0) {
+      restoreScroll(scrollParent, saved);
     }
   }, []);
 
@@ -199,22 +204,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleOpenSubView = (view: SettingsSubView) => {
     const scrollParent = containerRef.current?.closest('main');
-    lastScrollTopRef.current = scrollParent ? scrollParent.scrollTop : window.scrollY;
+    saveScrollPosition('settings:main', scrollParent ? scrollParent.scrollTop : 0);
     setActiveSubView(view);
+    restoreScroll(scrollParent, 0);
   };
 
   const handleBackToMain = () => {
     setActiveSubView('main');
-    setTimeout(() => {
-      const scrollParent = containerRef.current?.closest('main');
-      const target = Math.min(lastScrollTopRef.current, 320);
-      if (scrollParent) {
-        scrollParent.scrollTop = target;
-      } else {
-        window.scrollTo(0, target);
-      }
-    }, 50);
+    const scrollParent = containerRef.current?.closest('main');
+    const target = getSavedScrollPosition('settings:main');
+    restoreScroll(scrollParent, target);
   };
+
+  useEffect(() => {
+    if (activeSubView !== 'main') {
+      return registerBackHandler('settings_subview', 40, () => {
+        handleBackToMain();
+        return true;
+      });
+    }
+  }, [activeSubView]);
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 MB';
@@ -230,28 +239,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     onUpdateSettings({ ...settings, visualizerMode: mode });
   };
 
-  if (activeSubView === 'privacy') {
-    return <PrivacyPolicyView onBack={handleBackToMain} />;
-  }
-
-  if (activeSubView === 'guide') {
-    return <UserGuideView onBack={handleBackToMain} />;
-  }
-
-  if (activeSubView === 'developer') {
-    return <AboutDeveloperView onBack={handleBackToMain} />;
-  }
-
-  if (activeSubView === 'install') {
-    return <InstallGuideView onBack={handleBackToMain} />;
-  }
-
-  if (activeSubView === 'update') {
-    return <HowToUpdateView onBack={handleBackToMain} />;
-  }
-
   return (
-    <div ref={containerRef} className="space-y-4 pb-48 px-4 pt-3 max-w-3xl mx-auto animate-in fade-in">
+    <>
+      <div
+        ref={containerRef}
+        style={{ display: activeSubView === 'main' ? 'block' : 'none' }}
+        className="space-y-4 pb-48 px-4 pt-3 max-w-3xl mx-auto animate-in fade-in"
+      >
       {/* Header */}
       <div className="flex items-center gap-3 pb-1">
         <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-purple-600/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shadow-lg shadow-cyan-500/10">
@@ -1008,6 +1002,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           }}
         />
       )}
-    </div>
+      </div>
+
+      {activeSubView === 'privacy' && <PrivacyPolicyView onBack={handleBackToMain} />}
+      {activeSubView === 'guide' && <UserGuideView onBack={handleBackToMain} />}
+      {activeSubView === 'developer' && <AboutDeveloperView onBack={handleBackToMain} />}
+      {activeSubView === 'install' && <InstallGuideView onBack={handleBackToMain} />}
+      {activeSubView === 'update' && <HowToUpdateView onBack={handleBackToMain} />}
+    </>
   );
 };

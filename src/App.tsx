@@ -27,8 +27,14 @@ import { NativeUpdateBottomSheet } from './components/NativeUpdateBottomSheet';
 import { 
   NativeUpdateService, 
   NativeUpdateInfo, 
-  isCellularConnection 
+  isCellularConnection,
+  APK_DOWNLOAD_URL
 } from './services/nativeUpdate';
+import { 
+  sendAnonymousPing, 
+  checkMinimumVersion, 
+  MinVersionStatus 
+} from './services/appConfig';
 import { WhatsNewModal } from './components/WhatsNewModal';
 import { CellularDataConfirmModal } from './components/CellularDataConfirmModal';
 import { RequiredUpdateOverlay } from './components/RequiredUpdateOverlay';
@@ -45,6 +51,13 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { useSleepTimer } from './hooks/useSleepTimer';
 import { usePWAUpdate } from './hooks/usePWAUpdate';
+import { 
+  initializeGlobalNavigation, 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from './services/navigation';
 
 export default function App() {
   // Navigation & Screen state
@@ -81,6 +94,9 @@ export default function App() {
 
   // Settings update sheet state (for manual checks from Settings when not on Home)
   const [isSettingsUpdateSheetOpen, setIsSettingsUpdateSheetOpen] = useState(false);
+
+  // Minimum Version Block State (from app_config id = 1)
+  const [minVersionStatus, setMinVersionStatus] = useState<MinVersionStatus | null>(null);
 
   // Post-update "What's new" state
   const [whatsNewData, setWhatsNewData] = useState<{
@@ -120,11 +136,34 @@ export default function App() {
     return null;
   }, []);
 
-  // Lifecycle update checks: on mount, post-update check, and on app foreground
+  // Minimum version check runner (at most once every 30 minutes)
+  const runMinVersionCheck = useCallback(async () => {
+    try {
+      const res = await checkMinimumVersion(false);
+      if (res && res.isBlocked) {
+        setMinVersionStatus(res);
+        if (Capacitor.isNativePlatform()) {
+          runNativeUpdateCheck(false);
+        }
+      } else if (res && !res.isBlocked) {
+        setMinVersionStatus(null);
+      }
+    } catch {
+      // If check fails or no internet, let app work normally
+    }
+  }, [runNativeUpdateCheck]);
+
+  // Lifecycle update checks: on mount, post-update check, anonymous ping, min-version check, and on app foreground
   useEffect(() => {
     let isMounted = true;
 
-    // Check if app was just updated to a newer build
+    // 1. Anonymous ping at most once every 24h (and on first run)
+    sendAnonymousPing();
+
+    // 2. Minimum version check on app open (at most once every 30 minutes)
+    runMinVersionCheck();
+
+    // 3. Check if app was just updated to a newer build
     NativeUpdateService.checkPostUpdate().then((post) => {
       if (isMounted && post && post.showWhatsNew) {
         setWhatsNewData({
@@ -135,29 +174,44 @@ export default function App() {
       }
     });
 
+    let capListenerHandle: any = null;
+
     if (Capacitor.isNativePlatform()) {
       // Check for update on app open (throttled to at most once every 6 hours)
       runNativeUpdateCheck(false);
 
-      // Check for update when app comes back to the foreground
+      // Check for update and min version when app comes back to the foreground
       const handleStateChange = (state: { isActive: boolean }) => {
         if (state.isActive) {
           runNativeUpdateCheck(false);
+          runMinVersionCheck();
         }
       };
 
       const listenerPromise = CapApp.addListener('appStateChange', handleStateChange);
-
-      return () => {
-        isMounted = false;
-        listenerPromise.then((handle) => handle.remove()).catch(() => {});
-      };
+      listenerPromise.then((handle) => {
+        capListenerHandle = handle;
+      }).catch(() => {});
     }
+
+    // Web visibility and focus checks (at most once every 30 minutes)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runMinVersionCheck();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
 
     return () => {
       isMounted = false;
+      if (capListenerHandle) {
+        capListenerHandle.remove();
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
     };
-  }, [runNativeUpdateCheck]);
+  }, [runNativeUpdateCheck, runMinVersionCheck]);
 
   // Listen for manual update checks triggered from Settings
   useEffect(() => {
@@ -184,7 +238,7 @@ export default function App() {
     setNativeDownloadError(null);
 
     try {
-      await NativeUpdateService.downloadApk({
+      const apkUri = await NativeUpdateService.downloadApk({
         downloadUrl: info.downloadUrl,
         expectedSizeBytes: info.fileSizeBytes,
         onProgress: (pct) => {
@@ -195,22 +249,49 @@ export default function App() {
       setIsDownloadingNativeUpdate(false);
       setIsNativeUpdateDownloaded(true);
 
-      // Launch package installer immediately
-      await NativeUpdateService.installDownloadedApk();
-    } catch (err: any) {
-      console.warn('[NativeUpdate] Download/install failed:', err);
+      // Launch package installer immediately with real URI
+      await NativeUpdateService.installDownloadedApk(apkUri);
+    } catch (err: unknown) {
+      console.error('[NativeUpdate] Technical details of download/install failure:', err);
       setIsDownloadingNativeUpdate(false);
-      setNativeDownloadError(err?.message || 'Download failed. Please check your internet connection.');
+      setIsNativeUpdateDownloaded(false);
+      setNativeDownloadError("Couldn't download the update. Check your internet and try again.");
     }
   }, []);
 
   // Main trigger: check mobile data first
   const handleTriggerNativeUpdate = useCallback(async () => {
-    if (!nativeUpdateInfo) return;
+    let info = nativeUpdateInfo;
+    if (!info) {
+      const checked = await runNativeUpdateCheck(true);
+      if (checked) {
+        info = checked;
+      } else {
+        info = {
+          hasUpdate: true,
+          versionName: 'Latest',
+          latestBuild: 999,
+          currentBuild: 100,
+          currentVersionName: 'Current',
+          downloadUrl: APK_DOWNLOAD_URL,
+          fileSizeBytes: 0,
+          formattedSize: '',
+          notesBullets: [],
+          isRequired: true,
+          rawBody: '',
+        };
+      }
+    }
 
-    if (isNativeUpdateDownloaded) {
+    if (isNativeUpdateDownloaded && !nativeDownloadError) {
       // If already downloaded, launch installer directly
-      await NativeUpdateService.installDownloadedApk();
+      try {
+        await NativeUpdateService.installDownloadedApk();
+      } catch (err: unknown) {
+        console.error('[NativeUpdate] Technical details of installer launch error:', err);
+        setIsNativeUpdateDownloaded(false);
+        setNativeDownloadError("Couldn't download the update. Check your internet and try again.");
+      }
       return;
     }
 
@@ -220,8 +301,8 @@ export default function App() {
       return;
     }
 
-    await executeApkDownload(nativeUpdateInfo);
-  }, [nativeUpdateInfo, isNativeUpdateDownloaded, executeApkDownload]);
+    await executeApkDownload(info);
+  }, [nativeUpdateInfo, runNativeUpdateCheck, isNativeUpdateDownloaded, nativeDownloadError, executeApkDownload]);
 
   // Confirmed mobile data download
   const handleConfirmCellularDownload = useCallback(async () => {
@@ -267,15 +348,6 @@ export default function App() {
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
   const mainContainerRef = useRef<HTMLElement | null>(null);
 
-  // Reset scroll of the main content container whenever switching to Cloud tab
-  useLayoutEffect(() => {
-    if (currentTab === 'cloud') {
-      if (mainContainerRef.current) {
-        mainContainerRef.current.scrollTop = 0;
-      }
-      window.scrollTo(0, 0);
-    }
-  }, [currentTab]);
 
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
@@ -329,6 +401,152 @@ export default function App() {
   const [detailsSong, setDetailsSong] = useState<Song | null>(null);
   const [optionsMenuSong, setOptionsMenuSong] = useState<Song | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
+
+  // Initialize Global Android and Web Back Navigation
+  useEffect(() => {
+    return initializeGlobalNavigation();
+  }, []);
+
+  // Settings & Tab Scroll Navigation
+  const handleOpenSettings = useCallback(() => {
+    if (mainContainerRef.current) {
+      saveScrollPosition('tab:' + currentTab, mainContainerRef.current.scrollTop);
+    }
+    setIsSettingsView(true);
+    const target = getSavedScrollPosition('settings:root');
+    restoreScroll(mainContainerRef.current, target);
+  }, [currentTab]);
+
+  const handleBackFromSettings = useCallback(() => {
+    if (mainContainerRef.current) {
+      saveScrollPosition('settings:root', mainContainerRef.current.scrollTop);
+    }
+    setIsSettingsView(false);
+    const target = getSavedScrollPosition('tab:' + currentTab);
+    restoreScroll(mainContainerRef.current, target);
+  }, [currentTab]);
+
+  const handleSelectTab = useCallback((targetTab: NavTab) => {
+    if (isSettingsView) {
+      if (mainContainerRef.current) {
+        saveScrollPosition('settings:root', mainContainerRef.current.scrollTop);
+      }
+      setIsSettingsView(false);
+      if (targetTab === currentTab) {
+        const target = getSavedScrollPosition('tab:' + targetTab);
+        restoreScroll(mainContainerRef.current, target);
+        return;
+      }
+    }
+
+    if (targetTab === currentTab) {
+      mainContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      saveScrollPosition('tab:' + currentTab, 0);
+      return;
+    }
+
+    if (mainContainerRef.current) {
+      saveScrollPosition('tab:' + currentTab, mainContainerRef.current.scrollTop);
+    }
+    setCurrentTab(targetTab);
+    const target = getSavedScrollPosition('tab:' + targetTab);
+    restoreScroll(mainContainerRef.current, target);
+  }, [currentTab, isSettingsView]);
+
+  // Back handlers for top-level modals, sheets, settings, and tabs
+  useEffect(() => {
+    if (whatsNewData.isOpen) {
+      return registerBackHandler('modal_whats_new', 110, () => {
+        handleAcknowledgeWhatsNew();
+        return true;
+      });
+    }
+    if (showCellularConfirm) {
+      return registerBackHandler('modal_cellular_confirm', 110, () => {
+        setShowCellularConfirm(false);
+        return true;
+      });
+    }
+    if (isSettingsUpdateSheetOpen) {
+      return registerBackHandler('modal_settings_update', 110, () => {
+        handleDismissSettingsUpdateSheet();
+        return true;
+      });
+    }
+    if (optionsMenuSong !== null) {
+      return registerBackHandler('menu_song_options', 100, () => {
+        setOptionsMenuSong(null);
+        return true;
+      });
+    }
+    if (detailsSong !== null) {
+      return registerBackHandler('modal_song_details', 100, () => {
+        setDetailsSong(null);
+        return true;
+      });
+    }
+    if (isPlaylistModalOpen) {
+      return registerBackHandler('modal_playlist', 100, () => {
+        setIsPlaylistModalOpen(false);
+        setSongToAddPlaylist(null);
+        return true;
+      });
+    }
+    if (isImportOpen) {
+      return registerBackHandler('modal_import', 100, () => {
+        setIsImportOpen(false);
+        return true;
+      });
+    }
+    if (isQueueOpen) {
+      return registerBackHandler('drawer_queue', 90, () => {
+        setIsQueueOpen(false);
+        return true;
+      });
+    }
+    if (isEffectsModalOpen) {
+      return registerBackHandler('modal_effects', 90, () => {
+        setIsEffectsModalOpen(false);
+        return true;
+      });
+    }
+    if (isFullPlayerOpen) {
+      return registerBackHandler('modal_full_player', 80, () => {
+        setIsFullPlayerOpen(false);
+        return true;
+      });
+    }
+    if (isSettingsView) {
+      return registerBackHandler('view_settings', 20, () => {
+        handleBackFromSettings();
+        return true;
+      });
+    }
+    if (currentTab !== 'home') {
+      return registerBackHandler('tab_return_home', 10, () => {
+        handleSelectTab('home');
+        return true;
+      });
+    }
+  }, [
+    whatsNewData.isOpen,
+    showCellularConfirm,
+    isSettingsUpdateSheetOpen,
+    optionsMenuSong,
+    detailsSong,
+    isPlaylistModalOpen,
+    isImportOpen,
+    isQueueOpen,
+    isEffectsModalOpen,
+    isFullPlayerOpen,
+    isSettingsView,
+    currentTab,
+    handleAcknowledgeWhatsNew,
+    handleDismissSettingsUpdateSheet,
+    handleBackFromSettings,
+    handleSelectTab
+  ]);
 
   // References to keep callbacks fresh
   const currentSongRef = useRef(currentSong);
@@ -1499,27 +1717,18 @@ export default function App() {
 
       {/* Header */}
       <Header
-        onOpenSearch={() => {
-          setIsSettingsView(false);
-          setCurrentTab('search');
-        }}
-        onOpenSettings={() => setIsSettingsView(true)}
+        onOpenSearch={() => handleSelectTab('search')}
+        onOpenSettings={handleOpenSettings}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
-        onOpenCloud={() => {
-          setIsSettingsView(false);
-          setCurrentTab('cloud');
-        }}
-        onLogoClick={() => {
-          setIsSettingsView(false);
-          setCurrentTab('home');
-        }}
+        onOpenCloud={() => handleSelectTab('cloud')}
+        onLogoClick={() => handleSelectTab('home')}
         isSettingsView={isSettingsView}
-        onBackFromSettings={() => setIsSettingsView(false)}
+        onBackFromSettings={handleBackFromSettings}
       />
 
-      {/* Main Body Content Router */}
+      {/* Main Body Content Router (screens stay mounted and hidden with display:none) */}
       <main ref={mainContainerRef} className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
-        {isSettingsView ? (
+        <div style={{ display: isSettingsView ? 'block' : 'none' }}>
           <SettingsScreen
             settings={settings}
             storageStats={storageStats}
@@ -1533,7 +1742,9 @@ export default function App() {
             onCancelSleepTimer={handleCancelSleepTimer}
             onExtendSleepTimer={handleExtendSleepTimer}
           />
-        ) : currentTab === 'home' ? (
+        </div>
+
+        <div style={{ display: (!isSettingsView && currentTab === 'home') ? 'block' : 'none' }}>
           <HomeScreen
             songs={songs}
             playlists={playlists}
@@ -1542,25 +1753,25 @@ export default function App() {
             isPlaying={isPlaying}
             onPlaySong={(song, contextQueue) => playSong(song, contextQueue || songs)}
             onOpenImport={() => setIsImportOpen(true)}
-            onOpenPlaylists={() => setCurrentTab('playlists')}
+            onOpenPlaylists={() => handleSelectTab('playlists')}
             onSelectPlaylist={handlePlayPlaylist}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
-            onOpenCloud={() => {
-              setIsSettingsView(false);
-              setCurrentTab('cloud');
-            }}
+            onOpenCloud={() => handleSelectTab('cloud')}
             nativeUpdateInfo={nativeUpdateInfo}
             isDownloadingUpdate={isDownloadingNativeUpdate}
             updateDownloadProgress={nativeDownloadProgress}
             isUpdateDownloaded={isNativeUpdateDownloaded}
             updateDownloadError={nativeDownloadError}
             onTriggerUpdate={handleTriggerNativeUpdate}
+            onOpenBrowserDownload={NativeUpdateService.openBrowserDownload}
             isPWAUpdateAvailable={updateAvailable}
             isPWAUpdating={isPWAUpdating}
             onReloadPWA={handleUpdateApp}
           />
-        ) : currentTab === 'library' ? (
+        </div>
+
+        <div style={{ display: (!isSettingsView && currentTab === 'library') ? 'block' : 'none' }}>
           <LibraryScreen
             songs={songs}
             playlists={playlists}
@@ -1571,14 +1782,16 @@ export default function App() {
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenImport={() => setIsImportOpen(true)}
-            onOpenCloud={() => setCurrentTab('cloud')}
+            onOpenCloud={() => handleSelectTab('cloud')}
             onOpenCreatePlaylist={() => {
               setSongToAddPlaylist(null);
               setIsPlaylistModalOpen(true);
             }}
             onSelectPlaylist={handlePlayPlaylist}
           />
-        ) : currentTab === 'cloud' ? (
+        </div>
+
+        <div style={{ display: (!isSettingsView && currentTab === 'cloud') ? 'block' : 'none' }}>
           <CloudScreen
             offlineSongs={songs.filter((s) => s.hasStoredBlob)}
             currentSong={currentSong}
@@ -1590,7 +1803,9 @@ export default function App() {
             onPauseMainPlayer={() => audioEngine.pause()}
             onSaveDownloadedSong={handleSaveDownloadedSong}
           />
-        ) : currentTab === 'playlists' ? (
+        </div>
+
+        <div style={{ display: (!isSettingsView && currentTab === 'playlists') ? 'block' : 'none' }}>
           <PlaylistsScreen
             playlists={playlists}
             songs={songs}
@@ -1608,7 +1823,9 @@ export default function App() {
             onReorderPlaylistSongs={handleReorderPlaylistSongs}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
           />
-        ) : (
+        </div>
+
+        <div style={{ display: (!isSettingsView && currentTab === 'search') ? 'block' : 'none' }}>
           <SearchScreen
             songs={songs}
             playlists={playlists}
@@ -1619,7 +1836,7 @@ export default function App() {
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
           />
-        )}
+        </div>
       </main>
 
       {/* Bottom dimming gradient backdrop so content smoothly fades behind mini-player & navbar */}
@@ -1639,10 +1856,7 @@ export default function App() {
       {/* Bottom Navigation */}
       <Navbar
         currentTab={currentTab}
-        onSelectTab={(tab) => {
-          setIsSettingsView(false);
-          setCurrentTab(tab);
-        }}
+        onSelectTab={handleSelectTab}
       />
 
       {/* FULL PLAYER MODAL */}
@@ -1785,16 +1999,19 @@ export default function App() {
       />
 
       {/* FULL-SCREEN REQUIRED UPDATE OVERLAY */}
-      {nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired && isOnline && (
+      {((minVersionStatus?.isBlocked) || (nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired && isOnline)) && (
         <RequiredUpdateOverlay
-          versionName={nativeUpdateInfo.versionName}
-          notesBullets={nativeUpdateInfo.notesBullets}
-          formattedSize={nativeUpdateInfo.formattedSize}
+          versionName={nativeUpdateInfo?.versionName || (minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : '')}
+          notesBullets={nativeUpdateInfo?.notesBullets || []}
+          formattedSize={nativeUpdateInfo?.formattedSize || ''}
           isDownloading={isDownloadingNativeUpdate}
           downloadProgress={nativeDownloadProgress}
           isDownloaded={isNativeUpdateDownloaded}
           downloadError={nativeDownloadError}
           onUpdateNow={handleTriggerNativeUpdate}
+          customMessage={minVersionStatus?.message}
+          isWeb={minVersionStatus?.isWeb ?? !Capacitor.isNativePlatform()}
+          onReloadWeb={() => window.location.reload()}
         />
       )}
 

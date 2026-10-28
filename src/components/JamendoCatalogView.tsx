@@ -9,9 +9,16 @@ import { JamendoTrack, Song } from '../types/music';
 import {
   JamendoService,
   formatLicenseLabel,
-  JAMENDO_WEBSITE_URL
+  JAMENDO_WEBSITE_URL,
+  jamendoSessionState
 } from '../services/jamendo';
 import { CLOUD_CATALOGS } from '../config/cloudCatalogs';
+import { 
+  saveScrollPosition, 
+  getSavedScrollPosition, 
+  restoreScroll, 
+  registerBackHandler 
+} from '../services/navigation';
 
 interface JamendoCatalogViewProps {
   offlineSongs: Song[];
@@ -50,29 +57,61 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
   onBack,
   downloadOnWifiOnly = false,
 }) => {
-  // Reset main container scroll position to top on open
+  // Restore scroll position on open if saved
   useLayoutEffect(() => {
     const main = document.querySelector('main');
-    if (main) main.scrollTop = 0;
-    window.scrollTo(0, 0);
+    const saved = getSavedScrollPosition('cloud:jamendo');
+    if (saved > 0) {
+      restoreScroll(main, saved);
+    }
   }, []);
 
-  // Query & Filter States
-  const [activeTab, setActiveTab] = useState<'popularity_total' | 'releasedate_desc'>('popularity_total');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [activeGenre, setActiveGenre] = useState('all');
-  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
-  const [downloadableOnly, setDownloadableOnly] = useState(false);
+  const handleBack = useCallback(() => {
+    const main = document.querySelector('main');
+    saveScrollPosition('cloud:jamendo', main ? main.scrollTop : 0);
+    onBack();
+  }, [onBack]);
 
-  // Track List & Paging
-  const [tracks, setTracks] = useState<JamendoTrack[]>([]);
+  // Authoritative back handler for Jamendo catalog
+  useEffect(() => {
+    return registerBackHandler('jamendo_catalog', 40, () => {
+      handleBack();
+      return true;
+    });
+  }, [handleBack]);
+
+  // Query & Filter States initialized from session memory
+  const [activeTab, setActiveTab] = useState<'popularity_total' | 'releasedate_desc'>(
+    jamendoSessionState.activeTab
+  );
+  const [searchQuery, setSearchQuery] = useState(jamendoSessionState.searchQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(jamendoSessionState.searchQuery);
+  const [activeGenre, setActiveGenre] = useState(jamendoSessionState.activeGenre);
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(
+    jamendoSessionState.selectedArtist
+  );
+  const [downloadableOnly, setDownloadableOnly] = useState(
+    jamendoSessionState.downloadableOnly
+  );
+
+  // Track List & Paging initialized from session memory
+  const [tracks, setTracks] = useState<JamendoTrack[]>(jamendoSessionState.tracks);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [fullErrorMessage, setFullErrorMessage] = useState<string | null>(null);
   const [refreshBannerError, setRefreshBannerError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(jamendoSessionState.hasMore);
+  const [offset, setOffset] = useState(jamendoSessionState.offset);
+
+  // Sync state changes back into in-memory session object
+  useEffect(() => { jamendoSessionState.tracks = tracks; }, [tracks]);
+  useEffect(() => { jamendoSessionState.activeTab = activeTab; }, [activeTab]);
+  useEffect(() => { jamendoSessionState.searchQuery = searchQuery; }, [searchQuery]);
+  useEffect(() => { jamendoSessionState.activeGenre = activeGenre; }, [activeGenre]);
+  useEffect(() => { jamendoSessionState.selectedArtist = selectedArtist; }, [selectedArtist]);
+  useEffect(() => { jamendoSessionState.downloadableOnly = downloadableOnly; }, [downloadableOnly]);
+  useEffect(() => { jamendoSessionState.offset = offset; }, [offset]);
+  useEffect(() => { jamendoSessionState.hasMore = hasMore; }, [hasMore]);
 
   // In-card Preview HTML Audio Player (Zero Web Audio connection, zero visualizers)
   const [previewTrack, setPreviewTrack] = useState<JamendoTrack | null>(null);
@@ -193,8 +232,16 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
     [activeTab, debouncedSearch, selectedArtist, activeGenre, offset]
   );
 
+  const isInitialMountRef = useRef(true);
+
   // Reload when search, tab, artist, or genre changes
   useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      if (jamendoSessionState.tracks.length > 0) {
+        return;
+      }
+    }
     loadTracks(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, debouncedSearch, selectedArtist, activeGenre]);
@@ -421,10 +468,7 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
-          onClick={() => {
-            stopPreview();
-            onBack();
-          }}
+          onClick={handleBack}
           className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-white/10 active:scale-95"
         >
           <ArrowLeft className="w-4 h-4" />

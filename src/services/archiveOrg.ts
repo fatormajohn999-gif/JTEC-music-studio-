@@ -41,6 +41,11 @@ export interface ArchiveSessionState {
   searchQuery: string;
   activeChip: string;
   sort: ArchiveSortOption;
+  items: ArchiveItemDoc[];
+  page: number;
+  hasMore: boolean;
+  totalFound: number;
+  activeDetailItem: ArchiveItemDetail | null;
 }
 
 /**
@@ -50,6 +55,11 @@ export const archiveSessionState: ArchiveSessionState = {
   searchQuery: '',
   activeChip: 'all',
   sort: 'downloads desc',
+  items: [],
+  page: 1,
+  hasMore: true,
+  totalFound: 0,
+  activeDetailItem: null,
 };
 
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
