@@ -14,7 +14,7 @@ import { UserGuideView } from '../components/UserGuideView';
 import { AboutDeveloperView } from '../components/AboutDeveloperView';
 import { InstallGuideView } from '../components/InstallGuideView';
 import { HowToUpdateView } from '../components/HowToUpdateView';
-import { ConnectionTestModal } from '../components/ConnectionTestModal';
+import { DeveloperPage } from '../components/DeveloperPage';
 import { ManageDownloadsModal } from '../components/ManageDownloadsModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { getCurrentAppVersion } from '../services/nativeUpdate';
@@ -70,7 +70,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [activeSubView, setActiveSubView] = useState<SettingsSubView>('main');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showHowToModal, setShowHowToModal] = useState(false);
-  const [showConnectionTest, setShowConnectionTest] = useState(false);
+  const [showDeveloperPage, setShowDeveloperPage] = useState(false);
   const versionTapCountRef = useRef<number>(0);
   const versionTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -81,12 +81,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
     if (versionTapCountRef.current >= 7) {
       versionTapCountRef.current = 0;
-      setShowConnectionTest(true);
+      setShowDeveloperPage(true);
       return;
     }
     versionTapTimerRef.current = setTimeout(() => {
       versionTapCountRef.current = 0;
-    }, 2500);
+    }, 2000);
   };
 
   useEffect(() => {
@@ -970,7 +970,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <div className="text-center text-[11px] text-slate-500 select-none">
                 <p
                   onClick={handleVersionTap}
-                  className="cursor-default active:opacity-75 transition-opacity"
+                  className="cursor-default"
                 >
                   Version <strong className="text-slate-300 font-medium">{appVersionInfo.version}</strong> (Build <strong className="text-slate-300 font-medium">{appVersionInfo.build}</strong>) • Built <strong className="text-slate-300 font-medium">{BUILD_DATE}</strong>
                 </p>
@@ -980,11 +980,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         )}
       </div>
 
-      {/* Hidden Developer Connection Diagnostics modal (only opened via 7-tap Easter egg) */}
-      {showConnectionTest && (
-        <ConnectionTestModal
-          isOpen={showConnectionTest}
-          onClose={() => setShowConnectionTest(false)}
+      {/* Hidden Developer Page (only opened via 7-tap Easter egg) */}
+      {showDeveloperPage && (
+        <DeveloperPage
+          isOpen={showDeveloperPage}
+          onClose={() => setShowDeveloperPage(false)}
         />
       )}
 
