@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
 
       - name: Download the APK from the build
         env:
@@ -26,18 +27,129 @@ jobs:
           gh run download ${{ github.event.workflow_run.id }} --repo ${{ github.repository }} -n jtec-music-apk -D apk
           ls -la apk
 
+      - name: Write the release notes automatically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          PREV_TAG=$(gh release list --repo ${{ github.repository }} --limit 1 --json tagName -q '.[0].tagName' || true)
+          export PREV_TAG
+          python3 - <<'PY'
+          import os, re, json, subprocess, urllib.request
+
+          sha = os.environ['HEAD_SHA']
+          prev = os.environ.get('PREV_TAG', '').strip()
+
+          def sh(*a):
+              return subprocess.run(a, capture_output=True, text=True).stdout
+
+          if prev and subprocess.run(['git', 'rev-parse', '--verify', prev + '^{commit}'], capture_output=True).returncode != 0:
+              prev = ''
+
+          if prev:
+              subjects = sh('git', 'log', prev + '..' + sha, '--no-merges', '--pretty=%s').splitlines()
+              changed = sh('git', 'diff', '--name-only', prev, sha).splitlines()
+          else:
+              subjects = sh('git', 'log', '-n', '15', '--no-merges', '--pretty=%s', sha).splitlines()
+              changed = ['RELEASE_NOTES.md']
+
+          # 1) If I edited RELEASE_NOTES.md in this update, use it exactly as written.
+          if 'RELEASE_NOTES.md' in changed and os.path.isfile('RELEASE_NOTES.md'):
+              text = open('RELEASE_NOTES.md', encoding='utf-8').read().strip()
+              if text:
+                  open('notes.md', 'w', encoding='utf-8').write(text + '\n')
+                  print('Using RELEASE_NOTES.md as written.')
+                  raise SystemExit(0)
+
+          # 2) Otherwise build the notes from the commit messages.
+          required = any('[required]' in s.lower() for s in subjects)
+          skip_kinds = {'chore', 'ci', 'docs', 'build', 'test', 'style', 'merge', 'revert'}
+          items = []
+          for s in subjects:
+              s2 = re.sub(r'\s*\(#\d+\)|\s*#\d+', '', s).replace('[required]', '').strip()
+              m = re.match(r'^(\w+)(\([^)]*\))?!?:\s*(.+)$', s2)
+              kind, msg = (m.group(1).lower(), m.group(3)) if m else ('other', s2)
+              if kind in skip_kinds or not msg:
+                  continue
+              if re.match(r'^(merge |initial commit|update readme|create release|update .*\.(md|yml))', msg.lower()):
+                  continue
+              label = {'feat': 'New', 'fix': 'Fixed'}.get(kind, 'Improved')
+              msg = msg[0].upper() + msg[1:]
+              msg = msg.rstrip('.') + '.'
+              line = '- ' + label + ': ' + msg
+              if line not in items:
+                  items.append(line)
+          order = {'New': 0, 'Improved': 1, 'Fixed': 2}
+          items.sort(key=lambda l: order.get(l[2:].split(':')[0], 1))
+          notes = items[:5] or ['- Improved: General improvements and fixes.']
+
+          # 3) Optional: let Gemini rewrite them in simple words (needs the GEMINI_API_KEY secret).
+          key = os.environ.get('GEMINI_API_KEY', '').strip()
+          if key and items:
+              try:
+                  prompt = (
+                      'You write release notes for JTEC MUSIC, a free music player app for normal users. '
+                      'Below are the developer commit messages. Write 3 to 5 short bullet lines in simple everyday English. '
+                      'Use no technical words (no API, build, plugin, workflow, code, bug-fix jargon). '
+                      'Only mention things a user can notice. Each line must start exactly with "- New: ", "- Improved: " or "- Fixed: " '
+                      'and be one short sentence. Output only the bullet lines.\n\nCommit messages:\n' + '\n'.join(subjects[:30])
+                  )
+                  body = json.dumps({'contents': [{'parts': [{'text': prompt}]}]}).encode()
+                  req = urllib.request.Request(
+                      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+                      data=body,
+                      headers={'Content-Type': 'application/json', 'x-goog-api-key': key})
+                  resp = json.load(urllib.request.urlopen(req, timeout=45))
+                  text = resp['candidates'][0]['content']['parts'][0]['text']
+                  out = [l.strip() for l in text.splitlines() if re.match(r'^- (New|Improved|Fixed): .{5,}', l.strip())]
+                  if out:
+                      notes = out[:5]
+                      print('Release notes polished with Gemini.')
+              except Exception as e:
+                  print('AI notes skipped:', e)
+
+          if required:
+              notes.append('[required]')
+          open('notes.md', 'w', encoding='utf-8').write('\n'.join(notes) + '\n')
+          print('\n'.join(notes))
+          PY
+          cat notes.md
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          REPO: ${{ github.repository }}
         run: |
           TAG="v1.0.${{ github.event.workflow_run.run_number }}"
           cp apk/jtec-music-release.apk JTEC-MUSIC.apk
-          if [ -f RELEASE_NOTES.md ]; then
-            cp RELEASE_NOTES.md notes.md
-          else
-            printf -- "- Improved: general improvements and fixes.\n" > notes.md
-          fi
-          gh release create "$TAG" JTEC-MUSIC.apk \
+          python3 - <<'PY'
+          import os, json, re
+          run = int(os.environ['RUN_NUMBER'])
+          repo = os.environ['REPO']
+          notes = open('notes.md', encoding='utf-8').read()
+          required = '[required]' in notes.lower()
+          bullets = []
+          for line in notes.splitlines():
+              t = line.strip()
+              if t.startswith('- ') or t.startswith('* '):
+                  t = re.sub(r'\[required\]', '', t[2:], flags=re.I).strip()
+                  if t:
+                      bullets.append(t)
+          data = {
+              'tag': 'v1.0.' + str(run),
+              'versionName': '1.0.' + str(run),
+              'build': 100 + run,
+              'sizeBytes': os.path.getsize('JTEC-MUSIC.apk'),
+              'apkUrl': 'https://github.com/' + repo + '/releases/latest/download/JTEC-MUSIC.apk',
+              'notes': bullets[:5],
+              'required': required,
+          }
+          json.dump(data, open('latest.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+          print(json.dumps(data, ensure_ascii=False))
+          PY
+          gh release create "$TAG" JTEC-MUSIC.apk latest.json \
             --repo ${{ github.repository }} \
             --target ${{ github.event.workflow_run.head_sha }} \
             --title "JTEC MUSIC $TAG" \
