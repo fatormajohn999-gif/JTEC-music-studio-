@@ -18,6 +18,7 @@
     "@capacitor/filesystem": "^7.0.0",
     "@capacitor/local-notifications": "^7.0.7",
     "@capacitor/network": "^7.0.4",
+    "@capacitor/preferences": "^7.0.0",
     "@capawesome-team/capacitor-file-opener": "^7.0.0",
     "@jofr/capacitor-media-session": "^4.0.0",
     "@supabase/supabase-js": "^2.118.0",

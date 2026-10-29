@@ -26,6 +26,7 @@ import {
   restoreScroll, 
   registerBackHandler 
 } from '../services/navigation';
+import { PersistentSettingsService } from '../services/persistentSettings';
 
 interface ArchiveNasheedCatalogViewProps {
   offlineSongs: Song[];
@@ -102,10 +103,14 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
   const [searchQuery, setSearchQuery] = useState(archiveSessionState.searchQuery);
   const [debouncedSearch, setDebouncedSearch] = useState(archiveSessionState.searchQuery);
   const [activeChip, setActiveChip] = useState(archiveSessionState.activeChip);
-  const [sort, setSort] = useState<ArchiveSortOption>(archiveSessionState.sort);
+  const [sort, setSort] = useState<ArchiveSortOption>(() => {
+    const s = PersistentSettingsService.getSortViewSettingsSync();
+    if (s.archiveSort) return s.archiveSort as ArchiveSortOption;
+    return archiveSessionState.sort;
+  });
   const [ccOnly, setCcOnly] = useState(false);
 
-  // Sync state back into in-memory session object
+  // Sync state back into in-memory session object and persistent storage
   useEffect(() => {
     archiveSessionState.searchQuery = searchQuery;
   }, [searchQuery]);
@@ -116,6 +121,7 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
   useEffect(() => {
     archiveSessionState.sort = sort;
+    PersistentSettingsService.saveSortViewSettings({ archiveSort: sort });
   }, [sort]);
 
   // Results & Paging initialized from session memory

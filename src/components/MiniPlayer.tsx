@@ -23,7 +23,9 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
 }) => {
   if (!currentSong) return null;
 
-  const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
+  const isEffectsActive = Boolean(
+    effects.isEnabled ?? (effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0)
+  );
 
   return (
     <div
@@ -76,11 +78,11 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           {/* Quick Audio Effects */}
           <button
             onClick={onOpenEffects}
-            title="Audio Effects"
+            title={`Slow + Reverb: ${effects.presetName || 'Normal'}${isEffectsActive ? ' (Active)' : ''}`}
             className={`p-2 rounded-xl transition ${
               isEffectsActive
-                ? 'text-cyan-300 bg-cyan-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                ? 'text-cyan-300 bg-cyan-500/20 border border-cyan-500/40 shadow-sm shadow-cyan-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
             <Sliders className="w-4 h-4" />

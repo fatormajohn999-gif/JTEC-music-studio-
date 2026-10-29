@@ -19,6 +19,7 @@ import {
   restoreScroll, 
   registerBackHandler 
 } from '../services/navigation';
+import { PersistentSettingsService } from '../services/persistentSettings';
 
 interface JamendoCatalogViewProps {
   offlineSongs: Song[];
@@ -80,10 +81,14 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
     });
   }, [handleBack]);
 
-  // Query & Filter States initialized from session memory
-  const [activeTab, setActiveTab] = useState<'popularity_total' | 'releasedate_desc'>(
-    jamendoSessionState.activeTab
-  );
+  // Query & Filter States initialized from session memory and persistent settings
+  const [activeTab, setActiveTab] = useState<'popularity_total' | 'releasedate_desc'>(() => {
+    const s = PersistentSettingsService.getSortViewSettingsSync();
+    if (s.jamendoOrder === 'popularity_total' || s.jamendoOrder === 'releasedate_desc') {
+      return s.jamendoOrder;
+    }
+    return jamendoSessionState.activeTab;
+  });
   const [searchQuery, setSearchQuery] = useState(jamendoSessionState.searchQuery);
   const [debouncedSearch, setDebouncedSearch] = useState(jamendoSessionState.searchQuery);
   const [activeGenre, setActiveGenre] = useState(jamendoSessionState.activeGenre);
@@ -103,9 +108,12 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
   const [hasMore, setHasMore] = useState(jamendoSessionState.hasMore);
   const [offset, setOffset] = useState(jamendoSessionState.offset);
 
-  // Sync state changes back into in-memory session object
+  // Sync state changes back into in-memory session object and persistent storage
   useEffect(() => { jamendoSessionState.tracks = tracks; }, [tracks]);
-  useEffect(() => { jamendoSessionState.activeTab = activeTab; }, [activeTab]);
+  useEffect(() => { 
+    jamendoSessionState.activeTab = activeTab; 
+    PersistentSettingsService.saveSortViewSettings({ jamendoOrder: activeTab });
+  }, [activeTab]);
   useEffect(() => { jamendoSessionState.searchQuery = searchQuery; }, [searchQuery]);
   useEffect(() => { jamendoSessionState.activeGenre = activeGenre; }, [activeGenre]);
   useEffect(() => { jamendoSessionState.selectedArtist = selectedArtist; }, [selectedArtist]);

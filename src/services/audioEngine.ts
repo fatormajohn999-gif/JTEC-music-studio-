@@ -1,4 +1,5 @@
 import { AudioEffectsConfig, AudioBands } from '../types/music';
+import { PersistentSettingsService } from './persistentSettings';
 
 class AudioEngine {
   private audioCtx: AudioContext | null = null;
@@ -34,15 +35,7 @@ class AudioEngine {
   private currentObjectUrl: string | null = null;
   private currentSource: string | Blob | null = null;
   private hasRetriedWithoutCors = false;
-  private currentEffectsConfig: AudioEffectsConfig = {
-    playbackRate: 1.0,
-    reverbWet: 0.0,
-    echoWet: 0.0,
-    bassGain: 0,
-    trebleGain: 0,
-    volume: 1.0,
-    presetName: 'Normal',
-  };
+  private currentEffectsConfig: AudioEffectsConfig = PersistentSettingsService.getAudioEffectsSync();
 
   // Track playback state
   public isPlaying = false;
@@ -71,6 +64,33 @@ class AudioEngine {
     );
   }
 
+  public enforcePlaybackRateAndPitch = () => {
+    if (!this.audioElement) return;
+    const speed = Math.max(0.5, Math.min(1.5, this.currentEffectsConfig.playbackRate || 1.0));
+    this.audioElement.defaultPlaybackRate = speed;
+    this.audioElement.playbackRate = speed;
+
+    const isSlowAesthetic =
+      this.currentEffectsConfig.presetName === 'Slow + Reverb' ||
+      this.currentEffectsConfig.presetName === 'Slow' ||
+      this.currentEffectsConfig.presetName === 'Dreamy' ||
+      this.currentEffectsConfig.presetName === 'Night' ||
+      this.currentEffectsConfig.presetName === 'Cinematic' ||
+      (speed < 0.98 && this.currentEffectsConfig.presetName !== 'Normal');
+
+    const preservesPitch = typeof this.currentEffectsConfig.preservesPitch === 'boolean'
+      ? this.currentEffectsConfig.preservesPitch
+      : !isSlowAesthetic;
+
+    try {
+      (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = preservesPitch;
+      (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = preservesPitch;
+      (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = preservesPitch;
+    } catch {
+      // browser pitch preservation fallback
+    }
+  };
+
   public init() {
     if (this.isInitialized) return;
 
@@ -87,11 +107,20 @@ class AudioEngine {
       }
     };
 
+    // Re-apply speed and pitch on every browser source lifecycle event
+    this.audioElement.addEventListener('loadstart', this.enforcePlaybackRateAndPitch);
+    this.audioElement.addEventListener('loadedmetadata', () => {
+      this.enforcePlaybackRateAndPitch();
+      notifyTimeAndDuration();
+    });
+    this.audioElement.addEventListener('loadeddata', this.enforcePlaybackRateAndPitch);
+    this.audioElement.addEventListener('canplay', this.enforcePlaybackRateAndPitch);
+
     this.audioElement.addEventListener('timeupdate', notifyTimeAndDuration);
-    this.audioElement.addEventListener('loadedmetadata', notifyTimeAndDuration);
     this.audioElement.addEventListener('durationchange', notifyTimeAndDuration);
 
     this.audioElement.addEventListener('play', () => {
+      this.enforcePlaybackRateAndPitch();
       this.isPlaying = true;
       this.playStateCallbacks.forEach((cb) => cb(true));
     });
@@ -370,7 +399,9 @@ class AudioEngine {
       }
     }
 
+    this.enforcePlaybackRateAndPitch();
     this.audioElement.load();
+    this.enforcePlaybackRateAndPitch();
     // Ensure the current active effects are applied cleanly to the new audio source
     this.applyEffects(this.currentEffectsConfig);
 
@@ -395,8 +426,11 @@ class AudioEngine {
         this.isPlaying = false;
         throw new Error('The element has no supported sources.');
       }
+      this.enforcePlaybackRateAndPitch();
+      this.applyEffects(this.currentEffectsConfig);
       try {
         await this.audioElement.play();
+        this.enforcePlaybackRateAndPitch();
         this.isPlaying = true;
       } catch (e: unknown) {
         // If play request was interrupted by quick skip or pause, ignore gracefully
@@ -460,19 +494,40 @@ class AudioEngine {
    * The audio graph is guaranteed to be 100% neutral and transparent.
    */
   public applyEffects(config: AudioEffectsConfig): void {
-    this.currentEffectsConfig = { ...config };
+    const speed = Math.max(0.5, Math.min(1.5, config.playbackRate || 1.0));
+    const isSlowAesthetic =
+      config.presetName === 'Slow + Reverb' ||
+      config.presetName === 'Slow' ||
+      config.presetName === 'Dreamy' ||
+      config.presetName === 'Night' ||
+      config.presetName === 'Cinematic' ||
+      (speed < 0.98 && config.presetName !== 'Normal');
+
+    const preservesPitch = typeof config.preservesPitch === 'boolean'
+      ? config.preservesPitch
+      : !isSlowAesthetic;
+
+    const isEnabled = typeof config.isEnabled === 'boolean'
+      ? config.isEnabled
+      : (config.presetName !== 'Normal' || speed !== 1.0 || (config.reverbWet || 0) > 0.01 || (config.echoWet || 0) > 0.01 || config.bassGain !== 0 || config.trebleGain !== 0);
+
+    this.currentEffectsConfig = {
+      ...config,
+      playbackRate: speed,
+      preservesPitch,
+      isEnabled,
+    };
+
+    // Persist immediately across session and native preferences
+    PersistentSettingsService.saveAudioEffects(this.currentEffectsConfig);
 
     if (!this.audioElement) return;
 
     // 1. Playback Speed and Pitch
-    const speed = Math.max(0.5, Math.min(1.5, config.playbackRate || 1.0));
+    this.audioElement.defaultPlaybackRate = speed;
     this.audioElement.playbackRate = speed;
-    this.audioElement.defaultPlaybackRate = 1.0;
 
-    // Only apply pitch shifting when explicitly slowed (e.g. Slow + Reverb aesthetic)
-    const isSlowAesthetic = config.presetName === 'Slow + Reverb' || (speed < 0.96 && config.presetName !== 'Normal');
     try {
-      const preservesPitch = !isSlowAesthetic;
       (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = preservesPitch;
       (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = preservesPitch;
       (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = preservesPitch;
@@ -620,6 +675,10 @@ class AudioEngine {
       rawFrequency: freq,
       rawTimeDomain: time,
     };
+  }
+
+  public getCurrentEffects(): AudioEffectsConfig {
+    return { ...this.currentEffectsConfig };
   }
 
   // Event Subscriptions

@@ -3,6 +3,7 @@ import {
   Music, User, Disc, Heart, ArrowUpDown, Play, MoreVertical, Plus, Upload, Cloud, HardDrive, CheckCircle2 
 } from 'lucide-react';
 import { Song, Playlist } from '../types/music';
+import { PersistentSettingsService } from '../services/persistentSettings';
 
 type LibraryTab = 'all' | 'cloud' | 'local' | 'artists' | 'albums' | 'playlists' | 'favorites' | 'recent';
 type SortField = 'dateAdded' | 'title' | 'artist' | 'album' | 'duration';
@@ -36,9 +37,18 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onOpenCreatePlaylist,
   onSelectPlaylist,
 }) => {
-  const [activeTab, setActiveTab] = useState<LibraryTab>('all');
-  const [sortField, setSortField] = useState<SortField>('dateAdded');
-  const [sortAsc, setSortAsc] = useState(false);
+  const [activeTab, setActiveTab] = useState<LibraryTab>(() => {
+    const s = PersistentSettingsService.getSortViewSettingsSync();
+    return (s.activeTab as LibraryTab) || 'all';
+  });
+  const [sortField, setSortField] = useState<SortField>(() => {
+    const s = PersistentSettingsService.getSortViewSettingsSync();
+    return (s.sortField as SortField) || 'dateAdded';
+  });
+  const [sortAsc, setSortAsc] = useState<boolean>(() => {
+    const s = PersistentSettingsService.getSortViewSettingsSync();
+    return typeof s.sortAsc === 'boolean' ? s.sortAsc : false;
+  });
   const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
   const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null);
 
@@ -120,10 +130,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortAsc(!sortAsc);
+      const nextAsc = !sortAsc;
+      setSortAsc(nextAsc);
+      PersistentSettingsService.saveSortViewSettings({ sortField: field, sortAsc: nextAsc });
     } else {
       setSortField(field);
       setSortAsc(true);
+      PersistentSettingsService.saveSortViewSettings({ sortField: field, sortAsc: true });
     }
   };
 
@@ -144,9 +157,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           <button
             key={tab.id}
             onClick={() => {
-              setActiveTab(tab.id as LibraryTab);
+              const nextTab = tab.id as LibraryTab;
+              setActiveTab(nextTab);
               setSelectedArtist(null);
               setSelectedAlbum(null);
+              PersistentSettingsService.saveSortViewSettings({ activeTab: nextTab });
             }}
             className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition active:scale-95 ${
               activeTab === tab.id

@@ -58,6 +58,8 @@ export interface AudioEffectsConfig {
   trebleGain: number;
   volume: number;
   presetName: EffectPresetName;
+  preservesPitch?: boolean;
+  isEnabled?: boolean;
 }
 
 export interface AudioBands {

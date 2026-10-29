@@ -9,6 +9,7 @@ import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
 import { NotificationPermissionManager } from './services/notificationPermission';
 import { extractPaletteFromImage } from './services/colorExtractor';
+import { PersistentSettingsService } from './services/persistentSettings';
 
 // UI Components
 import { Header } from './components/Header';
@@ -355,8 +356,12 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [queue, setQueue] = useState<Song[]>([]);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
-  const [isShuffle, setIsShuffle] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>(() => {
+    return PersistentSettingsService.getPlaybackSettingsSync().repeatMode;
+  });
+  const [isShuffle, setIsShuffle] = useState(() => {
+    return PersistentSettingsService.getPlaybackSettingsSync().isShuffle;
+  });
 
   // Dynamic Cinematic Artwork Palette
   const [currentPalette, setCurrentPalette] = useState<ArtworkPalette>({
@@ -369,26 +374,26 @@ export default function App() {
     hasCover: false,
   });
 
-  // Audio Effects State
-  const [effects, setEffects] = useState<AudioEffectsConfig>({
-    playbackRate: 1.0,
-    reverbWet: 0.0,
-    echoWet: 0.0,
-    bassGain: 0,
-    trebleGain: 0,
-    volume: 1.0,
-    presetName: 'Normal',
+  // Audio Effects State (persisted permanently)
+  const [effects, setEffects] = useState<AudioEffectsConfig>(() => {
+    return PersistentSettingsService.getAudioEffectsSync();
   });
 
-  // App Settings & Performance
-  const [settings, setSettings] = useState<AppSettings>({
-    performanceMode: 'balanced',
-    visualizerMode: 'auto',
-    reactionStrength: 'medium',
-    autoplayNext: true,
-    rememberLastSong: true,
-    neonGlow: true,
-    reducedMotion: false,
+  // App Settings & Performance (persisted permanently)
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const vis = PersistentSettingsService.getVisualizerSettingsSync();
+    const play = PersistentSettingsService.getPlaybackSettingsSync();
+    const dl = PersistentSettingsService.getDownloadSettingsSync();
+    return {
+      performanceMode: vis.performanceMode,
+      visualizerMode: vis.visualizerMode,
+      reactionStrength: vis.reactionStrength,
+      autoplayNext: play.autoplayNext,
+      rememberLastSong: true,
+      neonGlow: true,
+      reducedMotion: false,
+      downloadOnWifiOnly: dl.downloadOnWifiOnly,
+    };
   });
 
   // Modals
@@ -564,6 +569,8 @@ export default function App() {
   isShuffleRef.current = isShuffle;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const effectsRef = useRef(effects);
+  effectsRef.current = effects;
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
   const handleNextTrackRef = useRef<(isAutoAdvance?: boolean) => void>(() => {});
@@ -623,8 +630,28 @@ export default function App() {
         // Purge any legacy localStorage overrides once on start so every device uses build-time config only
         SupabaseService.purgeLegacyStorageOverrides();
 
+        // Initialize persistent settings service and load saved preferences
+        await PersistentSettingsService.initialize();
+        const pEffects = await PersistentSettingsService.getAudioEffects();
+        const pVis = await PersistentSettingsService.getVisualizerSettings();
+        const pPlay = await PersistentSettingsService.getPlaybackSettings();
+        const pDl = await PersistentSettingsService.getDownloadSettings();
+
+        setEffects(pEffects);
+        effectsRef.current = pEffects;
+        audioEngine.applyEffects(pEffects);
+        setRepeatMode(pPlay.repeatMode);
+        setIsShuffle(pPlay.isShuffle);
+
         const storedSettings = await StorageService.getSettings();
-        setSettings(storedSettings);
+        setSettings({
+          ...storedSettings,
+          visualizerMode: pVis.visualizerMode,
+          performanceMode: pVis.performanceMode,
+          reactionStrength: pVis.reactionStrength,
+          autoplayNext: pPlay.autoplayNext,
+          downloadOnWifiOnly: pDl.downloadOnWifiOnly,
+        });
 
         let storedSongs = await StorageService.getAllSongs();
         let storedPlaylists = await StorageService.getAllPlaylists();
@@ -1060,6 +1087,9 @@ export default function App() {
         }
       }
 
+      // Re-apply full saved Slow + Reverb state immediately before loading audio
+      audioEngine.applyEffects(effectsRef.current);
+
       if (blob && blob.size > 0) {
         await audioEngine.loadAudio(blob, startPosition);
       } else if (song.audioUrl && !song.audioUrl.startsWith('blob:')) {
@@ -1099,7 +1129,8 @@ export default function App() {
         return;
       }
 
-      audioEngine.applyEffects(effects);
+      // Re-apply effects before starting playback to guarantee speed & pitch from first millisecond
+      audioEngine.applyEffects(effectsRef.current);
       await audioEngine.play();
 
       // Record in Recently Played
@@ -1267,6 +1298,7 @@ export default function App() {
       }
       isShuffleRef.current = nextShuffle;
       persistSessionNow();
+      PersistentSettingsService.savePlaybackSettings({ isShuffle: nextShuffle });
       return nextShuffle;
     });
   };
@@ -1309,7 +1341,9 @@ export default function App() {
   // Effects handler
   const handleEffectsChange = (newEffects: AudioEffectsConfig) => {
     setEffects(newEffects);
+    effectsRef.current = newEffects;
     audioEngine.applyEffects(newEffects);
+    PersistentSettingsService.saveAudioEffects(newEffects);
   };
 
   // Favorite toggle
@@ -1697,7 +1731,35 @@ export default function App() {
   // Update settings
   const handleUpdateSettings = async (newSettings: AppSettings) => {
     setSettings(newSettings);
+    settingsRef.current = newSettings;
     await StorageService.saveSettings(newSettings);
+    await PersistentSettingsService.saveVisualizerSettings({
+      visualizerMode: newSettings.visualizerMode,
+      performanceMode: newSettings.performanceMode,
+      reactionStrength: newSettings.reactionStrength,
+    });
+    await PersistentSettingsService.savePlaybackSettings({
+      autoplayNext: newSettings.autoplayNext,
+    });
+    if (typeof newSettings.downloadOnWifiOnly === 'boolean') {
+      await PersistentSettingsService.saveDownloadSettings({
+        downloadOnWifiOnly: newSettings.downloadOnWifiOnly,
+      });
+    }
+  };
+
+  // Reset sound and visual settings to defaults
+  const handleResetSoundAndVisualSettings = async () => {
+    const { effects: defEffects, visualizer: defVis } = await PersistentSettingsService.resetSoundAndVisualSettings();
+    setEffects(defEffects);
+    effectsRef.current = defEffects;
+    audioEngine.applyEffects(defEffects);
+    setSettings((prev) => ({
+      ...prev,
+      visualizerMode: defVis.visualizerMode,
+      performanceMode: defVis.performanceMode,
+      reactionStrength: defVis.reactionStrength,
+    }));
   };
 
   // Derived recently played songs
@@ -1736,6 +1798,7 @@ export default function App() {
             onDeleteSong={handleDeleteDownloadedSong}
             onDeleteMultipleSongs={handleDeleteMultipleDownloadedSongs}
             onUpdateSettings={handleUpdateSettings}
+            onResetSoundAndVisual={handleResetSoundAndVisualSettings}
             onClearLibrary={handleClearEntireLibrary}
             sleepTimer={sleepTimer}
             onStartSleepTimer={handleStartSleepTimer}
@@ -1885,6 +1948,7 @@ export default function App() {
             const next = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';
             repeatModeRef.current = next;
             persistSessionNow();
+            PersistentSettingsService.savePlaybackSettings({ repeatMode: next });
             return next;
           });
         }}

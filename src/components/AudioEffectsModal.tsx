@@ -21,6 +21,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.0,
     bassGain: 0,
     trebleGain: 0,
+    preservesPitch: true,
+    isEnabled: false,
   },
   'Slow': {
     playbackRate: 0.85,
@@ -28,6 +30,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.0,
     bassGain: 5,
     trebleGain: 0,
+    preservesPitch: false,
+    isEnabled: true,
   },
   'Slow + Reverb': {
     playbackRate: 0.85,
@@ -35,6 +39,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.15,
     bassGain: 15,
     trebleGain: -8,
+    preservesPitch: false,
+    isEnabled: true,
   },
   'Dreamy': {
     playbackRate: 0.88,
@@ -42,6 +48,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.25,
     bassGain: 8,
     trebleGain: 12,
+    preservesPitch: false,
+    isEnabled: true,
   },
   'Night': {
     playbackRate: 0.78,
@@ -49,6 +57,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.20,
     bassGain: 18,
     trebleGain: -12,
+    preservesPitch: false,
+    isEnabled: true,
   },
   'Bass': {
     playbackRate: 1.0,
@@ -56,6 +66,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.0,
     bassGain: 28,
     trebleGain: 0,
+    preservesPitch: true,
+    isEnabled: true,
   },
   'Cinematic': {
     playbackRate: 0.90,
@@ -63,6 +75,8 @@ const PRESETS: Record<AudioEffectsConfig['presetName'], Partial<AudioEffectsConf
     echoWet: 0.25,
     bassGain: 20,
     trebleGain: 10,
+    preservesPitch: false,
+    isEnabled: true,
   },
   'Custom': {},
 };
@@ -118,7 +132,14 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white tracking-wide">Audio Effects Lab</h2>
-              <p className="text-xs text-cyan-300 font-medium">Real-Time DSP Engine</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-cyan-300 font-medium">Real-Time DSP Engine</p>
+                {effects.presetName !== 'Normal' && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold">
+                    {effects.presetName} ({effects.playbackRate.toFixed(2)}x)
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -224,6 +245,33 @@ export const AudioEffectsModal: React.FC<AudioEffectsModalProps> = ({
                   {btn.val.toFixed(2)}x
                 </button>
               ))}
+            </div>
+
+            {/* Pitch Behavior */}
+            <div className="pt-2.5 border-t border-white/5 flex items-center justify-between text-xs">
+              <div>
+                <span className="font-semibold text-white">Pitch Behavior</span>
+                <p className="text-[10px] text-slate-400">
+                  {effects.preservesPitch ? 'Preserves original vocal pitch' : 'Vinyl lo-fi (pitch drops with speed)'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onChange({
+                  ...effects,
+                  preservesPitch: !(effects.preservesPitch ?? false),
+                  presetName: 'Custom',
+                  isEnabled: true,
+                })}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition border cursor-pointer ${
+                  !(effects.preservesPitch ?? false)
+                    ? 'bg-purple-500/25 text-purple-300 border-purple-500/50 shadow-sm shadow-purple-500/20'
+                    : 'bg-slate-800 text-slate-300 border-white/10'
+                }`}
+              >
+                {!(effects.preservesPitch ?? false) ? 'Vinyl Lo-Fi' : 'Locked Pitch'}
+              </button>
             </div>
           </div>
 

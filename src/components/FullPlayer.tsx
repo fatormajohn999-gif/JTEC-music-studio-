@@ -146,7 +146,9 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
   if (!isOpen || !currentSong) return null;
 
-  const isEffectsActive = effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0;
+  const isEffectsActive = Boolean(
+    effects.isEnabled ?? (effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0)
+  );
 
   return (
     <div className="fixed inset-0 z-40 bg-[#04060d] flex flex-col justify-between overflow-hidden animate-in slide-in-from-bottom duration-300">
@@ -359,12 +361,17 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             onClick={onOpenEffects}
             className={`flex items-center justify-center gap-2 flex-1 py-2.5 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
               isEffectsActive
-                ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200'
+                ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200 shadow-sm shadow-purple-500/20'
                 : 'bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white'
             }`}
           >
-            <Sliders className="w-4 h-4 text-cyan-400" />
+            <Sliders className={`w-4 h-4 ${isEffectsActive ? 'text-cyan-400' : 'text-slate-400'}`} />
             <span>Slow + Reverb</span>
+            {isEffectsActive && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/30 text-cyan-300 font-semibold truncate max-w-[100px]">
+                {effects.presetName || 'Custom'}
+              </span>
+            )}
           </button>
 
           <button
