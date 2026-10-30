@@ -443,18 +443,21 @@ export const PersistentSettingsService = {
     return trimmed;
   },
 
-  // Initial one-time hydration and migration
+  // Initial one-time hydration and wipe any saved device name
   async initialize(): Promise<void> {
+    try {
+      localStorage.removeItem(KEY_DEVICE_NAME);
+    } catch {}
+
     if (Capacitor.isNativePlatform()) {
       try {
         // Read native values into localStorage if not present
-        const [eff, vis, play, down, sort, dev] = await Promise.all([
+        const [eff, vis, play, down, sort] = await Promise.all([
           Preferences.get({ key: KEY_EFFECTS }),
           Preferences.get({ key: KEY_VISUALIZER }),
           Preferences.get({ key: KEY_PLAYBACK }),
           Preferences.get({ key: KEY_DOWNLOADS }),
           Preferences.get({ key: KEY_SORT_VIEW }),
-          Preferences.get({ key: KEY_DEVICE_NAME }),
         ]);
 
         if (eff.value) localStorage.setItem(KEY_EFFECTS, eff.value);
@@ -462,7 +465,9 @@ export const PersistentSettingsService = {
         if (play.value) localStorage.setItem(KEY_PLAYBACK, play.value);
         if (down.value) localStorage.setItem(KEY_DOWNLOADS, down.value);
         if (sort.value) localStorage.setItem(KEY_SORT_VIEW, sort.value);
-        if (dev.value) localStorage.setItem(KEY_DEVICE_NAME, dev.value);
+
+        // Wipe any stored device name from native preferences
+        await Preferences.remove({ key: KEY_DEVICE_NAME });
       } catch (err) {
         console.warn('Preferences initialization notice:', err);
       }

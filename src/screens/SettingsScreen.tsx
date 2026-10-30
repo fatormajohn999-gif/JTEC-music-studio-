@@ -131,14 +131,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>('prompt');
   
-  const [deviceName, setDeviceName] = useState<string>(() => PersistentSettingsService.getDeviceNameSync());
-
-  const handleDeviceNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.slice(0, 40);
-    setDeviceName(val);
-    PersistentSettingsService.saveDeviceName(val);
-  };
-
   const [showManageDownloads, setShowManageDownloads] = useState(false);
   const downloadedSongs = (songs || []).filter((s) => s.hasStoredBlob);
 
@@ -987,30 +979,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </div>
                 <span className="text-cyan-400 text-xs font-semibold pl-2">View →</span>
               </button>
-            </div>
-
-            {/* Optional Device Name field */}
-            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="settings-device-name" className="text-xs font-bold text-white">
-                  Device name
-                </label>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {deviceName.length}/40
-                </span>
-              </div>
-              <input
-                id="settings-device-name"
-                type="text"
-                maxLength={40}
-                value={deviceName}
-                onChange={handleDeviceNameChange}
-                placeholder="e.g. My Phone, Living Room Tablet"
-                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
-              />
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Optional. Only the developer can see it, to recognise devices.
-              </p>
             </div>
 
             {/* Check for updates button */}

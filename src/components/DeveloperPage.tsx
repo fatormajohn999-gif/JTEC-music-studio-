@@ -17,7 +17,11 @@ import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpd
 import { registerBackHandler } from '../services/navigation';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { RequiredUpdateOverlay } from './RequiredUpdateOverlay';
-import { parseConfigNotes } from '../services/appConfig';
+import { 
+  parseConfigNotes, 
+  getMinVersionDiagnosticInfo, 
+  checkMinimumVersion 
+} from '../services/appConfig';
 
 export interface AppInstallRow {
   install_id: string;
@@ -47,7 +51,7 @@ interface DeveloperPageProps {
   onClose: () => void;
 }
 
-type DeveloperTab = 'usage' | 'min_version' | 'connection';
+type DeveloperTab = 'usage' | 'min_version' | 'update_status' | 'connection';
 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
@@ -102,6 +106,41 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[]>([]);
   const [isRunningConnectionTest, setIsRunningConnectionTest] = useState(false);
 
+  // Device Update & Minimum Version Diagnostics
+  const [minVersionDiag, setMinVersionDiag] = useState(() => getMinVersionDiagnosticInfo());
+  const [updateDiag, setUpdateDiag] = useState(() => NativeUpdateService.getUpdateDiagnosticInfo());
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
+
+  const refreshDiagnostics = useCallback(() => {
+    setMinVersionDiag(getMinVersionDiagnosticInfo());
+    setUpdateDiag(NativeUpdateService.getUpdateDiagnosticInfo());
+  }, []);
+
+  const formatTimestamp = useCallback((ts: number | null): string => {
+    if (!ts) return 'Never';
+    const diffSec = Math.floor((Date.now() - ts) / 1000);
+    if (diffSec < 60) return `${diffSec}s ago (${new Date(ts).toLocaleTimeString()})`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago (${new Date(ts).toLocaleTimeString()})`;
+    return new Date(ts).toLocaleString();
+  }, []);
+
+  const handleCheckNow = useCallback(async () => {
+    setIsCheckingNow(true);
+    try {
+      await Promise.allSettled([
+        NativeUpdateService.checkForUpdate(true),
+        checkMinimumVersion(false),
+      ]);
+      const appInfo = await getCurrentAppVersion();
+      setAppVersionInfo({ version: appInfo.version, build: appInfo.build });
+    } catch (err) {
+      console.warn('Developer Check Now notice:', err);
+    } finally {
+      refreshDiagnostics();
+      setIsCheckingNow(false);
+    }
+  }, [refreshDiagnostics]);
+
   // Fetch version & latest build on mount
   useEffect(() => {
     getCurrentAppVersion().then((info) => {
@@ -113,10 +152,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       if (updateInfo?.latestBuild) {
         setLatestBuild(updateInfo.latestBuild);
       }
+      refreshDiagnostics();
     }).catch(() => {
-      // ignore
+      refreshDiagnostics();
     });
-  }, []);
+  }, [refreshDiagnostics]);
 
   // Handle Close & Sign out
   const handleClose = useCallback(async () => {
@@ -636,7 +676,10 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
             <button
               type="button"
-              onClick={() => setActiveTab('min_version')}
+              onClick={() => {
+                setActiveTab('min_version');
+                refreshDiagnostics();
+              }}
               className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
                 activeTab === 'min_version'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
@@ -645,6 +688,22 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             >
               <Shield className="w-3.5 h-3.5" />
               <span>Minimum Version</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('update_status');
+                refreshDiagnostics();
+              }}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+                activeTab === 'update_status'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Update Status</span>
             </button>
 
             <button
@@ -1118,12 +1177,50 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                   </div>
                 )}
 
-                {saveErrorMsg && (
-                  <div className="p-3.5 rounded-2xl bg-red-950/40 border border-red-500/30 flex items-center gap-2 text-xs text-red-200">
-                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                    <span>{saveErrorMsg}</span>
+                {/* "This phone" Status Box */}
+                <div className="rounded-3xl border border-cyan-500/40 bg-slate-900/90 p-5 shadow-xl space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Smartphone className="w-4 h-4 text-cyan-400" />
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">This Phone Status</h4>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                      minVersionDiag.isBlocked
+                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                        : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                    }`}>
+                      {minVersionDiag.isBlocked ? 'Blocked (Update Required)' : 'Allowed (Not Blocked)'}
+                    </span>
                   </div>
-                )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 block font-medium">Installed Version & Build</span>
+                      <span className="font-mono font-bold text-white text-sm">v{appVersionInfo.version} ({appVersionInfo.build})</span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 block font-medium">Cloud min_build</span>
+                      <span className="font-mono font-bold text-cyan-300 text-sm">
+                        {minVersionDiag.minBuild !== null ? `Build ${minVersionDiag.minBuild}` : 'Not set'}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 block font-medium">When Last Read</span>
+                      <span className="font-mono text-slate-300 text-[11px] block truncate">
+                        {formatTimestamp(minVersionDiag.lastReadTime)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 block font-medium">Blocked?</span>
+                      <span className={`font-mono font-black text-sm ${minVersionDiag.isBlocked ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {minVersionDiag.isBlocked ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="rounded-3xl border border-cyan-500/40 bg-gradient-to-b from-slate-900/90 to-slate-950 p-6 shadow-xl space-y-5">
                   {/* Current info & Latest build comparison */}
@@ -1242,6 +1339,115 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         <span>Save Minimum Version</span>
                       </button>
                     </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* =========================================================================
+                TAB: UPDATE STATUS & DIAGNOSTICS
+               ========================================================================= */}
+            {activeTab === 'update_status' && (
+              <div className="space-y-6 max-w-4xl mx-auto">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-400" />
+                      <span>Update Status & Device Diagnostics</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Live release telemetry, diagnostic logs, and update checker for this device
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCheckNow}
+                    disabled={isCheckingNow}
+                    className="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-lg shadow-cyan-500/20 disabled:opacity-50 active:scale-98"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
+                    <span>{isCheckingNow ? 'Checking...' : 'Check now'}</span>
+                  </button>
+                </div>
+
+                {/* Primary Telemetry Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {/* Installed version and build */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Installed Version & Build
+                    </span>
+                    <div className="text-xl font-black text-white font-mono">
+                      v{appVersionInfo.version} <span className="text-cyan-400 text-base">(Build {appVersionInfo.build})</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">Read natively via App.getInfo()</span>
+                  </div>
+
+                  {/* Latest build found */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-emerald-500/30 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Latest Build Found
+                    </span>
+                    <div className="text-xl font-black text-emerald-400 font-mono">
+                      {updateDiag.lastFoundBuild ? `Build ${updateDiag.lastFoundBuild}` : 'None'}
+                    </div>
+                    <span className="text-[10px] text-slate-500">From latest release asset</span>
+                  </div>
+
+                  {/* Source */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-purple-500/30 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Source
+                    </span>
+                    <div className="text-xl font-black text-purple-300 font-mono">
+                      {updateDiag.lastSource ? updateDiag.lastSource : 'None'}
+                    </div>
+                    <span className="text-[10px] text-slate-500">latest.json (primary) or GitHub API</span>
+                  </div>
+
+                  {/* Last check time */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Last Check Time
+                    </span>
+                    <div className="text-sm font-bold text-slate-200 font-mono pt-1">
+                      {formatTimestamp(updateDiag.lastCheckTime)}
+                    </div>
+                    <span className="text-[10px] text-slate-500">Automatic or manual check timestamp</span>
+                  </div>
+
+                  {/* Last error */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Last Error
+                    </span>
+                    <div className={`text-xs font-mono font-bold pt-1 break-all ${updateDiag.lastError ? 'text-rose-400' : 'text-slate-400'}`}>
+                      {updateDiag.lastError || 'None'}
+                    </div>
+                    <span className="text-[10px] text-slate-500">Error text or code</span>
+                  </div>
+
+                  {/* Minimum Version & Block Status */}
+                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Cloud Minimum Version
+                    </span>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="font-mono text-sm text-cyan-300 font-bold">
+                        {minVersionDiag.minBuild !== null ? `Min Build ${minVersionDiag.minBuild}` : 'No Min Build'}
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        minVersionDiag.isBlocked
+                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                          : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                      }`}>
+                        {minVersionDiag.isBlocked ? 'Blocked' : 'Allowed'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      Read: {formatTimestamp(minVersionDiag.lastReadTime)}
+                    </span>
                   </div>
                 </div>
               </div>

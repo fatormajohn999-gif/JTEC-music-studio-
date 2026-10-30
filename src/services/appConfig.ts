@@ -1,16 +1,17 @@
 import { Capacitor } from '@capacitor/core';
 import { Device } from '@capacitor/device';
 import { SupabaseService } from './supabase';
-import { getCurrentAppVersion } from './nativeUpdate';
-import { PersistentSettingsService } from './persistentSettings';
+import { getCurrentAppVersion, getInstalledBuildSync } from './nativeUpdate';
 
 const LS_KEY_INSTALL_ID = 'jtec_install_id';
 const LS_KEY_LAST_PING = 'jtec_last_install_ping';
 const LS_KEY_LAST_CONFIG_CHECK = 'jtec_last_min_version_check';
 const LS_KEY_LAST_CONFIG_DATA = 'jtec_last_app_config_data';
+const LS_KEY_LAST_CONFIG_READ_TIME = 'jtec_last_min_version_read_time';
+const LS_KEY_LAST_CONFIG_ERROR = 'jtec_last_min_version_error';
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
 export const DEFAULT_FALLBACK_APK_URL =
   'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk';
@@ -32,6 +33,9 @@ export interface MinVersionStatus {
   currentBuild: number;
   isWeb: boolean;
 }
+
+// In-memory last error cache for Developer Page
+let lastMinVersionErrorMemory: string | null = null;
 
 /**
  * Parses multi-line notes from app_config.notes (one bullet per line starting with "- ")
@@ -128,7 +132,7 @@ async function getDeviceTelemetryInfo(): Promise<{
 
 /**
  * Calls the Supabase RPC ping_install on the main JTEC Supabase source.
- * At most once every 24 hours (and on the first run, and immediately when device name changes).
+ * At most once every 24 hours (and on the first run).
  * Parameters sent:
  * - p_id: anonymous random UUID
  * - p_version: app version string
@@ -137,7 +141,7 @@ async function getDeviceTelemetryInfo(): Promise<{
  * - p_model: device model string
  * - p_manufacturer: device manufacturer string
  * - p_os: operating system string
- * - p_name: optional device name configured by user (or empty string)
+ * - p_name: null (device name field removed; app never sends a user-entered name)
  *
  * Ignores all errors silently. Never shows errors to users.
  */
@@ -154,7 +158,6 @@ export async function sendAnonymousPing(force = false): Promise<void> {
     const installId = getOrCreateInstallId();
     const { version, build } = await getCurrentAppVersion();
     const { model, manufacturer, os, platform } = await getDeviceTelemetryInfo();
-    const deviceName = PersistentSettingsService.getDeviceNameSync() || '';
 
     const client = SupabaseService.getClientForCategory('jtec_main');
     if (!client) return;
@@ -168,10 +171,10 @@ export async function sendAnonymousPing(force = false): Promise<void> {
         p_model: model,
         p_manufacturer: manufacturer,
         p_os: os,
-        p_name: deviceName,
+        p_name: null,
       });
     } catch (rpcErr: any) {
-      // Fallback in case old RPC signature is active
+      // Fallback in case older RPC signature without p_name is active
       const errStr = String(rpcErr?.message || '');
       if (errStr.includes('function') || errStr.includes('parameters')) {
         await client.rpc('ping_install', {
@@ -189,20 +192,50 @@ export async function sendAnonymousPing(force = false): Promise<void> {
   }
 }
 
-// Listen to device name changes to ping immediately
-if (typeof window !== 'undefined') {
-  window.addEventListener('jtec:device-name-changed', () => {
-    sendAnonymousPing(true).catch(() => {});
-  });
+/**
+ * Synchronously checks if a cached minimum version from local storage blocks
+ * this app launch immediately before any network request completes.
+ */
+export function getSavedMinVersionStatusSync(): MinVersionStatus | null {
+  try {
+    const cached = localStorage.getItem(LS_KEY_LAST_CONFIG_DATA);
+    if (!cached) return null;
+
+    const parsed = JSON.parse(cached) as AppConfigRow;
+    const minBuild = Number(parsed.min_build) || 0;
+    const currentBuild = getInstalledBuildSync();
+    const isWeb = !Capacitor.isNativePlatform();
+
+    if (minBuild > 0 && currentBuild < minBuild) {
+      return {
+        isBlocked: true,
+        minBuild,
+        message: parsed.message ? String(parsed.message).trim() : 'An update is required to continue using JTEC MUSIC.',
+        notesBullets: parseConfigNotes(parsed.notes),
+        apkUrl: parsed.apk_url?.trim() || DEFAULT_FALLBACK_APK_URL,
+        currentBuild,
+        isWeb,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Checks minimum version from table app_config (id = 1).
  * Reads min_build, message, notes, and apk_url.
- * If the installed build is lower than min_build, marks isBlocked = true.
- * If the phone is offline, lets the app work normally.
+ *
+ * Rules:
+ * - At EVERY app launch (isForegroundCheck = false): runs immediately with NO waiting period.
+ * - When returning to the foreground (isForegroundCheck = true): throttled to at most once every 5 minutes.
+ * - If currentBuild < minBuild: returns isBlocked = true.
+ * - If cloud min_build has changed and app is no longer blocked: returns isBlocked = false.
+ * - If offline: lets the app work normally.
+ * - Records errors for the Developer Page.
  */
-export async function checkMinimumVersion(force = false): Promise<MinVersionStatus | null> {
+export async function checkMinimumVersion(isForegroundCheck = false): Promise<MinVersionStatus | null> {
   try {
     const isWeb = !Capacitor.isNativePlatform();
     const now = Date.now();
@@ -211,29 +244,9 @@ export async function checkMinimumVersion(force = false): Promise<MinVersionStat
 
     const { build: currentBuild } = await getCurrentAppVersion();
 
-    // Check throttle
-    if (!force && lastCheck > 0 && now - lastCheck < THIRTY_MINUTES_MS) {
-      const cached = localStorage.getItem(LS_KEY_LAST_CONFIG_DATA);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached) as AppConfigRow;
-          const minBuild = Number(parsed.min_build) || 0;
-          if (minBuild > 0 && currentBuild < minBuild) {
-            return {
-              isBlocked: true,
-              minBuild,
-              message: parsed.message || 'An update is required to continue using JTEC MUSIC.',
-              notesBullets: parseConfigNotes(parsed.notes),
-              apkUrl: parsed.apk_url?.trim() || DEFAULT_FALLBACK_APK_URL,
-              currentBuild,
-              isWeb,
-            };
-          }
-        } catch {
-          // ignore cache parse errors
-        }
-      }
-      return null;
+    // Check foreground throttle (5 minutes)
+    if (isForegroundCheck && lastCheck > 0 && now - lastCheck < FIVE_MINUTES_MS) {
+      return getSavedMinVersionStatusSync();
     }
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -243,6 +256,10 @@ export async function checkMinimumVersion(force = false): Promise<MinVersionStat
 
     const client = SupabaseService.getClientForCategory('jtec_main');
     if (!client) {
+      lastMinVersionErrorMemory = 'No Supabase client available for jtec_main';
+      try {
+        localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
+      } catch {}
       return null;
     }
 
@@ -252,33 +269,40 @@ export async function checkMinimumVersion(force = false): Promise<MinVersionStat
       .eq('id', 1)
       .maybeSingle();
 
-    if (error || !data) {
-      // If check fails, let the app work normally
+    if (error) {
+      lastMinVersionErrorMemory = error.message || error.code || 'Query error';
+      try {
+        localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
+      } catch {}
       return null;
     }
 
-    localStorage.setItem(LS_KEY_LAST_CONFIG_CHECK, String(now));
-    localStorage.setItem(LS_KEY_LAST_CONFIG_DATA, JSON.stringify(data));
+    if (!data) {
+      lastMinVersionErrorMemory = 'No row with id=1 found in app_config';
+      try {
+        localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
+      } catch {}
+      return null;
+    }
+
+    // Success! Clear error
+    lastMinVersionErrorMemory = null;
+    try {
+      localStorage.removeItem(LS_KEY_LAST_CONFIG_ERROR);
+      localStorage.setItem(LS_KEY_LAST_CONFIG_CHECK, String(now));
+      localStorage.setItem(LS_KEY_LAST_CONFIG_READ_TIME, String(now));
+      localStorage.setItem(LS_KEY_LAST_CONFIG_DATA, JSON.stringify(data));
+    } catch {}
 
     const minBuild = Number(data.min_build) || 0;
     const message = data.message ? String(data.message).trim() : 'An update is required to continue using JTEC MUSIC.';
     const notesBullets = parseConfigNotes(data.notes);
     const apkUrl = data.apk_url ? String(data.apk_url).trim() : DEFAULT_FALLBACK_APK_URL;
 
-    if (minBuild > 0 && currentBuild < minBuild) {
-      return {
-        isBlocked: true,
-        minBuild,
-        message,
-        notesBullets,
-        apkUrl: apkUrl || DEFAULT_FALLBACK_APK_URL,
-        currentBuild,
-        isWeb,
-      };
-    }
+    const isBlocked = minBuild > 0 && currentBuild < minBuild;
 
     return {
-      isBlocked: false,
+      isBlocked,
       minBuild,
       message,
       notesBullets,
@@ -286,8 +310,57 @@ export async function checkMinimumVersion(force = false): Promise<MinVersionStat
       currentBuild,
       isWeb,
     };
-  } catch {
+  } catch (err: any) {
+    lastMinVersionErrorMemory = err?.message || String(err) || 'Unexpected error';
+    try {
+      localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
+    } catch {}
     // If check fails, let the app work normally
     return null;
+  }
+}
+
+/**
+ * Returns diagnostic info regarding the device's minimum version check status
+ * for display in the hidden Developer Page.
+ */
+export function getMinVersionDiagnosticInfo(): {
+  minBuild: number | null;
+  lastReadTime: number | null;
+  lastError: string | null;
+  isBlocked: boolean;
+} {
+  try {
+    let minBuild: number | null = null;
+    const cachedData = localStorage.getItem(LS_KEY_LAST_CONFIG_DATA);
+    if (cachedData) {
+      try {
+        const parsed = JSON.parse(cachedData);
+        if (parsed?.min_build !== undefined && parsed?.min_build !== null) {
+          minBuild = Number(parsed.min_build);
+        }
+      } catch {}
+    }
+
+    const readTimeStr = localStorage.getItem(LS_KEY_LAST_CONFIG_READ_TIME);
+    const lastReadTime = readTimeStr ? parseInt(readTimeStr, 10) : null;
+    const lastError = lastMinVersionErrorMemory || localStorage.getItem(LS_KEY_LAST_CONFIG_ERROR) || null;
+
+    const currentBuild = getInstalledBuildSync();
+    const isBlocked = minBuild !== null && minBuild > 0 && currentBuild < minBuild;
+
+    return {
+      minBuild,
+      lastReadTime,
+      lastError,
+      isBlocked,
+    };
+  } catch {
+    return {
+      minBuild: null,
+      lastReadTime: null,
+      lastError: null,
+      isBlocked: false,
+    };
   }
 }

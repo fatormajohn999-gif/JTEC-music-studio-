@@ -34,8 +34,10 @@ import {
 import { 
   sendAnonymousPing, 
   checkMinimumVersion, 
+  getSavedMinVersionStatusSync,
   MinVersionStatus 
 } from './services/appConfig';
+import { Network } from '@capacitor/network';
 import { WhatsNewModal } from './components/WhatsNewModal';
 import { CellularDataConfirmModal } from './components/CellularDataConfirmModal';
 import { RequiredUpdateOverlay } from './components/RequiredUpdateOverlay';
@@ -99,7 +101,10 @@ export default function App() {
   const [isSettingsUpdateSheetOpen, setIsSettingsUpdateSheetOpen] = useState(false);
 
   // Minimum Version Block State (from app_config id = 1)
-  const [minVersionStatus, setMinVersionStatus] = useState<MinVersionStatus | null>(null);
+  // At app launch, if installed build < saved min_build, show screen immediately before any network call
+  const [minVersionStatus, setMinVersionStatus] = useState<MinVersionStatus | null>(() => {
+    return getSavedMinVersionStatusSync();
+  });
 
   // Post-update "What's new" state
   const [whatsNewData, setWhatsNewData] = useState<{
@@ -124,12 +129,15 @@ export default function App() {
     };
   }, []);
 
-  // Update check runner (automatic checks throttled to 20 minutes)
+  // Update check runner (spaced at least 3 minutes apart, 2 min on failure)
   const runNativeUpdateCheck = useCallback(async (manual = false) => {
     try {
       const result = await NativeUpdateService.checkForUpdate(manual);
       if (result && result.hasUpdate) {
         setNativeUpdateInfo(result);
+        return result;
+      } else if (result && !result.hasUpdate) {
+        setNativeUpdateInfo(null);
         return result;
       }
     } catch {
@@ -138,10 +146,12 @@ export default function App() {
     return null;
   }, []);
 
-  // Minimum version check runner (at most once every 30 minutes)
-  const runMinVersionCheck = useCallback(async () => {
+  // Minimum version check runner
+  // - At app launch (isForegroundCheck = false): check without waiting period
+  // - Returning to foreground (isForegroundCheck = true): check at most once every 5 minutes
+  const runMinVersionCheck = useCallback(async (isForegroundCheck = false) => {
     try {
-      const res = await checkMinimumVersion(false);
+      const res = await checkMinimumVersion(isForegroundCheck);
       if (res && res.isBlocked) {
         setMinVersionStatus(res);
         if (Capacitor.isNativePlatform()) {
@@ -155,17 +165,20 @@ export default function App() {
     }
   }, [runNativeUpdateCheck]);
 
-  // Lifecycle update checks: on mount, post-update check, anonymous ping, min-version check, and on app foreground
+  // Lifecycle update checks:
+  // 1. At app launch: run checks immediately and send anonymous ping
+  // 2. Check every 10 minutes while app is visible
+  // 3. When phone reconnects to internet (@capacitor/network networkStatusChange & window online)
+  // 4. When app returns to foreground (Capacitor appStateChange / document visibility)
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Anonymous ping at most once every 24h (and on first run)
+    // 1. App Launch: Anonymous ping and initial checks
     sendAnonymousPing();
+    runMinVersionCheck(false);
+    runNativeUpdateCheck(false);
 
-    // 2. Minimum version check on app open (at most once every 30 minutes)
-    runMinVersionCheck();
-
-    // 3. Check if app was just updated to a newer build
+    // Check if app was just updated to a newer build
     NativeUpdateService.checkPostUpdate().then((post) => {
       if (isMounted && post && post.showWhatsNew) {
         setWhatsNewData({
@@ -176,30 +189,49 @@ export default function App() {
       }
     });
 
-    let capListenerHandle: any = null;
+    // 2. Periodic check every 10 minutes while app is visible
+    const periodicTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        runNativeUpdateCheck(false);
+      }
+    }, 10 * 60 * 1000);
 
+    // 3. Network reconnect check
+    let capNetworkHandle: any = null;
     if (Capacitor.isNativePlatform()) {
-      // Check for update on app open (throttled to at most once every 6 hours)
-      runNativeUpdateCheck(false);
-
-      // Check for update and min version when app comes back to the foreground
-      const handleStateChange = (state: { isActive: boolean }) => {
-        if (state.isActive) {
+      Network.addListener('networkStatusChange', (status) => {
+        if (status.connected) {
           runNativeUpdateCheck(false);
-          runMinVersionCheck();
+          runMinVersionCheck(false);
         }
-      };
-
-      const listenerPromise = CapApp.addListener('appStateChange', handleStateChange);
-      listenerPromise.then((handle) => {
-        capListenerHandle = handle;
+      }).then((handle) => {
+        capNetworkHandle = handle;
       }).catch(() => {});
     }
 
-    // Web visibility and focus checks (at most once every 30 minutes)
+    const handleWindowOnline = () => {
+      runNativeUpdateCheck(false);
+      runMinVersionCheck(false);
+    };
+    window.addEventListener('online', handleWindowOnline);
+
+    // 4. Foreground return listener
+    let capAppHandle: any = null;
+    if (Capacitor.isNativePlatform()) {
+      CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+        if (state.isActive) {
+          runNativeUpdateCheck(false);
+          runMinVersionCheck(true);
+        }
+      }).then((handle) => {
+        capAppHandle = handle;
+      }).catch(() => {});
+    }
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        runMinVersionCheck();
+        runNativeUpdateCheck(false);
+        runMinVersionCheck(true);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -207,11 +239,16 @@ export default function App() {
 
     return () => {
       isMounted = false;
-      if (capListenerHandle) {
-        capListenerHandle.remove();
-      }
+      clearInterval(periodicTimer);
+      window.removeEventListener('online', handleWindowOnline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleVisibilityChange);
+      if (capNetworkHandle) {
+        capNetworkHandle.remove();
+      }
+      if (capAppHandle) {
+        capAppHandle.remove();
+      }
     };
   }, [runNativeUpdateCheck, runMinVersionCheck]);
 
@@ -263,9 +300,13 @@ export default function App() {
   }, []);
 
   // Main trigger: check mobile data first
-  const handleTriggerNativeUpdate = useCallback(async (customDownloadUrl?: string) => {
+  const handleTriggerNativeUpdate = useCallback(async (customDownloadUrl?: string | unknown) => {
     let info = nativeUpdateInfo;
-    const targetUrl = customDownloadUrl?.trim() || info?.downloadUrl || APK_DOWNLOAD_URL;
+    const cleanCustomUrl =
+      typeof customDownloadUrl === 'string' && customDownloadUrl.trim()
+        ? customDownloadUrl.trim()
+        : undefined;
+    const targetUrl = cleanCustomUrl || info?.downloadUrl || APK_DOWNLOAD_URL;
 
     if (!info) {
       info = {
@@ -281,10 +322,10 @@ export default function App() {
         isRequired: true,
         rawBody: '',
       };
-    } else if (customDownloadUrl) {
+    } else if (cleanCustomUrl) {
       info = {
         ...info,
-        downloadUrl: targetUrl,
+        downloadUrl: cleanCustomUrl,
       };
     }
 
@@ -1834,8 +1875,12 @@ export default function App() {
             updateDownloadProgress={nativeDownloadProgress}
             isUpdateDownloaded={isNativeUpdateDownloaded}
             updateDownloadError={nativeDownloadError}
-            onTriggerUpdate={handleTriggerNativeUpdate}
-            onOpenBrowserDownload={NativeUpdateService.openBrowserDownload}
+            onTriggerUpdate={() => {
+              handleTriggerNativeUpdate();
+            }}
+            onOpenBrowserDownload={() => {
+              NativeUpdateService.openBrowserDownload();
+            }}
             isPWAUpdateAvailable={updateAvailable}
             isPWAUpdating={isPWAUpdating}
             onReloadPWA={handleUpdateApp}

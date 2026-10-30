@@ -23,7 +23,13 @@ const LS_KEY_LAST_RUN_BUILD = 'jtec_last_run_build';
 const LS_KEY_SAVED_RELEASE_NOTES = 'jtec_saved_release_notes';
 const LS_KEY_SAVED_RELEASE_VERSION = 'jtec_saved_release_version';
 
-const TWENTY_MINUTES_MS = 20 * 60 * 1000;
+const LS_KEY_LAST_CHECK_TIME = 'jtec_last_check_timestamp';
+const LS_KEY_LAST_CHECK_SOURCE = 'jtec_last_check_source';
+const LS_KEY_LAST_CHECK_ERROR = 'jtec_last_check_error';
+const LS_KEY_LAST_FOUND_BUILD = 'jtec_last_found_build';
+const LS_KEY_INSTALLED_BUILD_CACHE = 'jtec_installed_build_cache';
+
+const THREE_MINUTES_MS = 3 * 60 * 1000;
 const TWO_MINUTES_MS = 2 * 60 * 1000;
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
@@ -137,8 +143,27 @@ export function parseTagBuildNumber(tagName: string): { versionName: string; lat
 }
 
 /**
+ * Synchronous helper to get installed build from localStorage or bundle version.
+ */
+export function getInstalledBuildSync(): number {
+  try {
+    const cached = localStorage.getItem(LS_KEY_INSTALLED_BUILD_CACHE);
+    if (cached) {
+      const n = parseInt(cached, 10);
+      if (!isNaN(n) && n > 0) return n;
+    }
+  } catch {}
+  const match = APP_VERSION.match(/^([^(]+)(?:\s*\(Build\s*(\d+)\))?/i);
+  if (match && match[2]) {
+    const b = parseInt(match[2], 10);
+    if (!isNaN(b) && b > 0) return b;
+  }
+  return 101;
+}
+
+/**
  * Reads real version and build number:
- * - When native (Capacitor.isNativePlatform()), reads from App.getInfo().
+ * - When native (Capacitor.isNativePlatform()), reads from App.getInfo() (the build field) as a number.
  * - On web, uses build-time values already in the project.
  */
 export async function getCurrentAppVersion(): Promise<{
@@ -156,9 +181,12 @@ export async function getCurrentAppVersion(): Promise<{
         version = info.version;
       }
       if (info.build) {
-        const parsedBuild = parseInt(info.build, 10);
+        const parsedBuild = parseInt(String(info.build), 10);
         if (!isNaN(parsedBuild) && parsedBuild > 0) {
           build = parsedBuild;
+          try {
+            localStorage.setItem(LS_KEY_INSTALLED_BUILD_CACHE, String(build));
+          } catch {}
         }
       }
     } catch (e) {
@@ -170,7 +198,12 @@ export async function getCurrentAppVersion(): Promise<{
       version = match[1].trim();
       if (match[2]) {
         const parsedBuild = parseInt(match[2], 10);
-        if (!isNaN(parsedBuild)) build = parsedBuild;
+        if (!isNaN(parsedBuild)) {
+          build = parsedBuild;
+          try {
+            localStorage.setItem(LS_KEY_INSTALLED_BUILD_CACHE, String(build));
+          } catch {}
+        }
       }
     } else {
       version = APP_VERSION.trim();
@@ -326,6 +359,10 @@ export const NativeUpdateService = {
    * Reads any currently cached pending update from localStorage.
    * If the installed build is already >= cached build, clears the cache and returns null.
    */
+  /**
+   * Reads any currently cached pending update from localStorage.
+   * If the installed build is already >= cached build, clears the cache and returns null.
+   */
   getCachedPendingUpdateSync(): NativeUpdateInfo | null {
     try {
       const raw = localStorage.getItem(LS_KEY_CACHED_PENDING_UPDATE);
@@ -333,12 +370,7 @@ export const NativeUpdateService = {
       const parsed = JSON.parse(raw);
       if (!parsed || !parsed.hasUpdate || !parsed.latestBuild) return null;
 
-      const match = APP_VERSION.match(/^([^(]+)(?:\s*\(Build\s*(\d+)\))?/i);
-      let currentBuild = 101;
-      if (match && match[2]) {
-        const b = parseInt(match[2], 10);
-        if (!isNaN(b)) currentBuild = b;
-      }
+      const currentBuild = getInstalledBuildSync();
       if (parsed.latestBuild <= currentBuild) {
         localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
         return null;
@@ -359,25 +391,63 @@ export const NativeUpdateService = {
   },
 
   /**
+   * Diagnostic update telemetry for Developer page.
+   */
+  getUpdateDiagnosticInfo(): {
+    lastCheckTime: number | null;
+    lastSource: 'latest.json' | 'github-api' | null;
+    lastFoundBuild: number | null;
+    lastError: string | null;
+  } {
+    try {
+      const timeStr = localStorage.getItem(LS_KEY_LAST_CHECK_TIME);
+      const time = timeStr ? parseInt(timeStr, 10) : null;
+      const source = (localStorage.getItem(LS_KEY_LAST_CHECK_SOURCE) as any) || null;
+      const buildStr = localStorage.getItem(LS_KEY_LAST_FOUND_BUILD);
+      const build = buildStr ? parseInt(buildStr, 10) : null;
+      const error = localStorage.getItem(LS_KEY_LAST_CHECK_ERROR) || null;
+      return {
+        lastCheckTime: time,
+        lastSource: source,
+        lastFoundBuild: build,
+        lastError: error,
+      };
+    } catch {
+      return {
+        lastCheckTime: null,
+        lastSource: null,
+        lastFoundBuild: null,
+        lastError: null,
+      };
+    }
+  },
+
+  /**
    * Checks for an Android APK release.
    * - Reads latest.json FIRST.
    * - On Android, uses CapacitorHttp (native, no WebView fetch, handles redirects). On Web, uses fetch.
    * - If latest.json cannot be read, falls back to GitHub API (also via CapacitorHttp on Android).
    * - Saves last check time ONLY after a SUCCESSFUL check.
-   * - 20 minute limit for automatic checks. Failed checks can retry after 2 minutes. Manual checks always run.
+   * - 3 minute limit for automatic checks. Failed checks can retry after 2 minutes. Manual checks always run.
    * - Returns clear error reasons ("offline", "timeout", "rate-limited", "server" with status code).
    */
   async checkForUpdate(manual = false): Promise<NativeUpdateInfo | null> {
     const appInfo = await getCurrentAppVersion();
     const currentBuild = appInfo.build;
     const currentVersionName = appInfo.version;
+    const now = Date.now();
+
+    try {
+      localStorage.setItem(LS_KEY_LAST_CHECK_TIME, String(now));
+    } catch {}
 
     // 1. Check network connection first
     const online = await isDeviceOnline();
     if (!online) {
       if (!manual) {
         try {
-          localStorage.setItem(LS_KEY_LAST_FAILED_CHECK, String(Date.now()));
+          localStorage.setItem(LS_KEY_LAST_FAILED_CHECK, String(now));
+          localStorage.setItem(LS_KEY_LAST_CHECK_ERROR, 'offline');
         } catch {}
       }
       return {
@@ -399,12 +469,11 @@ export const NativeUpdateService = {
     }
 
     // 2. Throttle check for automatic checks (manual checks from Settings always run)
-    const now = Date.now();
     if (!manual) {
       try {
         const lastCheck = parseInt(localStorage.getItem(LS_KEY_LAST_CHECK) || '0', 10);
-        if (now - lastCheck < TWENTY_MINUTES_MS) {
-          // Within 20 minute throttle
+        if (now - lastCheck < THREE_MINUTES_MS) {
+          // Within 3 minute throttle
           return NativeUpdateService.getCachedPendingUpdateSync();
         }
         const lastFailed = parseInt(localStorage.getItem(LS_KEY_LAST_FAILED_CHECK) || '0', 10);
@@ -515,7 +584,11 @@ export const NativeUpdateService = {
     if (updateFound) {
       try {
         localStorage.setItem(LS_KEY_LAST_CHECK, String(now));
+        localStorage.setItem(LS_KEY_LAST_CHECK_TIME, String(now));
+        localStorage.setItem(LS_KEY_LAST_CHECK_SOURCE, updateFound.source || 'latest.json');
+        localStorage.setItem(LS_KEY_LAST_FOUND_BUILD, String(updateFound.latestBuild));
         localStorage.removeItem(LS_KEY_LAST_FAILED_CHECK);
+        localStorage.removeItem(LS_KEY_LAST_CHECK_ERROR);
       } catch {}
 
       if (updateFound.hasUpdate) {
@@ -537,6 +610,7 @@ export const NativeUpdateService = {
     // 6. FAILED CHECK
     try {
       localStorage.setItem(LS_KEY_LAST_FAILED_CHECK, String(now));
+      localStorage.setItem(LS_KEY_LAST_CHECK_TIME, String(now));
     } catch {}
 
     const isRateLimited = lastFailureReason === 'rate-limited';
@@ -548,6 +622,10 @@ export const NativeUpdateService = {
       : isTimeout
       ? 'Code: timeout'
       : `Code: ${lastFailureReason}`;
+
+    try {
+      localStorage.setItem(LS_KEY_LAST_CHECK_ERROR, reasonCode);
+    } catch {}
 
     return {
       hasUpdate: false,
@@ -703,8 +781,11 @@ export const NativeUpdateService = {
   /**
    * Opens the direct APK download URL in the browser via AppLauncher.openUrl.
    */
-  async openBrowserDownload(customUrl?: string): Promise<void> {
-    const targetUrl = customUrl?.trim() || APK_DOWNLOAD_URL;
+  async openBrowserDownload(customUrl?: string | unknown): Promise<void> {
+    const targetUrl =
+      typeof customUrl === 'string' && customUrl.trim()
+        ? customUrl.trim()
+        : APK_DOWNLOAD_URL;
     try {
       if (Capacitor.isNativePlatform()) {
         await AppLauncher.openUrl({ url: targetUrl });
