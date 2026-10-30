@@ -1,5 +1,2 @@
-- New: Free music from Jamendo in the Cloud tab, with previews and downloads.
-- New: Archive Nasheeds, a big catalog of nasheeds to preview and download.
-- New: Update the app inside the app. Home shows what changed, then tap Update now.
-- Improved: The back button now returns you to where you were.
-- Improved: New logo, new Home look, and Install and Update guides in Settings.
+- Improved: Smoother performance and design improvements.
+- Fixed: Bug fixes and stability improvements.
