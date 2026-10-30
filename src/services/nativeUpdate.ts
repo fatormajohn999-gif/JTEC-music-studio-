@@ -915,3 +915,67 @@ export const NativeUpdateService = {
     }
   },
 };
+
+/**
+ * Resolves the APK download URL using the required priority:
+ * 1. app_config.apk_url if it is set and non-empty
+ * 2. Address from latest.json (from cached pending update or loaded release)
+ * 3. Fallback https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk
+ */
+export function resolveApkDownloadUrl(configApkUrl?: string | null): string {
+  if (configApkUrl && typeof configApkUrl === 'string' && configApkUrl.trim()) {
+    return configApkUrl.trim();
+  }
+  const cached = NativeUpdateService.getCachedPendingUpdateSync();
+  if (cached?.downloadUrl && typeof cached.downloadUrl === 'string' && cached.downloadUrl.trim()) {
+    return cached.downloadUrl.trim();
+  }
+  return APK_DOWNLOAD_URL;
+}
+
+/**
+ * Returns a friendly user-facing error message with a small reason code for update failures.
+ */
+export function getFriendlyUpdateError(err: unknown): { message: string; reasonCode: string } {
+  const errStr = String(err instanceof Error ? err.message : err || '').toLowerCase();
+
+  if (
+    errStr.includes('offline') ||
+    errStr.includes('network') ||
+    errStr.includes('failed to fetch') ||
+    errStr.includes('connection')
+  ) {
+    return {
+      message: 'Connection issue. Check your internet and try again.',
+      reasonCode: 'ERR_NETWORK',
+    };
+  }
+  if (errStr.includes('404') || errStr.includes('not found') || errStr.includes('empty')) {
+    return {
+      message: 'Update package temporarily unavailable.',
+      reasonCode: 'ERR_404',
+    };
+  }
+  if (errStr.includes('storage') || errStr.includes('space') || errStr.includes('enospc')) {
+    return {
+      message: 'Not enough storage space to save the update.',
+      reasonCode: 'ERR_STORAGE',
+    };
+  }
+  if (errStr.includes('permission') || errStr.includes('denied') || errStr.includes('security')) {
+    return {
+      message: 'Install permission required to install updates.',
+      reasonCode: 'ERR_PERMISSION',
+    };
+  }
+  if (errStr.includes('installer') || errStr.includes('fileopener') || errStr.includes('activity')) {
+    return {
+      message: 'Could not launch package installer.',
+      reasonCode: 'ERR_INSTALLER',
+    };
+  }
+  return {
+    message: "Couldn't complete update. Check your internet or use the browser download.",
+    reasonCode: 'ERR_UPDATE',
+  };
+}

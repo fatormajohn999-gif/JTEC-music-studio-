@@ -17,7 +17,7 @@ export const CellularDataConfirmModal: React.FC<CellularDataConfirmModalProps> =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
       <div
         className="relative w-full max-w-sm bg-gradient-to-b from-[#0e1530] to-[#070b1a] border border-cyan-500/30 rounded-3xl p-6 shadow-2xl shadow-cyan-950/60 flex flex-col items-center text-center animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}

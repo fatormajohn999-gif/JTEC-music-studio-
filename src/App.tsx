@@ -29,7 +29,10 @@ import {
   NativeUpdateService, 
   NativeUpdateInfo, 
   isCellularConnection,
-  APK_DOWNLOAD_URL
+  APK_DOWNLOAD_URL,
+  resolveApkDownloadUrl,
+  getFriendlyUpdateError,
+  getInstalledBuildSync
 } from './services/nativeUpdate';
 import { 
   sendAnonymousPing, 
@@ -93,7 +96,10 @@ export default function App() {
   const [isDownloadingNativeUpdate, setIsDownloadingNativeUpdate] = useState(false);
   const [nativeDownloadProgress, setNativeDownloadProgress] = useState(0);
   const [isNativeUpdateDownloaded, setIsNativeUpdateDownloaded] = useState(false);
+  const [isInstallingNativeUpdate, setIsInstallingNativeUpdate] = useState(false);
+  const [isInstallerOpened, setIsInstallerOpened] = useState(false);
   const [nativeDownloadError, setNativeDownloadError] = useState<string | null>(null);
+  const [nativeDownloadReasonCode, setNativeDownloadReasonCode] = useState<string | null>(null);
   const [showCellularConfirm, setShowCellularConfirm] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -276,6 +282,8 @@ export default function App() {
     setIsDownloadingNativeUpdate(true);
     setNativeDownloadProgress(0);
     setNativeDownloadError(null);
+    setNativeDownloadReasonCode(null);
+    setIsInstallerOpened(false);
 
     try {
       const apkUri = await NativeUpdateService.downloadApk({
@@ -288,67 +296,94 @@ export default function App() {
 
       setIsDownloadingNativeUpdate(false);
       setIsNativeUpdateDownloaded(true);
+      setIsInstallingNativeUpdate(true);
 
       // Launch package installer immediately with real URI
       await NativeUpdateService.installDownloadedApk(apkUri);
+      setIsInstallingNativeUpdate(false);
+      setIsInstallerOpened(true);
     } catch (err: unknown) {
       console.error('[NativeUpdate] Technical details of download/install failure:', err);
       setIsDownloadingNativeUpdate(false);
+      setIsInstallingNativeUpdate(false);
       setIsNativeUpdateDownloaded(false);
-      setNativeDownloadError("Couldn't download the update. Check your internet and try again.");
+      setIsInstallerOpened(false);
+      const friendly = getFriendlyUpdateError(err);
+      setNativeDownloadError(friendly.message);
+      setNativeDownloadReasonCode(friendly.reasonCode);
     }
   }, []);
 
-  // Main trigger: check mobile data first
-  const handleTriggerNativeUpdate = useCallback(async (customDownloadUrl?: string | unknown) => {
-    let info = nativeUpdateInfo;
-    const cleanCustomUrl =
-      typeof customDownloadUrl === 'string' && customDownloadUrl.trim()
-        ? customDownloadUrl.trim()
-        : undefined;
-    const targetUrl = cleanCustomUrl || info?.downloadUrl || APK_DOWNLOAD_URL;
+  // Main trigger: handles both Home update card and RequiredUpdateOverlay
+  const handleTriggerNativeUpdate = useCallback(
+    async (customDownloadUrl?: string | unknown, skipCellularPrompt = false) => {
+      let info = nativeUpdateInfo;
+      const cleanCustomUrl =
+        typeof customDownloadUrl === 'string' && customDownloadUrl.trim()
+          ? customDownloadUrl.trim()
+          : undefined;
 
-    if (!info) {
-      info = {
-        hasUpdate: true,
-        versionName: minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : 'Latest',
-        latestBuild: minVersionStatus?.minBuild || 999,
-        currentBuild: 100,
-        currentVersionName: 'Current',
-        downloadUrl: targetUrl,
-        fileSizeBytes: 0,
-        formattedSize: '',
-        notesBullets: minVersionStatus?.notesBullets || [],
-        isRequired: true,
-        rawBody: '',
-      };
-    } else if (cleanCustomUrl) {
-      info = {
-        ...info,
-        downloadUrl: cleanCustomUrl,
-      };
-    }
+      // Unified URL resolution: app_config.apk_url -> latest.json -> APK_DOWNLOAD_URL
+      const targetUrl = resolveApkDownloadUrl(cleanCustomUrl || minVersionStatus?.apkUrl);
 
-    if (isNativeUpdateDownloaded && !nativeDownloadError) {
-      // If already downloaded, launch installer directly
-      try {
-        await NativeUpdateService.installDownloadedApk();
-      } catch (err: unknown) {
-        console.error('[NativeUpdate] Technical details of installer launch error:', err);
-        setIsNativeUpdateDownloaded(false);
-        setNativeDownloadError("Couldn't download the update. Check your internet and try again.");
+      if (!info) {
+        info = {
+          hasUpdate: true,
+          versionName: minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : 'Latest',
+          latestBuild: minVersionStatus?.minBuild || 999,
+          currentBuild: getInstalledBuildSync(),
+          currentVersionName: 'Current',
+          downloadUrl: targetUrl,
+          fileSizeBytes: 0,
+          formattedSize: '',
+          notesBullets: minVersionStatus?.notesBullets || [],
+          isRequired: true,
+          rawBody: '',
+        };
+      } else {
+        info = {
+          ...info,
+          downloadUrl: targetUrl,
+        };
       }
-      return;
-    }
 
-    const isCellular = await isCellularConnection();
-    if (isCellular) {
-      setShowCellularConfirm(true);
-      return;
-    }
+      // If running on web, open direct browser download
+      if (!Capacitor.isNativePlatform()) {
+        await NativeUpdateService.openBrowserDownload(targetUrl);
+        return;
+      }
 
-    await executeApkDownload(info);
-  }, [nativeUpdateInfo, minVersionStatus, isNativeUpdateDownloaded, nativeDownloadError, executeApkDownload]);
+      if (isNativeUpdateDownloaded && !nativeDownloadError) {
+        // If already downloaded, launch installer directly
+        try {
+          setIsInstallingNativeUpdate(true);
+          await NativeUpdateService.installDownloadedApk();
+          setIsInstallingNativeUpdate(false);
+          setIsInstallerOpened(true);
+        } catch (err: unknown) {
+          console.error('[NativeUpdate] Technical details of installer launch error:', err);
+          setIsInstallingNativeUpdate(false);
+          setIsNativeUpdateDownloaded(false);
+          setIsInstallerOpened(false);
+          const friendly = getFriendlyUpdateError(err);
+          setNativeDownloadError(friendly.message);
+          setNativeDownloadReasonCode(friendly.reasonCode);
+        }
+        return;
+      }
+
+      if (!skipCellularPrompt) {
+        const isCellular = await isCellularConnection();
+        if (isCellular) {
+          setShowCellularConfirm(true);
+          return;
+        }
+      }
+
+      await executeApkDownload(info);
+    },
+    [nativeUpdateInfo, minVersionStatus, isNativeUpdateDownloaded, nativeDownloadError, executeApkDownload]
+  );
 
   // Confirmed mobile data download
   const handleConfirmCellularDownload = useCallback(async () => {
@@ -2116,33 +2151,69 @@ export default function App() {
       />
 
       {/* FULL-SCREEN REQUIRED UPDATE OVERLAY */}
-      {isOnline && (minVersionStatus?.isBlocked || (nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired)) && (
-        <RequiredUpdateOverlay
-          versionName={minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : (nativeUpdateInfo?.versionName || '')}
-          notesBullets={
-            minVersionStatus?.notesBullets && minVersionStatus.notesBullets.length > 0
-              ? minVersionStatus.notesBullets
-              : (nativeUpdateInfo?.notesBullets || [])
-          }
-          formattedSize={nativeUpdateInfo?.formattedSize || ''}
-          isDownloading={isDownloadingNativeUpdate}
-          downloadProgress={nativeDownloadProgress}
-          isDownloaded={isNativeUpdateDownloaded}
-          downloadError={nativeDownloadError}
-          apkUrl={minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL}
-          onUpdateNow={() => {
-            const url = minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL;
-            handleTriggerNativeUpdate(url);
-          }}
-          onBrowserDownload={() => {
-            const url = minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL;
-            NativeUpdateService.openBrowserDownload(url);
-          }}
-          customMessage={minVersionStatus?.message}
-          isWeb={minVersionStatus?.isWeb ?? !Capacitor.isNativePlatform()}
-          onReloadWeb={() => window.location.reload()}
-        />
-      )}
+      {(() => {
+        // Safety rule: the required-update screen must never trap the user.
+        // If the installed build is already equal to or higher than the latest known build, it must never appear.
+        const currentInstalledBuild = getInstalledBuildSync();
+        const targetRequiredBuild = Math.max(
+          minVersionStatus?.minBuild || 0,
+          nativeUpdateInfo?.isRequired ? (nativeUpdateInfo.latestBuild || 0) : 0,
+          NativeUpdateService.getCachedPendingUpdateSync()?.isRequired
+            ? (NativeUpdateService.getCachedPendingUpdateSync()!.latestBuild || 0)
+            : 0
+        );
+
+        const isRequiredUpdateActive =
+          isOnline &&
+          targetRequiredBuild > 0 &&
+          currentInstalledBuild < targetRequiredBuild &&
+          Boolean(minVersionStatus?.isBlocked || (nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired));
+
+        if (!isRequiredUpdateActive) return null;
+
+        const resolvedApkUrl = resolveApkDownloadUrl(
+          minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl
+        );
+
+        return (
+          <RequiredUpdateOverlay
+            versionName={
+              minVersionStatus?.minBuild
+                ? `Build ${minVersionStatus.minBuild}`
+                : (nativeUpdateInfo?.versionName || `Build ${targetRequiredBuild}`)
+            }
+            notesBullets={
+              minVersionStatus?.notesBullets && minVersionStatus.notesBullets.length > 0
+                ? minVersionStatus.notesBullets
+                : (nativeUpdateInfo?.notesBullets || [])
+            }
+            formattedSize={nativeUpdateInfo?.formattedSize || ''}
+            minBuild={targetRequiredBuild}
+            isDownloading={isDownloadingNativeUpdate}
+            downloadProgress={nativeDownloadProgress}
+            isDownloaded={isNativeUpdateDownloaded}
+            isInstalling={isInstallingNativeUpdate}
+            isInstallerOpened={isInstallerOpened}
+            downloadError={nativeDownloadError}
+            reasonCode={nativeDownloadReasonCode}
+            apkUrl={resolvedApkUrl}
+            onUpdateNow={() => {
+              handleTriggerNativeUpdate(resolvedApkUrl, true);
+            }}
+            onTryAgain={() => {
+              setNativeDownloadError(null);
+              setNativeDownloadReasonCode(null);
+              handleTriggerNativeUpdate(resolvedApkUrl, true);
+            }}
+            onBrowserDownload={() => {
+              NativeUpdateService.openBrowserDownload(resolvedApkUrl);
+            }}
+            customMessage={minVersionStatus?.message}
+            isWeb={minVersionStatus?.isWeb ?? !Capacitor.isNativePlatform()}
+            onReloadWeb={() => window.location.reload()}
+          />
+        );
+      })()}
 
       {/* NATIVE ANDROID UPDATE BOTTOM SHEET (For manual check from Settings) */}
       <NativeUpdateBottomSheet
