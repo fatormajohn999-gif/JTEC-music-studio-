@@ -15,6 +15,7 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
 }) => {
   const [status, setStatus] = useState<UpdateCheckStatus>('idle');
   const [currentTag, setCurrentTag] = useState<string>('v1.0.1');
+  const [errorInfo, setErrorInfo] = useState<{ isOffline: boolean; reasonCode?: string } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -37,17 +38,29 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
     }
 
     setStatus('checking');
+    setErrorInfo(null);
 
     try {
       const currentInfo = await getCurrentAppVersion();
       setCurrentTag(currentInfo.formattedTag);
 
       const result = await NativeUpdateService.checkForUpdate(true);
-      if (result && result.hasUpdate) {
+      if (result && result.error) {
+        const isOffline = result.error === 'offline';
+        setErrorInfo({
+          isOffline,
+          reasonCode: !isOffline ? result.reasonCode : undefined,
+        });
+        setStatus('error');
+        timerRef.current = setTimeout(() => {
+          setStatus('idle');
+          setErrorInfo(null);
+        }, 4000);
+      } else if (result && result.hasUpdate) {
         setStatus('idle');
         window.dispatchEvent(
           new CustomEvent('jtec:show-native-update', {
-            detail: { versionName: result.versionName },
+            detail: { updateInfo: result, versionName: result.versionName },
           })
         );
       } else {
@@ -58,10 +71,16 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
       }
     } catch (err) {
       console.warn('[CheckForUpdates] Update check failed:', err);
+      const isOffline = !navigator.onLine;
+      setErrorInfo({
+        isOffline,
+        reasonCode: !isOffline ? 'Code: network' : undefined,
+      });
       setStatus('error');
       timerRef.current = setTimeout(() => {
         setStatus('idle');
-      }, 3000);
+        setErrorInfo(null);
+      }, 4000);
     }
   };
 
@@ -96,10 +115,17 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
         )}
 
         {status === 'error' && (
-          <>
-            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-            <span>Couldn&apos;t check right now. Check your internet.</span>
-          </>
+          <div className="flex flex-col items-center justify-center text-center">
+            <div className="inline-flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span>{errorInfo?.isOffline ? "You're offline." : "Couldn't check right now. Check your internet."}</span>
+            </div>
+            {!errorInfo?.isOffline && errorInfo?.reasonCode && (
+              <span className="text-[10px] text-slate-400 font-normal tracking-wide mt-0.5">
+                {errorInfo.reasonCode}
+              </span>
+            )}
+          </div>
         )}
 
         {status === 'idle' && (

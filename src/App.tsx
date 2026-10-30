@@ -85,7 +85,9 @@ export default function App() {
   } = usePWAUpdate();
 
   // Native Android Update Controller
-  const [nativeUpdateInfo, setNativeUpdateInfo] = useState<NativeUpdateInfo | null>(null);
+  const [nativeUpdateInfo, setNativeUpdateInfo] = useState<NativeUpdateInfo | null>(() => {
+    return NativeUpdateService.getCachedPendingUpdateSync();
+  });
   const [isDownloadingNativeUpdate, setIsDownloadingNativeUpdate] = useState(false);
   const [nativeDownloadProgress, setNativeDownloadProgress] = useState(0);
   const [isNativeUpdateDownloaded, setIsNativeUpdateDownloaded] = useState(false);
@@ -122,9 +124,8 @@ export default function App() {
     };
   }, []);
 
-  // Update check runner
+  // Update check runner (automatic checks throttled to 20 minutes)
   const runNativeUpdateCheck = useCallback(async (manual = false) => {
-    if (!Capacitor.isNativePlatform() && !manual) return null;
     try {
       const result = await NativeUpdateService.checkForUpdate(manual);
       if (result && result.hasUpdate) {
@@ -217,7 +218,8 @@ export default function App() {
   // Listen for manual update checks triggered from Settings
   useEffect(() => {
     const handleManualUpdateEvent = async (e: Event) => {
-      const result = await runNativeUpdateCheck(true);
+      const customEvent = e as CustomEvent<{ updateInfo?: NativeUpdateInfo; versionName?: string }>;
+      const result = customEvent.detail?.updateInfo ?? (await runNativeUpdateCheck(true));
       if (result && result.hasUpdate) {
         setNativeUpdateInfo(result);
         if (isSettingsView) {
@@ -261,27 +263,29 @@ export default function App() {
   }, []);
 
   // Main trigger: check mobile data first
-  const handleTriggerNativeUpdate = useCallback(async () => {
+  const handleTriggerNativeUpdate = useCallback(async (customDownloadUrl?: string) => {
     let info = nativeUpdateInfo;
+    const targetUrl = customDownloadUrl?.trim() || info?.downloadUrl || APK_DOWNLOAD_URL;
+
     if (!info) {
-      const checked = await runNativeUpdateCheck(true);
-      if (checked) {
-        info = checked;
-      } else {
-        info = {
-          hasUpdate: true,
-          versionName: 'Latest',
-          latestBuild: 999,
-          currentBuild: 100,
-          currentVersionName: 'Current',
-          downloadUrl: APK_DOWNLOAD_URL,
-          fileSizeBytes: 0,
-          formattedSize: '',
-          notesBullets: [],
-          isRequired: true,
-          rawBody: '',
-        };
-      }
+      info = {
+        hasUpdate: true,
+        versionName: minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : 'Latest',
+        latestBuild: minVersionStatus?.minBuild || 999,
+        currentBuild: 100,
+        currentVersionName: 'Current',
+        downloadUrl: targetUrl,
+        fileSizeBytes: 0,
+        formattedSize: '',
+        notesBullets: minVersionStatus?.notesBullets || [],
+        isRequired: true,
+        rawBody: '',
+      };
+    } else if (customDownloadUrl) {
+      info = {
+        ...info,
+        downloadUrl: targetUrl,
+      };
     }
 
     if (isNativeUpdateDownloaded && !nativeDownloadError) {
@@ -303,7 +307,7 @@ export default function App() {
     }
 
     await executeApkDownload(info);
-  }, [nativeUpdateInfo, runNativeUpdateCheck, isNativeUpdateDownloaded, nativeDownloadError, executeApkDownload]);
+  }, [nativeUpdateInfo, minVersionStatus, isNativeUpdateDownloaded, nativeDownloadError, executeApkDownload]);
 
   // Confirmed mobile data download
   const handleConfirmCellularDownload = useCallback(async () => {
@@ -432,6 +436,10 @@ export default function App() {
   }, [currentTab]);
 
   const handleSelectTab = useCallback((targetTab: NavTab) => {
+    if (targetTab === 'home') {
+      runNativeUpdateCheck(false);
+    }
+
     if (isSettingsView) {
       if (mainContainerRef.current) {
         saveScrollPosition('settings:root', mainContainerRef.current.scrollTop);
@@ -457,7 +465,7 @@ export default function App() {
     setCurrentTab(targetTab);
     const target = getSavedScrollPosition('tab:' + targetTab);
     restoreScroll(mainContainerRef.current, target);
-  }, [currentTab, isSettingsView]);
+  }, [currentTab, isSettingsView, runNativeUpdateCheck]);
 
   // Back handlers for top-level modals, sheets, settings, and tabs
   useEffect(() => {
@@ -2063,16 +2071,28 @@ export default function App() {
       />
 
       {/* FULL-SCREEN REQUIRED UPDATE OVERLAY */}
-      {((minVersionStatus?.isBlocked) || (nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired && isOnline)) && (
+      {isOnline && (minVersionStatus?.isBlocked || (nativeUpdateInfo?.hasUpdate && nativeUpdateInfo?.isRequired)) && (
         <RequiredUpdateOverlay
-          versionName={nativeUpdateInfo?.versionName || (minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : '')}
-          notesBullets={nativeUpdateInfo?.notesBullets || []}
+          versionName={minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : (nativeUpdateInfo?.versionName || '')}
+          notesBullets={
+            minVersionStatus?.notesBullets && minVersionStatus.notesBullets.length > 0
+              ? minVersionStatus.notesBullets
+              : (nativeUpdateInfo?.notesBullets || [])
+          }
           formattedSize={nativeUpdateInfo?.formattedSize || ''}
           isDownloading={isDownloadingNativeUpdate}
           downloadProgress={nativeDownloadProgress}
           isDownloaded={isNativeUpdateDownloaded}
           downloadError={nativeDownloadError}
-          onUpdateNow={handleTriggerNativeUpdate}
+          apkUrl={minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL}
+          onUpdateNow={() => {
+            const url = minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL;
+            handleTriggerNativeUpdate(url);
+          }}
+          onBrowserDownload={() => {
+            const url = minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl || APK_DOWNLOAD_URL;
+            NativeUpdateService.openBrowserDownload(url);
+          }}
           customMessage={minVersionStatus?.message}
           isWeb={minVersionStatus?.isWeb ?? !Capacitor.isNativePlatform()}
           onReloadWeb={() => window.location.reload()}

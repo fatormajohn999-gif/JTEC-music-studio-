@@ -11,9 +11,13 @@ interface RequiredUpdateOverlayProps {
   isDownloaded?: boolean;
   downloadError?: string | null;
   onUpdateNow?: () => void;
+  onBrowserDownload?: () => void;
+  apkUrl?: string;
   customMessage?: string;
   isWeb?: boolean;
   onReloadWeb?: () => void;
+  isPreview?: boolean;
+  onClosePreview?: () => void;
 }
 
 export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
@@ -25,10 +29,22 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
   isDownloaded = false,
   downloadError = null,
   onUpdateNow,
+  onBrowserDownload,
+  apkUrl,
   customMessage,
   isWeb = false,
   onReloadWeb,
+  isPreview = false,
+  onClosePreview,
 }) => {
+  const handleBrowserDownload = () => {
+    if (onBrowserDownload) {
+      onBrowserDownload();
+    } else {
+      NativeUpdateService.openBrowserDownload(apkUrl);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 backdrop-blur-xl p-4 sm:p-6 select-none animate-in fade-in duration-300">
       {/* Background artwork & glowing lights */}
@@ -36,6 +52,24 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
       <div className="absolute bottom-1/4 right-1/4 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative w-full max-w-md bg-gradient-to-b from-[#0f1738] via-[#090e24] to-[#050814] border border-cyan-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-cyan-950/80 flex flex-col text-center">
+        {/* Preview badge or close button */}
+        {isPreview && (
+          <div className="flex items-center justify-between pb-3 mb-2 border-b border-cyan-500/20">
+            <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30">
+              Developer Preview Mode
+            </span>
+            {onClosePreview && (
+              <button
+                type="button"
+                onClick={onClosePreview}
+                className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-slate-800/80 cursor-pointer"
+              >
+                Close Preview ✕
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Top Badge */}
         <div className="flex justify-center mb-4">
           <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold tracking-wider uppercase">
@@ -86,20 +120,21 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
           </div>
         )}
 
-        {/* Download Error Banner & Browser Download Link */}
+        {/* Download Error Banner & Browser Download Link/Button */}
         {downloadError && !isWeb && (
-          <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-1.5 text-left">
+          <div className="p-3.5 mb-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-2.5 text-left">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
               <span>{downloadError}</span>
             </div>
-            <div className="pl-6">
+            <div>
               <button
                 type="button"
-                onClick={() => NativeUpdateService.openBrowserDownload()}
-                className="text-[11px] text-cyan-400 hover:text-cyan-300 underline font-semibold cursor-pointer active:opacity-75 transition inline-block"
+                onClick={handleBrowserDownload}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 text-cyan-300 hover:text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition shadow"
               >
-                Download from browser instead
+                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Download from browser</span>
               </button>
             </div>
           </div>

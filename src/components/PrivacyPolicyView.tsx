@@ -165,7 +165,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
           <h3>6. Anonymous Install Counting</h3>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          JTEC MUSIC counts installs with a random anonymous ID and the app version. It does not collect your name, email, phone number or location.
+          JTEC MUSIC counts installs with a random anonymous ID, the app version, the phone model and Android version, and an optional device name that you can type yourself. It does not collect your name, email, phone number or location.
         </p>
       </section>
 

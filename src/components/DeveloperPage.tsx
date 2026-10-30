@@ -3,7 +3,8 @@ import {
   X, RefreshCw, Shield, ShieldCheck, Lock, 
   Users, Smartphone, Globe, AlertCircle, CheckCircle2, 
   Calendar, Clock, Sparkles, AlertTriangle, Layers, 
-  Wifi, Server, Terminal, ArrowRight
+  Wifi, Server, Terminal, ArrowRight, Search, Filter,
+  ArrowUpDown, Edit2, Check, Eye
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
@@ -15,6 +16,8 @@ import {
 import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpdate';
 import { registerBackHandler } from '../services/navigation';
 import { APP_VERSION, BUILD_DATE } from '../version';
+import { RequiredUpdateOverlay } from './RequiredUpdateOverlay';
+import { parseConfigNotes } from '../services/appConfig';
 
 export interface AppInstallRow {
   install_id: string;
@@ -24,12 +27,19 @@ export interface AppInstallRow {
   build: number | null;
   platform: string | null;
   opens: number | null;
+  device_name?: string | null;
+  name?: string | null;
+  model?: string | null;
+  manufacturer?: string | null;
+  os?: string | null;
 }
 
 export interface AppConfigRow {
   id: number;
   min_build: number;
   message?: string;
+  notes?: string;
+  apk_url?: string;
 }
 
 interface DeveloperPageProps {
@@ -62,15 +72,31 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [isLoadingUsage, setIsLoadingUsage] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
 
+  // Device search, filter, and sorting states
+  const [deviceSearch, setDeviceSearch] = useState('');
+  const [platformFilter, setPlatformFilter] = useState<'all' | 'android' | 'web' | 'ios'>('all');
+  const [versionFilter, setVersionFilter] = useState<string>('all');
+  const [lastSeenSortDesc, setLastSeenSortDesc] = useState<boolean>(true);
+
+  // Device name inline edit state
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
+  const [editingDeviceNameInput, setEditingDeviceNameInput] = useState<string>('');
+  const [isSavingDeviceName, setIsSavingDeviceName] = useState(false);
+
   // Minimum version tab data
   const [appConfig, setAppConfig] = useState<AppConfigRow | null>(null);
   const [editingMinBuild, setEditingMinBuild] = useState<string>('');
   const [editingMessage, setEditingMessage] = useState<string>('');
+  const [editingNotes, setEditingNotes] = useState<string>('');
+  const [editingApkUrl, setEditingApkUrl] = useState<string>('');
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null);
+
+  // Required update preview modal
+  const [showRequiredUpdatePreview, setShowRequiredUpdatePreview] = useState(false);
 
   // Connection test tab data
   const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[]>([]);
@@ -177,7 +203,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     try {
       const { data, error } = await adminClient
         .from('app_installs')
-        .select('install_id, first_seen, last_seen, app_version, build, platform, opens')
+        .select('*')
         .order('last_seen', { ascending: false });
 
       if (error) {
@@ -200,7 +226,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     try {
       const { data, error } = await adminClient
         .from('app_config')
-        .select('id, min_build, message')
+        .select('id, min_build, message, notes, apk_url')
         .eq('id', 1)
         .maybeSingle();
 
@@ -212,6 +238,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         setAppConfig(data as AppConfigRow);
         setEditingMinBuild(String(data.min_build ?? ''));
         setEditingMessage(data.message || '');
+        setEditingNotes(data.notes || '');
+        setEditingApkUrl(data.apk_url || '');
       }
     } catch (err: any) {
       setSaveErrorMsg(err?.message || 'Failed to load app_config.');
@@ -246,7 +274,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     }
   }, [session, activeTab, loadUsageData, loadMinVersionConfig, runConnectionTests]);
 
-  // Save updated min_build
+  // Save updated min_build, message, notes, and apk_url
   const handleConfirmSaveMinBuild = async () => {
     if (!adminClient || !session) return;
     const newBuildNum = parseInt(editingMinBuild.trim(), 10);
@@ -266,6 +294,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         .update({
           min_build: newBuildNum,
           message: editingMessage.trim() || 'An update is required to continue using JTEC MUSIC.',
+          notes: editingNotes.trim() || null,
+          apk_url: editingApkUrl.trim() || null,
         })
         .eq('id', 1);
 
@@ -277,19 +307,71 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         id: 1,
         min_build: newBuildNum,
         message: editingMessage.trim() || 'An update is required to continue using JTEC MUSIC.',
+        notes: editingNotes.trim(),
+        apk_url: editingApkUrl.trim(),
       });
-      setSaveSuccessMsg(`Minimum build updated to ${newBuildNum} successfully.`);
+      setSaveSuccessMsg(`Minimum version configuration saved successfully.`);
       setShowConfirmModal(false);
     } catch (err: any) {
-      setSaveErrorMsg(err?.message || 'Failed to update minimum build.');
+      setSaveErrorMsg(err?.message || 'Failed to update minimum version.');
       setShowConfirmModal(false);
     } finally {
       setIsSavingConfig(false);
     }
   };
 
+  // Device Name Editing
+  const handleStartEditDevice = (row: AppInstallRow) => {
+    setEditingDeviceId(row.install_id);
+    setEditingDeviceNameInput(row.device_name || row.name || '');
+  };
+
+  const handleCancelEditDevice = () => {
+    setEditingDeviceId(null);
+    setEditingDeviceNameInput('');
+  };
+
+  const handleSaveDeviceName = async (installId: string) => {
+    if (!adminClient || !session) return;
+    setIsSavingDeviceName(true);
+    const cleanName = editingDeviceNameInput.trim().slice(0, 40);
+
+    try {
+      const { error } = await adminClient
+        .from('app_installs')
+        .update({ device_name: cleanName || null })
+        .eq('install_id', installId);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setInstalls((prev) =>
+        prev.map((item) =>
+          item.install_id === installId
+            ? { ...item, device_name: cleanName || null }
+            : item
+        )
+      );
+      setEditingDeviceId(null);
+      setEditingDeviceNameInput('');
+    } catch (err: any) {
+      alert(`Failed to update device name: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsSavingDeviceName(false);
+    }
+  };
+
   // Computations for Usage Tab
   const totalInstalls = installs.length;
+
+  const totalAndroidInstalls = useMemo(() => {
+    return installs.filter((i) => (i.platform || '').toLowerCase().includes('android')).length;
+  }, [installs]);
+
+  const totalWebInstalls = useMemo(() => {
+    return installs.filter((i) => (i.platform || '').toLowerCase().includes('web')).length;
+  }, [installs]);
 
   const { active24h, active7d, active30d, new7d } = useMemo(() => {
     const now = Date.now();
@@ -302,257 +384,290 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     let a30 = 0;
     let n7 = 0;
 
-    for (const item of installs) {
+    installs.forEach((item) => {
       if (item.last_seen) {
-        const lastTime = new Date(item.last_seen).getTime();
-        if (!isNaN(lastTime)) {
-          const diff = now - lastTime;
-          if (diff <= ms24h) a24++;
-          if (diff <= ms7d) a7++;
-          if (diff <= ms30d) a30++;
-        }
+        const t = new Date(item.last_seen).getTime();
+        const diff = now - t;
+        if (diff <= ms24h) a24 += 1;
+        if (diff <= ms7d) a7 += 1;
+        if (diff <= ms30d) a30 += 1;
       }
       if (item.first_seen) {
-        const firstTime = new Date(item.first_seen).getTime();
-        if (!isNaN(firstTime)) {
-          if (now - firstTime <= ms7d) n7++;
+        const ft = new Date(item.first_seen).getTime();
+        if (now - ft <= ms7d) {
+          n7 += 1;
         }
       }
-    }
+    });
 
     return { active24h: a24, active7d: a7, active30d: a30, new7d: n7 };
   }, [installs]);
 
-  // Version breakdown (newest first, count, percentage)
+  // Installs per version
   const versionStats = useMemo(() => {
     const map = new Map<string, { count: number; maxBuild: number }>();
+    installs.forEach((item) => {
+      const ver = item.app_version || 'Unknown';
+      const b = item.build || 0;
+      const cur = map.get(ver) || { count: 0, maxBuild: 0 };
+      map.set(ver, {
+        count: cur.count + 1,
+        maxBuild: Math.max(cur.maxBuild, b),
+      });
+    });
 
-    for (const item of installs) {
-      const v = (item.app_version || 'Unknown').trim();
-      const b = Number(item.build) || 0;
-      const existing = map.get(v);
-      if (existing) {
-        existing.count += 1;
-        if (b > existing.maxBuild) existing.maxBuild = b;
-      } else {
-        map.set(v, { count: 1, maxBuild: b });
-      }
-    }
-
-    const list = Array.from(map.entries()).map(([version, data]) => ({
-      version,
-      maxBuild: data.maxBuild,
+    const list = Array.from(map.entries()).map(([ver, data]) => ({
+      version: ver,
       count: data.count,
+      maxBuild: data.maxBuild,
       percentage: totalInstalls > 0 ? (data.count / totalInstalls) * 100 : 0,
     }));
 
-    // Sort newest first by maxBuild descending, then by version string descending
     list.sort((a, b) => {
-      if (b.maxBuild !== a.maxBuild) return b.maxBuild - a.maxBuild;
-      return b.version.localeCompare(a.version, undefined, { numeric: true, sensitivity: 'base' });
+      if (b.maxBuild !== a.maxBuild) {
+        return b.maxBuild - a.maxBuild;
+      }
+      return b.version.localeCompare(a.version);
     });
 
     return list;
   }, [installs, totalInstalls]);
 
-  // Platform breakdown
+  // Unique versions list for dropdown filter
+  const distinctVersions = useMemo(() => {
+    const set = new Set<string>();
+    installs.forEach((i) => {
+      if (i.app_version) set.add(i.app_version);
+    });
+    return Array.from(set).sort().reverse();
+  }, [installs]);
+
+  // Platform Split
   const platformStats = useMemo(() => {
     const map = new Map<string, number>();
-    for (const item of installs) {
-      const p = (item.platform || 'web').toLowerCase().trim();
+    installs.forEach((item) => {
+      const p = (item.platform || 'web').toLowerCase();
       map.set(p, (map.get(p) || 0) + 1);
-    }
+    });
 
-    const primaryPlatforms = ['android', 'web', 'ios'];
-    for (const key of map.keys()) {
-      if (!primaryPlatforms.includes(key)) primaryPlatforms.push(key);
-    }
-
-    return primaryPlatforms.map((p) => {
-      const count = map.get(p) || 0;
-      let label = 'Web';
-      if (p === 'android') label = 'Android';
-      else if (p === 'ios') label = 'iOS';
-      else label = p.toUpperCase();
-
+    const list = ['android', 'web', 'ios'].map((key) => {
+      const c = map.get(key) || 0;
       return {
-        platform: p,
-        label,
-        count,
-        percentage: totalInstalls > 0 ? (count / totalInstalls) * 100 : 0,
+        platform: key,
+        label: key === 'android' ? 'Android APK' : key === 'web' ? 'Web Browser' : 'iOS',
+        count: c,
+        percentage: totalInstalls > 0 ? (c / totalInstalls) * 100 : 0,
       };
     });
+
+    return list;
   }, [installs, totalInstalls]);
+
+  // Filtered and Sorted Devices List
+  const filteredDevices = useMemo(() => {
+    let list = [...installs];
+
+    if (deviceSearch.trim()) {
+      const q = deviceSearch.toLowerCase().trim();
+      list = list.filter((item) => {
+        const name = (item.device_name || item.name || '').toLowerCase();
+        const model = (item.model || '').toLowerCase();
+        const mfg = (item.manufacturer || '').toLowerCase();
+        const os = (item.os || '').toLowerCase();
+        const ver = (item.app_version || '').toLowerCase();
+        const id = (item.install_id || '').toLowerCase();
+        return (
+          name.includes(q) ||
+          model.includes(q) ||
+          mfg.includes(q) ||
+          os.includes(q) ||
+          ver.includes(q) ||
+          id.includes(q)
+        );
+      });
+    }
+
+    if (platformFilter !== 'all') {
+      list = list.filter((item) => (item.platform || '').toLowerCase().includes(platformFilter));
+    }
+
+    if (versionFilter !== 'all') {
+      list = list.filter((item) => (item.app_version || '') === versionFilter);
+    }
+
+    list.sort((a, b) => {
+      const timeA = a.last_seen ? new Date(a.last_seen).getTime() : 0;
+      const timeB = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+      return lastSeenSortDesc ? timeB - timeA : timeA - timeB;
+    });
+
+    return list;
+  }, [installs, deviceSearch, platformFilter, versionFilter, lastSeenSortDesc]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#070b18] text-white flex flex-col overflow-hidden animate-fadeIn">
-      {/* Top Bar Header */}
-      <div className="px-4 py-3.5 border-b border-white/10 bg-slate-950/90 backdrop-blur-md flex items-center justify-between shrink-0">
+    <div className="fixed inset-0 z-50 bg-[#070a16] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-200">
+      {/* Top Header */}
+      <div className="px-4 sm:px-6 py-3.5 border-b border-cyan-500/20 bg-slate-950/80 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+          <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
             <Terminal className="w-4 h-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-black text-white tracking-wide">Developer</h2>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
-                v{appVersionInfo.version} (Build {appVersionInfo.build})
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400">Hidden developer administration console</p>
+            <h2 className="text-sm font-black text-white tracking-wider flex items-center gap-2">
+              <span>DEVELOPER PORTAL</span>
+              {session && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                  ADMIN AUTHENTICATED
+                </span>
+              )}
+            </h2>
+            <p className="text-[10px] text-slate-400 font-mono">
+              Build {appVersionInfo.build} • {BUILD_DATE}
+            </p>
           </div>
         </div>
 
         <button
           type="button"
           onClick={handleClose}
-          className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10"
+          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
+          aria-label="Close Developer Page"
         >
           <X className="w-4 h-4" />
-          <span>Close</span>
         </button>
       </div>
 
-      {/* Screen Body */}
+      {/* Main Content Area */}
       {!session ? (
-        /* Sign-In View */
+        /* =========================================================================
+            STATE 1: ADMIN SIGN-IN SCREEN
+           ========================================================================= */
         <div className="flex-1 overflow-y-auto flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-3xl border border-cyan-500/30 bg-gradient-to-b from-slate-900/90 via-slate-950/95 to-slate-950 p-6 sm:p-7 shadow-2xl shadow-cyan-950/30 space-y-5 relative overflow-hidden">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-cyan-950/70 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-md">
-                <Lock className="w-5 h-5" />
+          <div className="max-w-md w-full rounded-3xl border border-cyan-500/30 bg-slate-900/90 p-6 sm:p-8 shadow-2xl backdrop-blur-xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 mb-1">
+                <Lock className="w-6 h-6" />
               </div>
-              <div>
-                <h3 className="text-base font-bold text-white tracking-wide">Admin Sign-In</h3>
-                <p className="text-xs text-slate-400">JTEC Main Supabase source</p>
-              </div>
+              <h3 className="text-xl font-black text-white tracking-wide">Developer Sign In</h3>
+              <p className="text-xs text-slate-400">
+                Sign in with your JTEC admin credentials to access telemetry and version control.
+              </p>
             </div>
 
-            {/* Error strictly "Access denied" per requirement */}
             {accessDenied && (
-              <div className="p-3 rounded-2xl bg-red-950/50 border border-red-500/40 flex items-center gap-2 text-xs text-red-200 font-semibold animate-shake">
+              <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-500/40 text-xs text-red-200 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <span>Access denied</span>
+                <span>Access denied. Check your email, password, or admin permissions.</span>
               </div>
             )}
 
-            <form onSubmit={handleSignIn} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Email
-                </label>
+            <form onSubmit={handleSignIn} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">Email</label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="admin@jtecmusic.com"
-                  autoComplete="off"
+                  autoComplete="username"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 focus:border-cyan-400 focus:outline-none text-white placeholder-slate-500 text-xs transition"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Password
-                </label>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">Password</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  autoComplete="off"
+                  autoComplete="current-password"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 focus:border-cyan-400 focus:outline-none text-white placeholder-slate-500 text-xs transition"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={isSigningIn}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 mt-2"
+                className="w-full py-3 px-4 rounded-xl font-bold text-xs bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white shadow-lg shadow-cyan-500/25 active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {isSigningIn ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+                    <RefreshCw className="w-4 h-4 animate-spin" />
                     <span>Signing in...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-3.5 h-3.5 text-slate-950" />
-                    <span>Sign In</span>
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Authenticate</span>
                   </>
                 )}
               </button>
             </form>
 
-            <div className="pt-2 border-t border-white/5 text-[10px] text-slate-400 text-center">
-              Uses normal Supabase Auth with anon key. Never uses a service_role key.
+            <div className="pt-2 text-center text-[11px] text-slate-500">
+              Session signs out automatically when closed. Never stores password.
             </div>
           </div>
         </div>
       ) : (
-        /* Authenticated Developer Dashboard with 3 Tabs */
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tabs bar */}
-          <div className="px-4 border-b border-white/10 bg-slate-900/60 flex items-center justify-between gap-2 overflow-x-auto shrink-0">
-            <div className="flex items-center gap-1 py-2">
-              <button
-                type="button"
-                onClick={() => setActiveTab('usage')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-                  activeTab === 'usage'
-                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Usage</span>
-              </button>
+        /* =========================================================================
+            STATE 2: AUTHENTICATED TABS
+           ========================================================================= */
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Tab Navigation */}
+          <div className="px-4 sm:px-6 pt-3 border-b border-white/10 bg-slate-950/60 flex items-center gap-2 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setActiveTab('usage')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+                activeTab === 'usage'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Usage Telemetry</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('min_version')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-                  activeTab === 'min_version'
-                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                }`}
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>Minimum version</span>
-              </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('min_version')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+                activeTab === 'min_version'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Minimum Version</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('connection')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
-                  activeTab === 'connection'
-                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                }`}
-              >
-                <Wifi className="w-3.5 h-3.5" />
-                <span>Connection test</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 py-2">
-              <span className="text-[11px] text-slate-400 truncate max-w-[140px] hidden sm:inline" title={session.user?.email || 'Admin'}>
-                {session.user?.email}
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('connection')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+                activeTab === 'connection'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Wifi className="w-3.5 h-3.5" />
+              <span>Connection Test</span>
+            </button>
           </div>
 
-          {/* Scrollable Tab Content */}
+          {/* Tab Panels */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
             {/* =========================================================================
                 TAB A: USAGE
                ========================================================================= */}
             {activeTab === 'usage' && (
-              <div className="space-y-5 max-w-5xl mx-auto">
+              <div className="space-y-6 max-w-5xl mx-auto">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black text-white tracking-wide">Usage Telemetry</h3>
@@ -645,7 +760,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 </div>
 
                 {/* Platform Split & Version Lists */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                   {/* Platform Split */}
                   <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/70 p-5 shadow-xl space-y-4">
                     <div className="flex items-center justify-between">
@@ -713,9 +828,9 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-mono font-bold text-white">{v.version}</span>
                                 {v.maxBuild > 0 && (
-                                  <span className="text-[10px] font-mono text-slate-400">
-                                    (Build {v.maxBuild})
-                                  </span>
+                                   <span className="text-[10px] font-mono text-slate-400">
+                                     (Build {v.maxBuild})
+                                   </span>
                                 )}
                                 {idx === 0 && (
                                   <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400 text-cyan-300">
@@ -745,6 +860,231 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* =========================================================================
+                    DEVICES SECTION: Totals (APK & Web), Searchable & Filterable List
+                   ========================================================================= */}
+                <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/80 p-5 sm:p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
+                        <Smartphone className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-black text-white">Devices Directory</h4>
+                        <p className="text-[11px] text-slate-400">
+                          Inspect individual installations, edit device names, and view client telemetry
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Totals for Android APK and Web */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div className="p-4 rounded-2xl bg-slate-950/70 border border-emerald-500/30 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Android App (APK) Installs
+                        </span>
+                        <div className="text-2xl font-black text-emerald-400 font-mono">
+                          {totalAndroidInstalls.toLocaleString()}
+                        </div>
+                        <span className="text-[10px] text-slate-500">Native Android packages</span>
+                      </div>
+                      <Smartphone className="w-8 h-8 text-emerald-400/40" />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-slate-950/70 border border-cyan-500/30 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Web Installs
+                        </span>
+                        <div className="text-2xl font-black text-cyan-400 font-mono">
+                          {totalWebInstalls.toLocaleString()}
+                        </div>
+                        <span className="text-[10px] text-slate-500">Browser & PWA sessions</span>
+                      </div>
+                      <Globe className="w-8 h-8 text-cyan-400/40" />
+                    </div>
+                  </div>
+
+                  {/* Search and Filters Bar */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1">
+                    {/* Search Input */}
+                    <div className="sm:col-span-5 relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={deviceSearch}
+                        onChange={(e) => setDeviceSearch(e.target.value)}
+                        placeholder="Search device name, model, OS or version..."
+                        className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Platform Filter */}
+                    <div className="sm:col-span-3">
+                      <select
+                        value={platformFilter}
+                        onChange={(e: any) => setPlatformFilter(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                      >
+                        <option value="all">All Platforms</option>
+                        <option value="android">Android (APK)</option>
+                        <option value="web">Web Browser</option>
+                        <option value="ios">iOS</option>
+                      </select>
+                    </div>
+
+                    {/* Version Filter */}
+                    <div className="sm:col-span-2">
+                      <select
+                        value={versionFilter}
+                        onChange={(e) => setVersionFilter(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                      >
+                        <option value="all">All Versions</option>
+                        {distinctVersions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Last Seen Sort Toggle */}
+                    <div className="sm:col-span-2">
+                      <button
+                        type="button"
+                        onClick={() => setLastSeenSortDesc(!lastSeenSortDesc)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-900 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      >
+                        <ArrowUpDown className="w-3 h-3 text-cyan-400" />
+                        <span>{lastSeenSortDesc ? 'Newest' : 'Oldest'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Devices List Rows */}
+                  {filteredDevices.length === 0 ? (
+                    <div className="p-8 rounded-2xl bg-slate-950/40 border border-white/5 text-center text-xs text-slate-400">
+                      No matching devices found.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                      {filteredDevices.map((row) => {
+                        const displayName = row.device_name || row.name || 'Unnamed';
+                        const isEditingThis = editingDeviceId === row.install_id;
+                        const platformLower = (row.platform || 'web').toLowerCase();
+                        const isAndroid = platformLower.includes('android');
+                        const isIos = platformLower.includes('ios');
+
+                        const mfgAndModel = [row.manufacturer, row.model].filter(Boolean).join(' ') || 'Device unknown';
+                        const osStr = row.os || 'OS unknown';
+                        const firstSeenStr = row.first_seen ? new Date(row.first_seen).toLocaleString() : 'N/A';
+                        const lastSeenStr = row.last_seen ? new Date(row.last_seen).toLocaleString() : 'N/A';
+
+                        return (
+                          <div
+                            key={row.install_id}
+                            className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/30 transition space-y-3"
+                          >
+                            {/* Device Name Row & Platform Badge */}
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {isEditingThis ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      maxLength={40}
+                                      value={editingDeviceNameInput}
+                                      onChange={(e) => setEditingDeviceNameInput(e.target.value)}
+                                      placeholder="Device name (e.g. Living Room Tablet)"
+                                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-cyan-400 text-xs text-white font-semibold focus:outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveDeviceName(row.install_id)}
+                                      disabled={isSavingDeviceName}
+                                      className="p-1.5 rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition cursor-pointer"
+                                      title="Save device name"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleCancelEditDevice}
+                                      className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                                      title="Cancel"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-black text-white">{displayName}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditDevice(row)}
+                                      className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-cyan-300 transition cursor-pointer"
+                                      title="Edit device name"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                    isAndroid
+                                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                      : isIos
+                                      ? 'bg-purple-500/15 border-purple-500/40 text-purple-300'
+                                      : 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                                  }`}
+                                >
+                                  {isAndroid ? 'Android' : isIos ? 'iOS' : 'Web'}
+                                </span>
+                                <span className="text-[11px] font-mono text-cyan-400 px-2 py-0.5 rounded-lg bg-slate-900 border border-white/5">
+                                  {row.app_version || 'v1.0.1'}
+                                  {row.build ? ` (Build ${row.build})` : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Details Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-white/5 text-[11px]">
+                              <div>
+                                <span className="text-slate-500 block text-[10px] uppercase font-bold">Hardware</span>
+                                <span className="text-slate-200 font-medium truncate block">{mfgAndModel}</span>
+                                <span className="text-slate-400 text-[10px]">{osStr}</span>
+                              </div>
+
+                              <div>
+                                <span className="text-slate-500 block text-[10px] uppercase font-bold">Activity</span>
+                                <span className="text-slate-300 font-mono text-[10px] block">
+                                  Last: <strong className="text-slate-200">{lastSeenStr}</strong>
+                                </span>
+                                <span className="text-slate-500 font-mono text-[10px] block">
+                                  First: {firstSeenStr}
+                                </span>
+                              </div>
+
+                              <div className="sm:text-right flex sm:flex-col justify-between sm:justify-start items-center sm:items-end">
+                                <span className="text-slate-500 text-[10px] uppercase font-bold">Total Opens</span>
+                                <span className="text-xs font-mono font-bold text-cyan-300">
+                                  {row.opens ?? 1} {row.opens === 1 ? 'open' : 'opens'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -811,6 +1151,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
                   {/* Form fields */}
                   <div className="space-y-4 pt-2">
+                    {/* Minimum Required Build */}
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
                         Minimum Required Build Number
@@ -826,6 +1167,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       />
                     </div>
 
+                    {/* Update Message */}
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
                         Update Message for Blocked Users
@@ -839,21 +1181,67 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       />
                     </div>
 
+                    {/* Multi-line Notes */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                          Release Notes Bullets (Multi-line)
+                        </label>
+                        <span className="text-[10px] text-slate-400">One bullet per line starting with &quot;- &quot;</span>
+                      </div>
+                      <textarea
+                        rows={4}
+                        value={editingNotes}
+                        onChange={(e) => setEditingNotes(e.target.value)}
+                        placeholder="- Enhanced playback performance and instant caching&#10;- Fixed update download resume logic&#10;- Brand new device tracking portal"
+                        className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white text-xs font-mono focus:border-cyan-400 focus:outline-none resize-y"
+                      />
+                    </div>
+
+                    {/* APK URL */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                        Direct APK Download URL
+                      </label>
+                      <input
+                        type="url"
+                        value={editingApkUrl}
+                        onChange={(e) => setEditingApkUrl(e.target.value)}
+                        placeholder="https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk"
+                        className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white font-mono text-xs focus:border-cyan-400 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Leave blank to use the default latest release link.
+                      </p>
+                    </div>
+
                     {/* Warning requirement */}
                     <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 flex items-start gap-2.5 text-xs text-amber-200">
                       <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                       <span>Apps with a build below this number will be blocked until they update.</span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmModal(true)}
-                      disabled={isSavingConfig || !editingMinBuild}
-                      className="w-full py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-lg shadow-cyan-500/20 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Save Minimum Version</span>
-                    </button>
+                    {/* Action Buttons: Preview & Save */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowRequiredUpdatePreview(true)}
+                        className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                      >
+                        <Eye className="w-4 h-4 text-cyan-400" />
+                        <span>Preview Screen</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmModal(true)}
+                        disabled={isSavingConfig || !editingMinBuild}
+                        className="py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-lg shadow-cyan-500/20 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Save Minimum Version</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1000,6 +1388,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               <p className="text-slate-300">
                 Are you sure you want to set the minimum required build to <strong className="text-white font-mono">{editingMinBuild}</strong>?
               </p>
+              {editingNotes && (
+                <div className="mt-2 pt-2 border-t border-white/5">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Notes Bullets:</span>
+                  <div className="text-[11px] text-slate-300 space-y-0.5">
+                    {parseConfigNotes(editingNotes).map((b, i) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span className="text-cyan-400">•</span>
+                        <span>{b}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2.5 pt-2">
@@ -1033,6 +1434,18 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             </div>
           </div>
         </div>
+      )}
+
+      {/* Live Preview of Required Update Screen */}
+      {showRequiredUpdatePreview && (
+        <RequiredUpdateOverlay
+          versionName={editingMinBuild ? `Build ${editingMinBuild}` : 'Build 999'}
+          customMessage={editingMessage || 'An update is required to continue using JTEC MUSIC.'}
+          notesBullets={parseConfigNotes(editingNotes)}
+          apkUrl={editingApkUrl}
+          isPreview={true}
+          onClosePreview={() => setShowRequiredUpdatePreview(false)}
+        />
       )}
     </div>
   );

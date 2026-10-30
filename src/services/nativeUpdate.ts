@@ -1,10 +1,13 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { AppLauncher } from '@capacitor/app-launcher';
 import { Network } from '@capacitor/network';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileOpener } from '@capawesome-team/capacitor-file-opener';
 import { APP_VERSION } from '../version';
+
+export const LATEST_JSON_URL =
+  'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/latest.json';
 
 export const GITHUB_LATEST_RELEASE_URL =
   'https://api.github.com/repos/fatormajohn999-gif/JTEC-music-studio-/releases/latest';
@@ -13,13 +16,36 @@ export const APK_DOWNLOAD_URL =
   'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk';
 
 const LS_KEY_LAST_CHECK = 'jtec_last_native_update_check';
+const LS_KEY_LAST_FAILED_CHECK = 'jtec_last_native_update_failed_check';
+const LS_KEY_CACHED_PENDING_UPDATE = 'jtec_cached_pending_update';
 const LS_KEY_DISMISSED_UNTIL = 'jtec_native_update_dismissed_until';
 const LS_KEY_LAST_RUN_BUILD = 'jtec_last_run_build';
 const LS_KEY_SAVED_RELEASE_NOTES = 'jtec_saved_release_notes';
 const LS_KEY_SAVED_RELEASE_VERSION = 'jtec_saved_release_version';
 
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const TWENTY_MINUTES_MS = 20 * 60 * 1000;
+const TWO_MINUTES_MS = 2 * 60 * 1000;
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+
+export type UpdateCheckErrorReason =
+  | 'offline'
+  | 'timeout'
+  | 'rate-limited'
+  | 'server'
+  | 'not-found'
+  | 'unknown';
+
+export class UpdateCheckError extends Error {
+  reason: UpdateCheckErrorReason;
+  statusCode?: number;
+
+  constructor(reason: UpdateCheckErrorReason, statusCode?: number, message?: string) {
+    super(message || reason);
+    this.name = 'UpdateCheckError';
+    this.reason = reason;
+    this.statusCode = statusCode;
+  }
+}
 
 export interface NativeUpdateInfo {
   hasUpdate: boolean;
@@ -33,6 +59,13 @@ export interface NativeUpdateInfo {
   notesBullets: string[];
   isRequired: boolean;
   rawBody: string;
+  source?: 'latest.json' | 'github-api';
+
+  // Error information if update check could not complete
+  error?: UpdateCheckErrorReason;
+  statusCode?: number;
+  errorMessage?: string;
+  reasonCode?: string;
 }
 
 /**
@@ -172,79 +205,292 @@ export async function isDeviceOnline(): Promise<boolean> {
   }
 }
 
+/**
+ * Low-level HTTP request helper:
+ * - On native Android: uses CapacitorHttp (native HTTP requests, following redirects, no CORS/WebView limits).
+ * - On web: uses fetch with an AbortController 15-second timeout.
+ */
+async function makeHttpRequest(url: string, timeoutMs = 15000): Promise<{ status: number; data: any }> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const response = await CapacitorHttp.get({
+        url,
+        headers: {
+          Accept: 'application/json, application/vnd.github.v3+json, text/plain, */*',
+        },
+        connectTimeout: timeoutMs,
+        readTimeout: timeoutMs,
+      });
+
+      let responseData = response.data;
+      if (typeof responseData === 'string') {
+        try {
+          responseData = JSON.parse(responseData);
+        } catch {
+          // Leave as string if not JSON
+        }
+      }
+
+      return {
+        status: response.status,
+        data: responseData,
+      };
+    } catch (err: any) {
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (msg.includes('timeout') || msg.includes('timed out')) {
+        throw new UpdateCheckError('timeout', undefined, 'Request timed out');
+      }
+      if (msg.includes('offline') || msg.includes('network') || msg.includes('no internet')) {
+        throw new UpdateCheckError('offline', undefined, "You're offline.");
+      }
+      throw err;
+    }
+  } else {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json, application/vnd.github.v3+json, text/plain, */*',
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      let data: any = null;
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+
+      return {
+        status: response.status,
+        data,
+      };
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError' || String(err).includes('aborted')) {
+        throw new UpdateCheckError('timeout', undefined, 'Request timed out');
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * Executes a request with a 15-second timeout and 1 retry after 2 seconds.
+ */
+async function fetchWithRetry(url: string, isLatestJson: boolean): Promise<{ status: number; data: any }> {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await makeHttpRequest(url, 15000);
+
+      // If latest.json returns 404, it means the asset does not exist on this release. Skip retry, fall back immediately.
+      if (isLatestJson && res.status === 404) {
+        throw new UpdateCheckError('not-found', 404, 'latest.json not found in release');
+      }
+
+      // Successful HTTP response
+      if (res.status >= 200 && res.status < 300) {
+        return res;
+      }
+
+      // Rate limited
+      if (res.status === 403 || res.status === 429) {
+        throw new UpdateCheckError('rate-limited', res.status, `Rate limit reached (${res.status})`);
+      }
+
+      // Server error or other status
+      throw new UpdateCheckError('server', res.status, `Server error ${res.status}`);
+    } catch (err: any) {
+      lastError = err;
+      // If latest.json returned 404, do not wait 2 seconds, immediately bubble up to fallback
+      if (err instanceof UpdateCheckError && err.reason === 'not-found') {
+        throw err;
+      }
+      // If attempt 1 failed, wait 2 seconds before retry
+      if (attempt === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  throw lastError;
+}
+
 export const NativeUpdateService = {
   /**
-   * Checks for an Android APK release on GitHub.
-   * If manual is false, respects the 6-hour check throttle, and only runs on native platform.
+   * Reads any currently cached pending update from localStorage.
+   * If the installed build is already >= cached build, clears the cache and returns null.
    */
-  async checkForUpdate(manual = false): Promise<NativeUpdateInfo | null> {
-    if (!Capacitor.isNativePlatform() && !manual) {
+  getCachedPendingUpdateSync(): NativeUpdateInfo | null {
+    try {
+      const raw = localStorage.getItem(LS_KEY_CACHED_PENDING_UPDATE);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.hasUpdate || !parsed.latestBuild) return null;
+
+      const match = APP_VERSION.match(/^([^(]+)(?:\s*\(Build\s*(\d+)\))?/i);
+      let currentBuild = 101;
+      if (match && match[2]) {
+        const b = parseInt(match[2], 10);
+        if (!isNaN(b)) currentBuild = b;
+      }
+      if (parsed.latestBuild <= currentBuild) {
+        localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
+        return null;
+      }
+      return parsed;
+    } catch {
       return null;
     }
+  },
 
+  /**
+   * Clears any cached pending update.
+   */
+  clearCachedPendingUpdate(): void {
+    try {
+      localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
+    } catch {}
+  },
+
+  /**
+   * Checks for an Android APK release.
+   * - Reads latest.json FIRST.
+   * - On Android, uses CapacitorHttp (native, no WebView fetch, handles redirects). On Web, uses fetch.
+   * - If latest.json cannot be read, falls back to GitHub API (also via CapacitorHttp on Android).
+   * - Saves last check time ONLY after a SUCCESSFUL check.
+   * - 20 minute limit for automatic checks. Failed checks can retry after 2 minutes. Manual checks always run.
+   * - Returns clear error reasons ("offline", "timeout", "rate-limited", "server" with status code).
+   */
+  async checkForUpdate(manual = false): Promise<NativeUpdateInfo | null> {
+    const appInfo = await getCurrentAppVersion();
+    const currentBuild = appInfo.build;
+    const currentVersionName = appInfo.version;
+
+    // 1. Check network connection first
+    const online = await isDeviceOnline();
+    if (!online) {
+      if (!manual) {
+        try {
+          localStorage.setItem(LS_KEY_LAST_FAILED_CHECK, String(Date.now()));
+        } catch {}
+      }
+      return {
+        hasUpdate: false,
+        versionName: currentVersionName,
+        latestBuild: currentBuild,
+        currentBuild,
+        currentVersionName,
+        downloadUrl: APK_DOWNLOAD_URL,
+        fileSizeBytes: 0,
+        formattedSize: '',
+        notesBullets: [],
+        isRequired: false,
+        rawBody: '',
+        error: 'offline',
+        errorMessage: "You're offline.",
+        reasonCode: undefined,
+      };
+    }
+
+    // 2. Throttle check for automatic checks (manual checks from Settings always run)
     const now = Date.now();
-
     if (!manual) {
       try {
         const lastCheck = parseInt(localStorage.getItem(LS_KEY_LAST_CHECK) || '0', 10);
-        if (now - lastCheck < SIX_HOURS_MS) {
-          return null;
+        if (now - lastCheck < TWENTY_MINUTES_MS) {
+          // Within 20 minute throttle
+          return NativeUpdateService.getCachedPendingUpdateSync();
+        }
+        const lastFailed = parseInt(localStorage.getItem(LS_KEY_LAST_FAILED_CHECK) || '0', 10);
+        if (now - lastFailed < TWO_MINUTES_MS) {
+          // Failed check can retry after 2 minutes
+          return NativeUpdateService.getCachedPendingUpdateSync();
         }
       } catch {
         // Ignore localStorage read errors
       }
     }
 
+    let updateFound: NativeUpdateInfo | null = null;
+    let lastFailureReason: UpdateCheckErrorReason = 'server';
+    let lastStatusCode: number | undefined = undefined;
+
+    // 3. SOURCE 1: Read latest.json FIRST
     try {
-      localStorage.setItem(LS_KEY_LAST_CHECK, String(now));
-    } catch {
-      // Ignore
+      const res = await fetchWithRetry(LATEST_JSON_URL, true);
+      const data = res.data;
+      if (data && (typeof data.build === 'number' || data.tag || data.versionName)) {
+        let buildNum = 0;
+        if (typeof data.build === 'number' && !isNaN(data.build) && data.build > 0) {
+          buildNum = data.build;
+        } else if (data.tag || data.versionName) {
+          buildNum = parseTagBuildNumber(data.tag || data.versionName)?.latestBuild || 0;
+        }
+
+        const verName = data.versionName || data.tag || `Build ${buildNum}`;
+        const sizeBytes = typeof data.sizeBytes === 'number' && data.sizeBytes > 0 ? data.sizeBytes : 0;
+        const bullets: string[] = Array.isArray(data.notes)
+          ? data.notes.map((n: any) => String(n).trim()).filter(Boolean).slice(0, 5)
+          : [];
+        const isRequired = Boolean(data.required);
+        const downloadUrl = data.apkUrl || APK_DOWNLOAD_URL;
+
+        updateFound = {
+          hasUpdate: buildNum > currentBuild,
+          versionName: verName,
+          latestBuild: buildNum,
+          currentBuild,
+          currentVersionName,
+          downloadUrl,
+          fileSizeBytes: sizeBytes,
+          formattedSize: formatBytes(sizeBytes),
+          notesBullets: bullets,
+          isRequired,
+          rawBody: Array.isArray(data.notes) ? data.notes.join('\n') : '',
+          source: 'latest.json',
+        };
+      }
+    } catch (err: any) {
+      if (err instanceof UpdateCheckError) {
+        if (err.reason !== 'not-found') {
+          lastFailureReason = err.reason;
+          lastStatusCode = err.statusCode;
+        }
+      }
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    // 4. SOURCE 2: Fallback to GitHub API (also via CapacitorHttp on Android)
+    if (!updateFound) {
+      try {
+        const res = await fetchWithRetry(GITHUB_LATEST_RELEASE_URL, false);
+        const releaseData = res.data;
+        const tagName: string = releaseData?.tag_name || '';
+        const rawBody: string = releaseData?.body || '';
+        const assets: any[] = Array.isArray(releaseData?.assets) ? releaseData.assets : [];
 
-    try {
-      const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-        },
-        cache: 'no-store',
-        signal: controller.signal,
-      });
+        const apkAsset =
+          assets.find((a) => a.name && a.name.toLowerCase() === 'jtec-music.apk') ||
+          assets.find((a) => a.name && a.name.toLowerCase().endsWith('.apk'));
 
-      clearTimeout(timeoutId);
+        const downloadUrl = apkAsset?.browser_download_url || APK_DOWNLOAD_URL;
+        const fileSizeBytes = apkAsset?.size || 0;
+        const formattedSize = formatBytes(fileSizeBytes);
+        const { bullets: notesBullets, isRequired } = parseReleaseNotes(rawBody);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
-      }
+        const parsed = parseTagBuildNumber(tagName);
+        const latestBuild = parsed?.latestBuild || 0;
+        const versionName = parsed?.versionName || tagName || 'latest';
 
-      const releaseData = await response.json();
-      const tagName: string = releaseData?.tag_name || '';
-      const rawBody: string = releaseData?.body || '';
-      const assets: any[] = Array.isArray(releaseData?.assets) ? releaseData.assets : [];
-
-      // Find the JTEC-MUSIC.apk asset or fallback to any .apk asset
-      const apkAsset =
-        assets.find((a) => a.name && a.name.toLowerCase() === 'jtec-music.apk') ||
-        assets.find((a) => a.name && a.name.toLowerCase().endsWith('.apk'));
-
-      const downloadUrl = apkAsset?.browser_download_url || APK_DOWNLOAD_URL;
-      const fileSizeBytes = apkAsset?.size || 0;
-      const formattedSize = formatBytes(fileSizeBytes);
-
-      const { bullets: notesBullets, isRequired } = parseReleaseNotes(rawBody);
-
-      const parsed = parseTagBuildNumber(tagName);
-      const appInfo = await getCurrentAppVersion();
-      const currentBuild = appInfo.build;
-      const currentVersionName = appInfo.version;
-
-      if (!parsed) {
-        return {
-          hasUpdate: false,
-          versionName: tagName || 'latest',
-          latestBuild: 0,
+        updateFound = {
+          hasUpdate: latestBuild > currentBuild,
+          versionName,
+          latestBuild,
           currentBuild,
           currentVersionName,
           downloadUrl,
@@ -253,39 +499,73 @@ export const NativeUpdateService = {
           notesBullets,
           isRequired,
           rawBody,
+          source: 'github-api',
         };
-      }
-
-      const hasUpdate = parsed.latestBuild > currentBuild;
-
-      // When update is found, persist release info for post-update "What's new" dialog
-      if (hasUpdate) {
-        try {
-          localStorage.setItem(LS_KEY_SAVED_RELEASE_NOTES, JSON.stringify(notesBullets));
-          localStorage.setItem(LS_KEY_SAVED_RELEASE_VERSION, parsed.versionName);
-        } catch {
-          // Ignore
+      } catch (err: any) {
+        if (err instanceof UpdateCheckError) {
+          lastFailureReason = err.reason;
+          lastStatusCode = err.statusCode;
+        } else {
+          lastFailureReason = 'server';
         }
       }
-
-      return {
-        hasUpdate,
-        versionName: parsed.versionName,
-        latestBuild: parsed.latestBuild,
-        currentBuild,
-        currentVersionName,
-        downloadUrl,
-        fileSizeBytes,
-        formattedSize,
-        notesBullets,
-        isRequired,
-        rawBody,
-      };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      console.warn('[NativeUpdate] Check failed:', err);
-      throw err;
     }
+
+    // 5. SUCCESSFUL CHECK
+    if (updateFound) {
+      try {
+        localStorage.setItem(LS_KEY_LAST_CHECK, String(now));
+        localStorage.removeItem(LS_KEY_LAST_FAILED_CHECK);
+      } catch {}
+
+      if (updateFound.hasUpdate) {
+        try {
+          localStorage.setItem(LS_KEY_CACHED_PENDING_UPDATE, JSON.stringify(updateFound));
+          localStorage.setItem(LS_KEY_SAVED_RELEASE_NOTES, JSON.stringify(updateFound.notesBullets));
+          localStorage.setItem(LS_KEY_SAVED_RELEASE_VERSION, updateFound.versionName);
+        } catch {}
+      } else {
+        // App is already up to date, clear any stale cached pending update
+        try {
+          localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
+        } catch {}
+      }
+
+      return updateFound;
+    }
+
+    // 6. FAILED CHECK
+    try {
+      localStorage.setItem(LS_KEY_LAST_FAILED_CHECK, String(now));
+    } catch {}
+
+    const isRateLimited = lastFailureReason === 'rate-limited';
+    const isTimeout = lastFailureReason === 'timeout';
+    const reasonCode = lastStatusCode
+      ? `Code: ${lastStatusCode}`
+      : isRateLimited
+      ? 'Code: 403'
+      : isTimeout
+      ? 'Code: timeout'
+      : `Code: ${lastFailureReason}`;
+
+    return {
+      hasUpdate: false,
+      versionName: currentVersionName,
+      latestBuild: currentBuild,
+      currentBuild,
+      currentVersionName,
+      downloadUrl: APK_DOWNLOAD_URL,
+      fileSizeBytes: 0,
+      formattedSize: '',
+      notesBullets: [],
+      isRequired: false,
+      rawBody: '',
+      error: lastFailureReason,
+      statusCode: lastStatusCode,
+      errorMessage: "Couldn't check right now. Check your internet.",
+      reasonCode,
+    };
   },
 
   /**
@@ -423,17 +703,18 @@ export const NativeUpdateService = {
   /**
    * Opens the direct APK download URL in the browser via AppLauncher.openUrl.
    */
-  async openBrowserDownload(): Promise<void> {
+  async openBrowserDownload(customUrl?: string): Promise<void> {
+    const targetUrl = customUrl?.trim() || APK_DOWNLOAD_URL;
     try {
       if (Capacitor.isNativePlatform()) {
-        await AppLauncher.openUrl({ url: APK_DOWNLOAD_URL });
+        await AppLauncher.openUrl({ url: targetUrl });
       } else {
-        window.open(APK_DOWNLOAD_URL, '_blank');
+        window.open(targetUrl, '_blank');
       }
     } catch (err) {
       console.error('[NativeUpdate] AppLauncher openUrl error:', err);
       try {
-        window.open(APK_DOWNLOAD_URL, '_blank');
+        window.open(targetUrl, '_blank');
       } catch (fallbackErr) {
         console.error('[NativeUpdate] window.open fallback error:', fallbackErr);
       }

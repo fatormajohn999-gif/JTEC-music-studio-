@@ -16,6 +16,7 @@ const KEY_VISUALIZER = 'jtec_persistent_visualizer_v1';
 const KEY_PLAYBACK = 'jtec_persistent_playback_v1';
 const KEY_DOWNLOADS = 'jtec_persistent_downloads_v1';
 const KEY_SORT_VIEW = 'jtec_persistent_sort_view_v1';
+const KEY_DEVICE_NAME = 'jtec_persistent_device_name_v1';
 
 export interface PersistentAudioEffects extends AudioEffectsConfig {
   preservesPitch: boolean;
@@ -408,17 +409,52 @@ export const PersistentSettingsService = {
     return { effects, visualizer };
   },
 
+  // --------------------------------------------------------------------------
+  // 7. DEVICE NAME (OPTIONAL, UP TO 40 CHARS)
+  // --------------------------------------------------------------------------
+  getDeviceNameSync(): string {
+    try {
+      const val = localStorage.getItem(KEY_DEVICE_NAME);
+      return (val || '').slice(0, 40);
+    } catch {
+      return '';
+    }
+  },
+
+  async getDeviceName(): Promise<string> {
+    const raw = await getNative(KEY_DEVICE_NAME);
+    if (raw !== null && raw !== undefined) {
+      return raw.slice(0, 40);
+    }
+    return this.getDeviceNameSync();
+  },
+
+  async saveDeviceName(name: string): Promise<string> {
+    const trimmed = (name || '').trim().slice(0, 40);
+    const prev = this.getDeviceNameSync();
+    await setNative(KEY_DEVICE_NAME, trimmed);
+    if (trimmed !== prev) {
+      window.dispatchEvent(
+        new CustomEvent('jtec:device-name-changed', {
+          detail: { deviceName: trimmed },
+        })
+      );
+    }
+    return trimmed;
+  },
+
   // Initial one-time hydration and migration
   async initialize(): Promise<void> {
     if (Capacitor.isNativePlatform()) {
       try {
         // Read native values into localStorage if not present
-        const [eff, vis, play, down, sort] = await Promise.all([
+        const [eff, vis, play, down, sort, dev] = await Promise.all([
           Preferences.get({ key: KEY_EFFECTS }),
           Preferences.get({ key: KEY_VISUALIZER }),
           Preferences.get({ key: KEY_PLAYBACK }),
           Preferences.get({ key: KEY_DOWNLOADS }),
           Preferences.get({ key: KEY_SORT_VIEW }),
+          Preferences.get({ key: KEY_DEVICE_NAME }),
         ]);
 
         if (eff.value) localStorage.setItem(KEY_EFFECTS, eff.value);
@@ -426,6 +462,7 @@ export const PersistentSettingsService = {
         if (play.value) localStorage.setItem(KEY_PLAYBACK, play.value);
         if (down.value) localStorage.setItem(KEY_DOWNLOADS, down.value);
         if (sort.value) localStorage.setItem(KEY_SORT_VIEW, sort.value);
+        if (dev.value) localStorage.setItem(KEY_DEVICE_NAME, dev.value);
       } catch (err) {
         console.warn('Preferences initialization notice:', err);
       }
