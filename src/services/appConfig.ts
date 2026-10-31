@@ -84,37 +84,148 @@ export function getOrCreateInstallId(): string {
   }
 }
 
+const LS_KEY_LAST_PING_NAME = 'jtec_last_ping_p_name';
+const LS_KEY_LAST_PING_SUCCESS = 'jtec_last_ping_succeeded';
+const LS_KEY_LAST_PING_TIMESTAMP = 'jtec_last_ping_timestamp';
+const LS_KEY_LAST_PING_ERROR = 'jtec_last_ping_error';
+
+export interface PingDiagnosticInfo {
+  p_name: string | null;
+  succeeded: boolean | null;
+  timestamp: number | null;
+  error: string | null;
+}
+
+/**
+ * Reads the status, sent name, and timestamp of the last ping_install call.
+ */
+export function getLastPingDiagnosticInfo(): PingDiagnosticInfo {
+  try {
+    const name = localStorage.getItem(LS_KEY_LAST_PING_NAME);
+    const successStr = localStorage.getItem(LS_KEY_LAST_PING_SUCCESS);
+    const timeStr = localStorage.getItem(LS_KEY_LAST_PING_TIMESTAMP);
+    const error = localStorage.getItem(LS_KEY_LAST_PING_ERROR);
+
+    return {
+      p_name: name || null,
+      succeeded: successStr === 'true' ? true : successStr === 'false' ? false : null,
+      timestamp: timeStr ? parseInt(timeStr, 10) : null,
+      error: error || null,
+    };
+  } catch {
+    return {
+      p_name: null,
+      succeeded: null,
+      timestamp: null,
+      error: null,
+    };
+  }
+}
+
+/**
+ * Cleans and deduplicates manufacturer and model strings.
+ * For example: "TECNO TECNO SPARK 20" -> "TECNO SPARK 20"
+ * Never returns the word "unknown".
+ */
+export function cleanManufacturerAndModel(manufacturer?: string | null, model?: string | null): string {
+  const mfg = (manufacturer || '').trim();
+  const mdl = (model || '').trim();
+
+  if (!mfg && !mdl) return 'Android Device';
+  if (!mfg) return mdl;
+  if (!mdl) return mfg;
+
+  const raw = `${mfg} ${mdl}`;
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const deduped: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (i === 0) {
+      deduped.push(token);
+    } else {
+      const prev = deduped[deduped.length - 1];
+      if (prev.toLowerCase() === token.toLowerCase()) {
+        if (token === token.toUpperCase() && prev !== prev.toUpperCase()) {
+          deduped[deduped.length - 1] = token;
+        }
+      } else {
+        deduped.push(token);
+      }
+    }
+  }
+
+  const result = deduped.join(' ').trim();
+  return result || mfg || mdl || 'Android Device';
+}
+
+/**
+ * Resolves the display and telemetry device name according to user priority:
+ * (a) Device.getInfo().name when not empty and not just a repeat of the model
+ * (b) Otherwise the text "<manufacturer> <model>" cleaned up without repeated words
+ * Always returns a non-empty name and never the word "unknown".
+ */
+export function resolveDeviceDisplayName(
+  rawName?: string | null,
+  manufacturer?: string | null,
+  model?: string | null,
+  platform?: string | null
+): string {
+  const isAndroid = (platform || '').toLowerCase().includes('android') || Capacitor.isNativePlatform();
+  const cleanedMfgModel = cleanManufacturerAndModel(manufacturer, model);
+  const trimmedName = (rawName || '').trim();
+  const trimmedModel = (model || '').trim();
+
+  if (trimmedName.length > 0) {
+    const nameLower = trimmedName.toLowerCase();
+    const modelLower = trimmedModel.toLowerCase();
+    const cleanedLower = cleanedMfgModel.toLowerCase();
+
+    // Check if name is NOT just a repeat of model or manufacturer+model
+    const isRepeat =
+      nameLower === modelLower ||
+      nameLower === cleanedLower ||
+      (modelLower.length > 0 && nameLower === `${(manufacturer || '').toLowerCase()} ${modelLower}`.trim()) ||
+      (modelLower.length > 0 && modelLower.includes(nameLower) && modelLower.length <= nameLower.length + 3);
+
+    if (!isRepeat && nameLower !== 'unknown' && nameLower !== 'unnamed') {
+      return trimmedName;
+    }
+  }
+
+  if (cleanedMfgModel && cleanedMfgModel.toLowerCase() !== 'unknown') {
+    return cleanedMfgModel;
+  }
+
+  return isAndroid ? 'Android Device' : 'Web Client';
+}
+
 /**
  * Detects device info for install telemetry:
  * - On Android native: Device.getInfo() for model, manufacturer, osVersion, and automatic device name.
- * - On Web: browser family, OS, and null name.
+ * - On Web: browser family, OS, and browser-based client name.
+ * Always returns a non-empty name and never the word "unknown".
  */
 async function getDeviceTelemetryInfo(): Promise<{
   model: string;
   manufacturer: string;
   os: string;
   platform: 'android' | 'web' | 'ios';
-  name: string | null;
+  name: string;
 }> {
   if (Capacitor.isNativePlatform()) {
     try {
       const info = await Device.getInfo();
       const p = Capacitor.getPlatform();
       const platform: 'android' | 'web' | 'ios' = p === 'ios' ? 'ios' : 'android';
-      const model = info.model || (platform === 'android' ? 'Android Device' : 'iOS Device');
-      const manufacturer = info.manufacturer || (platform === 'ios' ? 'Apple' : 'Android');
-      const osVersion = info.osVersion ? ` ${info.osVersion}` : '';
+      const manufacturer = (info.manufacturer || (platform === 'ios' ? 'Apple' : 'Android')).trim();
+      const model = (info.model || (platform === 'android' ? 'Android Device' : 'iOS Device')).trim();
+      const osVersion = info.osVersion ? ` ${info.osVersion.trim()}` : '';
       const os = info.operatingSystem === 'android' ? `Android${osVersion}` : `${info.operatingSystem || 'iOS'}${osVersion}`;
 
-      // On Android, send Device.getInfo().name as p_name.
-      // If empty or whitespace, send null. On Web or other platforms, send null.
-      let name: string | null = null;
-      if (platform === 'android' && typeof info.name === 'string') {
-        const trimmed = info.name.trim();
-        if (trimmed.length > 0) {
-          name = trimmed;
-        }
-      }
+      // (a) Device.getInfo().name when not empty and not repeat of model
+      // (b) otherwise "<manufacturer> <model>" cleaned without repeated words
+      const name = resolveDeviceDisplayName(info.name, manufacturer, model, platform);
 
       return { model, manufacturer, os, platform, name };
     } catch {
@@ -123,7 +234,7 @@ async function getDeviceTelemetryInfo(): Promise<{
         manufacturer: 'Android',
         os: 'Android',
         platform: 'android',
-        name: null,
+        name: 'Android Device',
       };
     }
   }
@@ -144,12 +255,14 @@ async function getDeviceTelemetryInfo(): Promise<{
   else if (/Macintosh|Mac OS X/i.test(ua)) osName = 'macOS';
   else if (/Linux/i.test(ua)) osName = 'Linux';
 
+  const webName = `${browser} on ${osName}`;
+
   return {
-    model: `${browser} on ${osName}`,
+    model: webName,
     manufacturer: browser,
     os: osName,
     platform: 'web',
-    name: null,
+    name: webName,
   };
 }
 
@@ -158,8 +271,8 @@ async function getDeviceTelemetryInfo(): Promise<{
  * - Adds 1 to "opens"
  * - Called at every cold start, and when returning to foreground after >= 30 minutes away
  * - Ignores calls within 30 seconds of the previous call (dedup / throttle)
- * - Removes the old 24h limit
- * - Parameters sent: p_id, p_version, p_build, p_platform, p_model, p_manufacturer, p_os, p_name
+ * - Sends non-empty p_name with (a) phone name or (b) cleaned <manufacturer> <model>
+ * - Tracks diagnostic status in storage for Developer Page
  * - Never blocks the app, ignores errors silently.
  */
 export async function sendAnonymousPing(force = false): Promise<void> {
@@ -169,7 +282,7 @@ export async function sendAnonymousPing(force = false): Promise<void> {
     const lastPingStorage = lastPingStr ? parseInt(lastPingStr, 10) || 0 : 0;
     const lastPing = Math.max(lastPingTimeMemory, lastPingStorage);
 
-    // Ignore a second call within 30 seconds of the previous one
+    // Ignore a second call within 30 seconds of the previous one (unless forced, e.g. cold start)
     if (!force && lastPing > 0 && now - lastPing < PING_DEBOUNCE_MS) {
       return;
     }
@@ -183,11 +296,23 @@ export async function sendAnonymousPing(force = false): Promise<void> {
     const { version, build } = await getCurrentAppVersion();
     const { model, manufacturer, os, platform, name } = await getDeviceTelemetryInfo();
 
+    // Store diagnostic attempt
+    try {
+      localStorage.setItem(LS_KEY_LAST_PING_NAME, name);
+      localStorage.setItem(LS_KEY_LAST_PING_TIMESTAMP, String(now));
+    } catch {}
+
     const client = SupabaseService.getClientForCategory('jtec_main');
-    if (!client) return;
+    if (!client) {
+      try {
+        localStorage.setItem(LS_KEY_LAST_PING_SUCCESS, 'false');
+        localStorage.setItem(LS_KEY_LAST_PING_ERROR, 'No Supabase client available');
+      } catch {}
+      return;
+    }
 
     try {
-      await client.rpc('ping_install', {
+      const { error: rpcError } = await client.rpc('ping_install', {
         p_id: installId,
         p_version: version,
         p_build: build,
@@ -197,17 +322,35 @@ export async function sendAnonymousPing(force = false): Promise<void> {
         p_os: os,
         p_name: name,
       });
+
+      if (rpcError) {
+        throw rpcError;
+      }
+
+      try {
+        localStorage.setItem(LS_KEY_LAST_PING_SUCCESS, 'true');
+        localStorage.removeItem(LS_KEY_LAST_PING_ERROR);
+      } catch {}
     } catch (rpcErr: any) {
       // Fallback in case older RPC signature without p_name is active
       const errStr = String(rpcErr?.message || '');
+      let fallbackSuccess = false;
       if (errStr.includes('function') || errStr.includes('parameters')) {
-        await client.rpc('ping_install', {
-          p_id: installId,
-          p_version: version,
-          p_build: build,
-          p_platform: platform,
-        });
+        try {
+          const { error: fbErr } = await client.rpc('ping_install', {
+            p_id: installId,
+            p_version: version,
+            p_build: build,
+            p_platform: platform,
+          });
+          if (!fbErr) fallbackSuccess = true;
+        } catch {}
       }
+
+      try {
+        localStorage.setItem(LS_KEY_LAST_PING_SUCCESS, fallbackSuccess ? 'true' : 'false');
+        localStorage.setItem(LS_KEY_LAST_PING_ERROR, errStr || 'RPC ping error');
+      } catch {}
     }
   } catch {
     // Ignore all errors silently, never block app

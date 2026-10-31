@@ -12,6 +12,7 @@ import {
   CLOUD_CATEGORIES, 
   SourceDiagnosticResult 
 } from '../services/supabase';
+import { Device, DeviceInfo } from '@capacitor/device';
 import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpdate';
 import { registerBackHandler } from '../services/navigation';
 import { BUILD_DATE } from '../version';
@@ -19,7 +20,11 @@ import { RequiredUpdateOverlay } from './RequiredUpdateOverlay';
 import { 
   parseConfigNotes, 
   getMinVersionDiagnosticInfo, 
-  checkMinimumVersion 
+  checkMinimumVersion,
+  cleanManufacturerAndModel,
+  resolveDeviceDisplayName,
+  getLastPingDiagnosticInfo,
+  PingDiagnosticInfo
 } from '../services/appConfig';
 
 export interface AppInstallRow {
@@ -32,9 +37,10 @@ export interface AppInstallRow {
   opens: number | null;
   device_name?: string | null;
   name?: string | null;
-  owner_label?: string | null;
+  device_model?: string | null;
   model?: string | null;
   manufacturer?: string | null;
+  owner_label?: string | null;
   os?: string | null;
 }
 
@@ -126,9 +132,31 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [updateDiag, setUpdateDiag] = useState(() => NativeUpdateService.getUpdateDiagnosticInfo());
   const [isCheckingNow, setIsCheckingNow] = useState(false);
 
+  // What this phone reports (Device.getInfo raw values & last ping info)
+  const [rawDeviceInfo, setRawDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [lastPingDiag, setLastPingDiag] = useState<PingDiagnosticInfo>(() => getLastPingDiagnosticInfo());
+
+  const loadPhoneReports = useCallback(async () => {
+    try {
+      const info = await Device.getInfo();
+      setRawDeviceInfo(info);
+    } catch (err) {
+      console.warn('Could not read Device.getInfo():', err);
+    }
+    setLastPingDiag(getLastPingDiagnosticInfo());
+  }, []);
+
   const refreshDiagnostics = useCallback(() => {
     setMinVersionDiag(getMinVersionDiagnosticInfo());
     setUpdateDiag(NativeUpdateService.getUpdateDiagnosticInfo());
+    loadPhoneReports();
+  }, [loadPhoneReports]);
+
+  const renderRawValue = useCallback((val?: string | null) => {
+    if (val === undefined || val === null || String(val).trim() === '') {
+      return <span className="text-slate-500 italic">empty</span>;
+    }
+    return String(val);
   }, []);
 
   const formatTimestamp = useCallback((ts: number | null): string => {
@@ -164,7 +192,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
   useEffect(() => {
     loadLatestReleaseData();
-  }, [loadLatestReleaseData]);
+    loadPhoneReports();
+  }, [loadLatestReleaseData, loadPhoneReports]);
 
   // Handle Close & Sign out
   const handleClose = useCallback(async () => {
@@ -686,17 +715,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       const q = deviceSearch.toLowerCase().trim();
       list = list.filter((item) => {
         const owner = (item.owner_label || '').toLowerCase();
-        const phone = (item.device_name || item.name || '').toLowerCase();
-        const model = (item.model || '').toLowerCase();
-        const mfg = (item.manufacturer || '').toLowerCase();
+        const rawN = (item.device_name || item.name || '').toLowerCase();
+        const rawM = (item.device_model || item.model || '').toLowerCase();
+        const rawMf = (item.manufacturer || '').toLowerCase();
+        const resolved = resolveDeviceDisplayName(item.device_name || item.name, item.manufacturer, item.device_model || item.model, item.platform).toLowerCase();
         const os = (item.os || '').toLowerCase();
         const ver = (item.app_version || '').toLowerCase();
         const id = (item.install_id || '').toLowerCase();
         return (
           owner.includes(q) ||
-          phone.includes(q) ||
-          model.includes(q) ||
-          mfg.includes(q) ||
+          rawN.includes(q) ||
+          rawM.includes(q) ||
+          rawMf.includes(q) ||
+          resolved.includes(q) ||
           os.includes(q) ||
           ver.includes(q) ||
           id.includes(q)
@@ -1299,10 +1330,13 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
                       {filteredDevices.map((row) => {
                         const isAndroid = (row.platform || 'web').toLowerCase().includes('android');
-                        const phoneName = row.device_name || row.name || 'Unnamed';
+                        const rawName = (row.device_name || row.name || '').trim();
+                        const rawModel = (row.device_model || row.model || '').trim();
+                        const rawMfg = (row.manufacturer || '').trim();
+                        const cleanedMfgModel = cleanManufacturerAndModel(rawMfg, rawModel);
+                        const phoneName = resolveDeviceDisplayName(rawName, rawMfg, rawModel, row.platform);
                         const ownerLabel = row.owner_label || 'No label';
-                        const mfgAndModel = [row.manufacturer, row.model].filter(Boolean).join(' ') || 'Unknown device';
-                        const osStr = row.os || 'Android';
+                        const osStr = row.os || (isAndroid ? 'Android' : 'Web');
                         const isBlocked = currentMinBuild > 0 && (row.build === null || row.build < currentMinBuild);
                         const status = getDeviceStatus(row.last_seen);
                         const isEditingThisOwner = editingOwnerLabelId === row.install_id;
@@ -1430,7 +1464,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-white/5 text-[11px]">
                               <div>
                                 <span className="text-slate-500 block text-[9px] uppercase font-bold">Hardware & OS</span>
-                                <span className="text-slate-200 font-medium truncate block">{mfgAndModel}</span>
+                                <span className="text-slate-200 font-medium truncate block">{cleanedMfgModel}</span>
                                 <span className="text-slate-400 text-[10px]">{osStr}</span>
                               </div>
 
@@ -1761,6 +1795,102 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     <RefreshCw className={`w-3.5 h-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
                     <span>{isCheckingNow ? 'Checking...' : 'Check now'}</span>
                   </button>
+                </div>
+
+                {/* Requirement 1: What this phone reports */}
+                <div className="rounded-3xl border border-cyan-500/40 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                        <Smartphone className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-wider">What this phone reports</h4>
+                        <p className="text-[11px] text-slate-400">Raw values from Device.getInfo() & last ping_install telemetry</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Raw values from Device.getInfo() */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">name</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.name)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">model</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.model)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">manufacturer</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.manufacturer)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">platform</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.platform)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">osVersion</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.osVersion)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">operatingSystem</span>
+                      <span className="font-mono text-xs text-white break-all block">
+                        {renderRawValue(rawDeviceInfo?.operatingSystem)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Last ping_install details */}
+                  <div className="pt-3 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Last Sent p_name</span>
+                      <span className="font-mono text-xs text-cyan-300 font-bold break-all block">
+                        {renderRawValue(lastPingDiag.p_name)}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">ping_install Status</span>
+                      <div className="pt-0.5">
+                        {lastPingDiag.succeeded === true ? (
+                          <span className="text-emerald-400 text-xs font-bold flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Succeeded</span>
+                          </span>
+                        ) : lastPingDiag.succeeded === false ? (
+                          <span className="text-rose-400 text-xs font-bold flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            <span>Failed {lastPingDiag.error ? `(${lastPingDiag.error})` : ''}</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 text-xs italic">Not sent yet</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Last Ping Time</span>
+                      <span className="font-mono text-xs text-slate-300 block">
+                        {lastPingDiag.timestamp ? new Date(lastPingDiag.timestamp).toLocaleString() : <span className="text-slate-500 italic">Never</span>}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">

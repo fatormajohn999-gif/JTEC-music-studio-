@@ -184,7 +184,8 @@ export default function App() {
     let isMounted = true;
 
     // 1. App Launch: Anonymous ping (open count) and initial checks, plus still-here heartbeat
-    sendAnonymousPing();
+    // Requirement 3: Ensure ping sends name on every cold start
+    sendAnonymousPing(true);
     startStillHereHeartbeat();
     runMinVersionCheck(false);
     runNativeUpdateCheck(false);
