@@ -9,9 +9,11 @@ const LS_KEY_LAST_CONFIG_CHECK = 'jtec_last_min_version_check';
 const LS_KEY_LAST_CONFIG_DATA = 'jtec_last_app_config_data';
 const LS_KEY_LAST_CONFIG_READ_TIME = 'jtec_last_min_version_read_time';
 const LS_KEY_LAST_CONFIG_ERROR = 'jtec_last_min_version_error';
+const LS_KEY_LAST_BACKGROUND = 'jtec_last_app_background_time';
 
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const PING_DEBOUNCE_MS = 30 * 1000; // 30 seconds
+const THIRTY_MINUTES_MS = 30 * 60 * 1000; // 30 minutes
+const FIVE_MINUTES_MS = 5 * 60 * 1000; // 5 minutes
 
 export const DEFAULT_FALLBACK_APK_URL =
   'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk';
@@ -36,6 +38,13 @@ export interface MinVersionStatus {
 
 // In-memory last error cache for Developer Page
 let lastMinVersionErrorMemory: string | null = null;
+
+// Telemetry state in memory
+let lastPingTimeMemory = 0;
+let lastTouchTimeMemory = 0;
+let stillHereTimer: any = null;
+let isAppForegroundState = true;
+let inMemoryBackgroundTimestamp = 0;
 
 /**
  * Parses multi-line notes from app_config.notes (one bullet per line starting with "- ")
@@ -77,14 +86,15 @@ export function getOrCreateInstallId(): string {
 
 /**
  * Detects device info for install telemetry:
- * - On Android native: Device.getInfo() for model, manufacturer, and osVersion.
- * - On Web: browser family and operating system (e.g. "Chrome on Android").
+ * - On Android native: Device.getInfo() for model, manufacturer, osVersion, and automatic device name.
+ * - On Web: browser family, OS, and null name.
  */
 async function getDeviceTelemetryInfo(): Promise<{
   model: string;
   manufacturer: string;
   os: string;
   platform: 'android' | 'web' | 'ios';
+  name: string | null;
 }> {
   if (Capacitor.isNativePlatform()) {
     try {
@@ -95,13 +105,25 @@ async function getDeviceTelemetryInfo(): Promise<{
       const manufacturer = info.manufacturer || (platform === 'ios' ? 'Apple' : 'Android');
       const osVersion = info.osVersion ? ` ${info.osVersion}` : '';
       const os = info.operatingSystem === 'android' ? `Android${osVersion}` : `${info.operatingSystem || 'iOS'}${osVersion}`;
-      return { model, manufacturer, os, platform };
+
+      // On Android, send Device.getInfo().name as p_name.
+      // If empty or whitespace, send null. On Web or other platforms, send null.
+      let name: string | null = null;
+      if (platform === 'android' && typeof info.name === 'string') {
+        const trimmed = info.name.trim();
+        if (trimmed.length > 0) {
+          name = trimmed;
+        }
+      }
+
+      return { model, manufacturer, os, platform, name };
     } catch {
       return {
         model: 'Android Device',
         manufacturer: 'Android',
         os: 'Android',
         platform: 'android',
+        name: null,
       };
     }
   }
@@ -127,37 +149,39 @@ async function getDeviceTelemetryInfo(): Promise<{
     manufacturer: browser,
     os: osName,
     platform: 'web',
+    name: null,
   };
 }
 
 /**
  * Calls the Supabase RPC ping_install on the main JTEC Supabase source.
- * At most once every 24 hours (and on the first run).
- * Parameters sent:
- * - p_id: anonymous random UUID
- * - p_version: app version string
- * - p_build: app build integer
- * - p_platform: "android" | "web" | "ios"
- * - p_model: device model string
- * - p_manufacturer: device manufacturer string
- * - p_os: operating system string
- * - p_name: null (device name field removed; app never sends a user-entered name)
- *
- * Ignores all errors silently. Never shows errors to users.
+ * - Adds 1 to "opens"
+ * - Called at every cold start, and when returning to foreground after >= 30 minutes away
+ * - Ignores calls within 30 seconds of the previous call (dedup / throttle)
+ * - Removes the old 24h limit
+ * - Parameters sent: p_id, p_version, p_build, p_platform, p_model, p_manufacturer, p_os, p_name
+ * - Never blocks the app, ignores errors silently.
  */
 export async function sendAnonymousPing(force = false): Promise<void> {
   try {
     const now = Date.now();
     const lastPingStr = localStorage.getItem(LS_KEY_LAST_PING);
-    const lastPing = lastPingStr ? parseInt(lastPingStr, 10) : 0;
+    const lastPingStorage = lastPingStr ? parseInt(lastPingStr, 10) || 0 : 0;
+    const lastPing = Math.max(lastPingTimeMemory, lastPingStorage);
 
-    if (!force && lastPing > 0 && now - lastPing < TWENTY_FOUR_HOURS_MS) {
+    // Ignore a second call within 30 seconds of the previous one
+    if (!force && lastPing > 0 && now - lastPing < PING_DEBOUNCE_MS) {
       return;
     }
 
+    lastPingTimeMemory = now;
+    try {
+      localStorage.setItem(LS_KEY_LAST_PING, String(now));
+    } catch {}
+
     const installId = getOrCreateInstallId();
     const { version, build } = await getCurrentAppVersion();
-    const { model, manufacturer, os, platform } = await getDeviceTelemetryInfo();
+    const { model, manufacturer, os, platform, name } = await getDeviceTelemetryInfo();
 
     const client = SupabaseService.getClientForCategory('jtec_main');
     if (!client) return;
@@ -171,7 +195,7 @@ export async function sendAnonymousPing(force = false): Promise<void> {
         p_model: model,
         p_manufacturer: manufacturer,
         p_os: os,
-        p_name: null,
+        p_name: name,
       });
     } catch (rpcErr: any) {
       // Fallback in case older RPC signature without p_name is active
@@ -185,11 +209,109 @@ export async function sendAnonymousPing(force = false): Promise<void> {
         });
       }
     }
+  } catch {
+    // Ignore all errors silently, never block app
+  }
+}
 
-    localStorage.setItem(LS_KEY_LAST_PING, String(now));
+/**
+ * Calls the Supabase RPC touch_install with p_id (the random anonymous install ID).
+ * Only updates last_seen in the database without adding to "opens".
+ * Non-blocking, ignores all errors silently.
+ */
+export async function touchInstall(): Promise<void> {
+  try {
+    const now = Date.now();
+    if (now - lastTouchTimeMemory < 3000) return;
+    lastTouchTimeMemory = now;
+
+    const installId = getOrCreateInstallId();
+    const client = SupabaseService.getClientForCategory('jtec_main');
+    if (!client) return;
+
+    await client.rpc('touch_install', {
+      p_id: installId,
+    });
   } catch {
     // Ignore all errors silently
   }
+}
+
+/**
+ * Starts the 5-minute still-here heartbeat while the app is visible.
+ * Calls touch_install every 5 minutes.
+ */
+export function startStillHereHeartbeat(): void {
+  stopStillHereHeartbeat();
+  heartbeatTimerSetup();
+}
+
+function heartbeatTimerSetup(): void {
+  stillHereTimer = setInterval(() => {
+    if (isAppForegroundState && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+      touchInstall();
+    }
+  }, FIVE_MINUTES_MS);
+}
+
+/**
+ * Stops the still-here heartbeat (e.g. when app goes to background).
+ */
+export function stopStillHereHeartbeat(): void {
+  if (stillHereTimer) {
+    clearInterval(stillHereTimer);
+    stillHereTimer = null;
+  }
+}
+
+/**
+ * Called when the app moves to the background (app minimized / tab hidden).
+ * Stops the 5-minute still-here heartbeat and remembers the background timestamp.
+ */
+export function handleAppBackground(): void {
+  if (!isAppForegroundState) return;
+  isAppForegroundState = false;
+  const now = Date.now();
+  inMemoryBackgroundTimestamp = now;
+  try {
+    localStorage.setItem(LS_KEY_LAST_BACKGROUND, String(now));
+  } catch {}
+  stopStillHereHeartbeat();
+}
+
+/**
+ * Called when the app returns to the foreground.
+ * - If away for 30 minutes or more: calls sendAnonymousPing() (adds 1 to opens).
+ * - If away for less than 30 minutes: calls touchInstall() once.
+ * - Resumes the 5-minute still-here heartbeat while visible.
+ */
+export function handleAppForeground(): void {
+  if (isAppForegroundState) return;
+  isAppForegroundState = true;
+
+  let bgTime = inMemoryBackgroundTimestamp;
+  if (!bgTime) {
+    try {
+      const stored = localStorage.getItem(LS_KEY_LAST_BACKGROUND);
+      if (stored) bgTime = parseInt(stored, 10) || 0;
+    } catch {}
+  }
+
+  const now = Date.now();
+  const elapsed = bgTime > 0 ? now - bgTime : 0;
+
+  inMemoryBackgroundTimestamp = 0;
+  try {
+    localStorage.removeItem(LS_KEY_LAST_BACKGROUND);
+  } catch {}
+
+  if (bgTime > 0 && elapsed >= THIRTY_MINUTES_MS) {
+    sendAnonymousPing();
+  } else {
+    touchInstall();
+  }
+
+  startStillHereHeartbeat();
 }
 
 /**

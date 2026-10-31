@@ -36,6 +36,10 @@ import {
 } from './services/nativeUpdate';
 import { 
   sendAnonymousPing, 
+  startStillHereHeartbeat,
+  stopStillHereHeartbeat,
+  handleAppBackground,
+  handleAppForeground,
   checkMinimumVersion, 
   getSavedMinVersionStatusSync,
   MinVersionStatus 
@@ -179,8 +183,9 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // 1. App Launch: Anonymous ping and initial checks
+    // 1. App Launch: Anonymous ping (open count) and initial checks, plus still-here heartbeat
     sendAnonymousPing();
+    startStillHereHeartbeat();
     runMinVersionCheck(false);
     runNativeUpdateCheck(false);
 
@@ -221,13 +226,18 @@ export default function App() {
     };
     window.addEventListener('online', handleWindowOnline);
 
-    // 4. Foreground return listener
+    // 4. Foreground / background lifecycle listeners
+    // - Foreground: ping if away >= 30 mins, else touch_install once, and resume 5-min heartbeat
+    // - Background: stop heartbeat and save background timestamp
     let capAppHandle: any = null;
     if (Capacitor.isNativePlatform()) {
       CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
         if (state.isActive) {
+          handleAppForeground();
           runNativeUpdateCheck(false);
           runMinVersionCheck(true);
+        } else {
+          handleAppBackground();
         }
       }).then((handle) => {
         capAppHandle = handle;
@@ -236,19 +246,37 @@ export default function App() {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        handleAppForeground();
+        runNativeUpdateCheck(false);
+        runMinVersionCheck(true);
+      } else if (document.visibilityState === 'hidden') {
+        handleAppBackground();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const handleWindowFocus = () => {
+      if (document.visibilityState === 'visible') {
+        handleAppForeground();
         runNativeUpdateCheck(false);
         runMinVersionCheck(true);
       }
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+
+    const handleWindowPageHide = () => {
+      handleAppBackground();
+    };
+    window.addEventListener('pagehide', handleWindowPageHide);
 
     return () => {
       isMounted = false;
+      stopStillHereHeartbeat();
       clearInterval(periodicTimer);
       window.removeEventListener('online', handleWindowOnline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('pagehide', handleWindowPageHide);
       if (capNetworkHandle) {
         capNetworkHandle.remove();
       }
@@ -2175,13 +2203,22 @@ export default function App() {
           minVersionStatus?.apkUrl || nativeUpdateInfo?.downloadUrl
         );
 
+        // Requirement 4: A blocked phone shows the Update required screen for the LATEST version
+        const latestDisplayVersion =
+          nativeUpdateInfo?.versionName ||
+          (() => {
+            try {
+              return localStorage.getItem('jtec_saved_release_version') || '';
+            } catch {
+              return '';
+            }
+          })() ||
+          (nativeUpdateInfo?.latestBuild ? `Build ${nativeUpdateInfo.latestBuild}` : '') ||
+          (minVersionStatus?.minBuild ? `Build ${minVersionStatus.minBuild}` : `Build ${targetRequiredBuild}`);
+
         return (
           <RequiredUpdateOverlay
-            versionName={
-              minVersionStatus?.minBuild
-                ? `Build ${minVersionStatus.minBuild}`
-                : (nativeUpdateInfo?.versionName || `Build ${targetRequiredBuild}`)
-            }
+            versionName={latestDisplayVersion}
             notesBullets={
               minVersionStatus?.notesBullets && minVersionStatus.notesBullets.length > 0
                 ? minVersionStatus.notesBullets
