@@ -2,8 +2,9 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import {
   ArrowLeft, Search, RefreshCw, Play, Pause, Download, CheckCircle2,
   ExternalLink, Music, AlertCircle, X, Loader2,
-  Wifi, Filter, ChevronRight, Layers, AlertTriangle
+  Wifi, Filter, ChevronRight, Layers, AlertTriangle, Radio
 } from 'lucide-react';
+import { PartyService } from '../party';
 import { Network } from '@capacitor/network';
 import { Song } from '../types/music';
 import {
@@ -126,6 +127,11 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
   // Results & Paging initialized from session memory
   const [items, setItems] = useState<ArchiveItemDoc[]>(archiveSessionState.items);
+  const [partyState, setPartyState] = useState(PartyService.getState());
+  useEffect(() => {
+    return PartyService.subscribe((s) => setPartyState(s));
+  }, []);
+  const isPartyHost = partyState.roomCode !== null && partyState.role === 'host';
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1047,6 +1053,29 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
+                        {isPartyHost && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              PartyService.hostSelectTrack({
+                                source: 'archive',
+                                id: `${activeDetailItem.identifier}::${file.name}`,
+                                title: cleanTrackTitle(file.title || file.name),
+                                artist: formatArchiveCreator(activeDetailItem.creator),
+                                cover: activeDetailItem.coverUrl,
+                                audioUrl: file.downloadUrl,
+                                duration: file.length,
+                                size: file.size,
+                              });
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 hover:brightness-110 text-white font-bold text-xs flex items-center gap-1 shadow-md shadow-purple-500/20 active:scale-95 transition cursor-pointer"
+                            title="Play for everyone in JTEC Party"
+                          >
+                            <Radio className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+                            <span className="hidden sm:inline">Play in party</span>
+                          </button>
+                        )}
+
                         {/* Preview button */}
                         <button
                           type="button"

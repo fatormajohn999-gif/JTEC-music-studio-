@@ -10,6 +10,7 @@ interface MiniPlayerProps {
   onNext: () => void;
   onOpenFullPlayer: () => void;
   onOpenEffects: () => void;
+  isPartyGuest?: boolean;
 }
 
 export const MiniPlayer: React.FC<MiniPlayerProps> = ({
@@ -20,6 +21,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
   onNext,
   onOpenFullPlayer,
   onOpenEffects,
+  isPartyGuest = false,
 }) => {
   if (!currentSong) return null;
 
@@ -69,7 +71,11 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
             )}
           </div>
           <p className="text-[11px] text-slate-400 truncate mt-0.5">
-            {currentSong.artist}
+            {isPartyGuest ? (
+              <span className="text-cyan-300 font-medium">Party • Controlled by host</span>
+            ) : (
+              currentSong.artist
+            )}
           </p>
         </div>
 
@@ -91,8 +97,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           {/* Play / Pause with subtle neon glow */}
           <button
             onClick={onTogglePlay}
-            className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/30 active:scale-90 transition hover:brightness-110"
-            title={isPlaying ? 'Pause' : 'Play'}
+            className={`w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/30 active:scale-90 transition hover:brightness-110 ${
+              isPartyGuest ? 'opacity-60 cursor-not-allowed' : ''
+            }`}
+            title={isPartyGuest ? 'Controlled by the host' : isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4 fill-white" />
@@ -104,8 +112,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           {/* Next */}
           <button
             onClick={onNext}
-            title="Next Track"
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition"
+            title={isPartyGuest ? 'Controlled by the host' : 'Next Track'}
+            className={`p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition ${
+              isPartyGuest ? 'opacity-40 cursor-not-allowed' : ''
+            }`}
           >
             <SkipForward className="w-4 h-4" />
           </button>

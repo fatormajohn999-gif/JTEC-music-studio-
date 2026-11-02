@@ -2,8 +2,9 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import {
   ArrowLeft, Search, RefreshCw, Play, Pause, Download, CheckCircle2,
   ExternalLink, Music, AlertCircle, X, Loader2,
-  Wifi, Filter
+  Wifi, Filter, Radio
 } from 'lucide-react';
+import { PartyService } from '../party';
 import { Network } from '@capacitor/network';
 import { JamendoTrack, Song } from '../types/music';
 import {
@@ -58,6 +59,12 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
   onBack,
   downloadOnWifiOnly = false,
 }) => {
+  const [partyState, setPartyState] = useState(PartyService.getState());
+  useEffect(() => {
+    return PartyService.subscribe((s) => setPartyState(s));
+  }, []);
+  const isPartyHost = partyState.roomCode !== null && partyState.role === 'host';
+
   // Restore scroll position on open if saved
   useLayoutEffect(() => {
     const main = document.querySelector('main');
@@ -822,8 +829,30 @@ export const JamendoCatalogView: React.FC<JamendoCatalogViewProps> = ({
                   )}
                 </div>
 
-                {/* Right: One Clear Action (Download / Progress ring / Downloaded / PRO) */}
-                <div className="shrink-0 flex items-center justify-end pl-1" onClick={(e) => e.stopPropagation()}>
+                {/* Right: Actions */}
+                <div className="shrink-0 flex items-center justify-end pl-1 gap-2" onClick={(e) => e.stopPropagation()}>
+                  {isPartyHost && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        PartyService.hostSelectTrack({
+                          source: 'jamendo',
+                          id: track.id,
+                          title: track.name,
+                          artist: track.artist_name,
+                          cover: track.image || track.album_image,
+                          audioUrl: track.audio,
+                          duration: track.duration,
+                        });
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 hover:brightness-110 text-white font-bold text-xs flex items-center gap-1 shadow-md shadow-purple-500/20 active:scale-95 transition cursor-pointer"
+                      title="Play for everyone in JTEC Party"
+                    >
+                      <Radio className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+                      <span className="hidden sm:inline">Play in party</span>
+                    </button>
+                  )}
                   {isDownloading ? (
                     /* Circular progress ring */
                     <div className="relative w-8 h-8 flex items-center justify-center">

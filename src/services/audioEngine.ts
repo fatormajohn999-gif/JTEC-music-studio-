@@ -36,6 +36,8 @@ class AudioEngine {
   private currentSource: string | Blob | null = null;
   private hasRetriedWithoutCors = false;
   private currentEffectsConfig: AudioEffectsConfig = PersistentSettingsService.getAudioEffectsSync();
+  private isPartyModeActive = false;
+  private partyDriftSpeed = 1.0;
 
   // Track playback state
   public isPlaying = false;
@@ -66,6 +68,18 @@ class AudioEngine {
 
   public enforcePlaybackRateAndPitch = () => {
     if (!this.audioElement) return;
+
+    if (this.isPartyModeActive) {
+      this.audioElement.defaultPlaybackRate = 1.0;
+      this.audioElement.playbackRate = this.partyDriftSpeed;
+      try {
+        (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = true;
+        (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = true;
+        (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+      } catch {}
+      return;
+    }
+
     const speed = Math.max(0.5, Math.min(1.5, this.currentEffectsConfig.playbackRate || 1.0));
     this.audioElement.defaultPlaybackRate = speed;
     this.audioElement.playbackRate = speed;
@@ -521,6 +535,20 @@ class AudioEngine {
     // Persist immediately across session and native preferences
     PersistentSettingsService.saveAudioEffects(this.currentEffectsConfig);
 
+    // If JTEC Party is currently active, maintain neutral effects graph at runtime
+    if (this.isPartyModeActive) {
+      if (this.audioElement) {
+        this.audioElement.defaultPlaybackRate = 1.0;
+        this.audioElement.playbackRate = this.partyDriftSpeed;
+      }
+      if (this.masterGain && this.audioCtx) {
+        const vol = Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0));
+        this.masterGain.gain.cancelScheduledValues(this.audioCtx.currentTime);
+        this.masterGain.gain.setTargetAtTime(vol * this.fadeMultiplier, this.audioCtx.currentTime, 0.02);
+      }
+      return;
+    }
+
     if (!this.audioElement) return;
 
     // 1. Playback Speed and Pitch
@@ -606,6 +634,54 @@ class AudioEngine {
       const vol = Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0));
       this.masterGain.gain.cancelScheduledValues(now);
       this.masterGain.gain.setTargetAtTime(vol * this.fadeMultiplier, now, 0.02);
+    }
+  }
+
+  /**
+   * Temporary runtime override for JTEC Party:
+   * Sets Slow + Reverb, EQ, and pitch effects into neutral state (rate 1.0, normal pitch)
+   * without modifying persistent user settings. Restored when exiting party.
+   */
+  public setPartyNeutralOverride(enabled: boolean): void {
+    this.isPartyModeActive = enabled;
+    this.partyDriftSpeed = 1.0;
+
+    if (enabled) {
+      if (this.audioElement) {
+        this.audioElement.defaultPlaybackRate = 1.0;
+        this.audioElement.playbackRate = 1.0;
+        try {
+          (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = true;
+          (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = true;
+          (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+        } catch {}
+      }
+
+      if (this.audioCtx) {
+        const now = this.audioCtx.currentTime;
+        if (this.bassFilter) this.bassFilter.gain.setValueAtTime(0, now);
+        if (this.trebleFilter) this.trebleFilter.gain.setValueAtTime(0, now);
+        if (this.reverbInputGain) this.reverbInputGain.gain.setValueAtTime(0.0, now);
+        if (this.reverbWetGain) this.reverbWetGain.gain.setValueAtTime(0.0, now);
+        if (this.dryGain) this.dryGain.gain.setValueAtTime(1.0, now);
+        if (this.echoInputGain) this.echoInputGain.gain.setValueAtTime(0.0, now);
+        if (this.echoWetGain) this.echoWetGain.gain.setValueAtTime(0.0, now);
+        if (this.delayFeedback) this.delayFeedback.gain.setValueAtTime(0.0, now);
+      }
+    } else {
+      // Restore user's persisted audio effects
+      this.applyEffects(this.currentEffectsConfig);
+    }
+  }
+
+  /**
+   * Micro drift speed adjustment (e.g. 0.98 or 1.02) during JTEC Party.
+   */
+  public setPartyDriftSpeed(rate: number): void {
+    if (!this.isPartyModeActive) return;
+    this.partyDriftSpeed = Math.max(0.95, Math.min(1.05, rate));
+    if (this.audioElement) {
+      this.audioElement.playbackRate = this.partyDriftSpeed;
     }
   }
 

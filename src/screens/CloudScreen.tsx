@@ -2,8 +2,9 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useR
 import { 
   Cloud, ArrowLeft, Download, CheckCircle2, Play, Pause, Search, 
   RefreshCw, Music, AlertCircle, ShieldCheck, Volume2,
-  Disc, Wifi, X
+  Disc, Wifi, X, Radio
 } from 'lucide-react';
+import { PartyService } from '../party';
 import { Network } from '@capacitor/network';
 import { CloudSong, Song } from '../types/music';
 import { 
@@ -52,6 +53,13 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
 }) => {
   // Navigation state: null = Cloud Home, string = Category Page
   const [selectedCategory, setSelectedCategory] = useState<CloudViewCategory | null>(null);
+
+  // Party state subscription
+  const [partyState, setPartyState] = useState(PartyService.getState());
+  useEffect(() => {
+    return PartyService.subscribe((s) => setPartyState(s));
+  }, []);
+  const isPartyHost = partyState.roomCode !== null && partyState.role === 'host';
 
   // Cached tracks per category
   const [categorySongs, setCategorySongs] = useState<Record<CloudCategoryKey, CloudSong[]>>({
@@ -1087,6 +1095,30 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
                           </>
                         )}
                       </button>
+
+                      {/* Play in party button (visible when hosting JTEC Party) */}
+                      {isPartyHost && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            PartyService.hostSelectTrack({
+                              source: selectedCategory || 'cloud',
+                              id: song.id,
+                              title: song.title,
+                              artist: song.artist,
+                              cover: song.cover_url,
+                              audioUrl: song.audio_url,
+                              duration: song.duration,
+                              size: displaySize,
+                            });
+                          }}
+                          className="px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 hover:brightness-110 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-purple-500/20 active:scale-95 transition cursor-pointer"
+                          title="Play for everyone in JTEC Party"
+                        >
+                          <Radio className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+                          <span className="hidden xs:inline">Play in party</span>
+                        </button>
+                      )}
 
                       {/* Download to Local Storage Button */}
                       {isDownloaded ? (

@@ -55,8 +55,9 @@ import { HomeScreen } from './screens/HomeScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
-import { SettingsScreen } from './screens/SettingsScreen';
+import { SettingsScreen, SettingsSubView } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
+import { PartyBanner, PartyInviteBanner, usePartyPlayer, PartyService } from './party';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { useSleepTimer } from './hooks/useSleepTimer';
@@ -515,6 +516,23 @@ export default function App() {
   const [detailsSong, setDetailsSong] = useState<Song | null>(null);
   const [optionsMenuSong, setOptionsMenuSong] = useState<Song | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [settingsSubView, setSettingsSubView] = useState<SettingsSubView>('main');
+
+  // JTEC Party Listener & Host hook
+  const {
+    partyState,
+    isPartyActive,
+    isPartyHost,
+    isPartyGuest,
+  } = usePartyPlayer({
+    onSyncCurrentSong: (song) => {
+      setCurrentSong(song);
+      currentSongRef.current = song;
+      if (song.coverUrl) {
+        extractPaletteFromImage(song.coverUrl).then((pal) => setCurrentPalette(pal));
+      }
+    },
+  });
 
   // Initialize Global Android and Web Back Navigation
   useEffect(() => {
@@ -523,12 +541,22 @@ export default function App() {
 
   // Settings & Tab Scroll Navigation
   const handleOpenSettings = useCallback(() => {
+    setSettingsSubView('main');
     if (mainContainerRef.current) {
       saveScrollPosition('tab:' + currentTab, mainContainerRef.current.scrollTop);
     }
     setIsSettingsView(true);
     const target = getSavedScrollPosition('settings:root');
     restoreScroll(mainContainerRef.current, target);
+  }, [currentTab]);
+
+  const handleOpenPartyScreen = useCallback(() => {
+    setSettingsSubView('party');
+    if (mainContainerRef.current) {
+      saveScrollPosition('tab:' + currentTab, mainContainerRef.current.scrollTop);
+    }
+    setIsSettingsView(true);
+    restoreScroll(mainContainerRef.current, 0);
   }, [currentTab]);
 
   const handleBackFromSettings = useCallback(() => {
@@ -1121,6 +1149,31 @@ export default function App() {
   // Play a specific song with optional context queue and optional start position
   const playSong = async (song: Song, contextQueue?: Song[], startPosition?: number) => {
     try {
+      if (isPartyGuest) {
+        setGlobalError('Controlled by the host');
+        setTimeout(() => setGlobalError(null), 3000);
+        return;
+      }
+
+      if (isPartyHost) {
+        if (!song.isCloud && !song.audioUrl) {
+          setGlobalError('Only cloud songs can be played in a party.');
+          setTimeout(() => setGlobalError(null), 3000);
+          return;
+        }
+
+        PartyService.hostSelectTrack({
+          source: song.source || 'cloud',
+          id: song.cloudId || song.id,
+          title: song.title,
+          artist: song.artist,
+          cover: song.coverUrl || song.artworkUrl,
+          audioUrl: song.audioUrl || '',
+          duration: song.duration,
+          size: song.size,
+        });
+      }
+
       NotificationPermissionManager.checkAndRequestOnFirstPlay();
       setCurrentSong(song);
       MediaSessionManager.updateMetadata(song);
@@ -1265,6 +1318,21 @@ export default function App() {
 
   // Toggle Play / Pause
   const handleTogglePlay = async () => {
+    if (isPartyGuest) {
+      setGlobalError('Controlled by the host');
+      setTimeout(() => setGlobalError(null), 3000);
+      return;
+    }
+
+    if (isPartyHost) {
+      if (isPlaying) {
+        PartyService.hostPause();
+      } else {
+        PartyService.hostPlay();
+      }
+      return;
+    }
+
     if (!currentSong && songs.length > 0) {
       playSong(songs[0]);
       return;
@@ -1295,6 +1363,14 @@ export default function App() {
 
   // Next Track (advances strictly top-to-bottom through the active queue/list)
   const handleNextTrack = useCallback((isAutoAdvance = false) => {
+    if (isPartyGuest) {
+      if (!isAutoAdvance) {
+        setGlobalError('Controlled by the host');
+        setTimeout(() => setGlobalError(null), 3000);
+      }
+      return;
+    }
+
     const cur = currentSongRef.current;
     const q = queueRef.current.length > 0 ? queueRef.current : songsRef.current;
     if (q.length === 0) return;
@@ -1348,10 +1424,16 @@ export default function App() {
       // Manual Next button: wrap around to first song
       playSong(q[0]);
     }
-  }, []);
+  }, [isPartyGuest]);
 
   // Previous Track (goes to the song above in top-to-bottom order)
   const handlePreviousTrack = useCallback(() => {
+    if (isPartyGuest) {
+      setGlobalError('Controlled by the host');
+      setTimeout(() => setGlobalError(null), 3000);
+      return;
+    }
+
     if (currentTimeRef.current > 3) {
       audioEngine.seek(0);
       return;
@@ -1375,7 +1457,7 @@ export default function App() {
 
     // At the top song: wrap around to bottom
     playSong(q[q.length - 1]);
-  }, []);
+  }, [isPartyGuest]);
 
   useEffect(() => {
     handleNextTrackRef.current = handleNextTrack;
@@ -1418,6 +1500,14 @@ export default function App() {
 
   // Seek
   const handleSeek = (seconds: number) => {
+    if (isPartyGuest) {
+      setGlobalError('Controlled by the host');
+      setTimeout(() => setGlobalError(null), 3000);
+      return;
+    }
+    if (isPartyHost) {
+      PartyService.hostSeek(seconds);
+    }
     audioEngine.seek(seconds);
     setCurrentTime(seconds);
     currentTimeRef.current = seconds;
@@ -1901,6 +1991,15 @@ export default function App() {
         onBackFromSettings={handleBackFromSettings}
       />
 
+      {/* JTEC Party Top Invite Banner */}
+      <PartyInviteBanner onOpenPartyScreen={handleOpenPartyScreen} />
+
+      {/* JTEC Party Persistent Room Banner */}
+      <PartyBanner
+        partyState={partyState}
+        onOpenPartyScreen={handleOpenPartyScreen}
+      />
+
       {/* Main Body Content Router (screens stay mounted and hidden with display:none) */}
       <main ref={mainContainerRef} className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
         <div style={{ display: isSettingsView ? 'block' : 'none' }}>
@@ -1917,6 +2016,8 @@ export default function App() {
             onStartSleepTimer={handleStartSleepTimer}
             onCancelSleepTimer={handleCancelSleepTimer}
             onExtendSleepTimer={handleExtendSleepTimer}
+            onNavigateToCloud={() => handleSelectTab('cloud')}
+            initialSubView={settingsSubView}
           />
         </div>
 
@@ -2031,6 +2132,7 @@ export default function App() {
         onNext={handleNextTrack}
         onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
+        isPartyGuest={isPartyGuest}
       />
 
       {/* Bottom Navigation */}
@@ -2060,6 +2162,7 @@ export default function App() {
         onNext={handleNextTrack}
         onToggleFavorite={handleToggleFavorite}
         onToggleShuffle={handleToggleShuffle}
+        isPartyGuest={isPartyGuest}
         onCycleRepeat={() => {
           setRepeatMode((prev) => {
             const next = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';

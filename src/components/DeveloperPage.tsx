@@ -4,7 +4,8 @@ import {
   Users, Smartphone, Globe, AlertCircle, CheckCircle2, 
   Clock, Sparkles, AlertTriangle, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
-  Ban, Unlock, HelpCircle, ChevronRight
+  Ban, Unlock, HelpCircle, ChevronRight, Radio, Bot, Sliders,
+  SkipForward, UserMinus, UserPlus
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
@@ -26,6 +27,8 @@ import {
   getLastPingDiagnosticInfo,
   PingDiagnosticInfo
 } from '../services/appConfig';
+import { MockPartyBackend } from '../party/MockPartyBackend';
+import { getPartyBackend } from '../party/backend';
 
 export interface AppInstallRow {
   install_id: string;
@@ -57,7 +60,7 @@ interface DeveloperPageProps {
   onClose: () => void;
 }
 
-type DeveloperTab = 'usage' | 'min_version' | 'update_status' | 'connection';
+type DeveloperTab = 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_demo';
 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
@@ -126,6 +129,123 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   // Connection test tab data
   const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[]>([]);
   const [isRunningConnectionTest, setIsRunningConnectionTest] = useState(false);
+
+  // Party Demo & Network Simulation states (Requirement 11)
+  const [botLatency, setBotLatency] = useState<number>(() => MockPartyBackend.transport.getConfig().latencyMs);
+  const [botJitter, setBotJitter] = useState<number>(() => MockPartyBackend.transport.getConfig().jitterMs);
+  const [botsActive, setBotsActive] = useState<boolean>(() => MockPartyBackend.areBotsActive());
+  const [botDisconnectCountdown, setBotDisconnectCountdown] = useState<number>(0);
+  const [partyActionFeedback, setPartyActionFeedback] = useState<string | null>(null);
+
+  const handleBotsJoinRoom = useCallback(() => {
+    MockPartyBackend.addBotsToCurrentRoom();
+    setBotsActive(true);
+    setPartyActionFeedback('Simulated bots (Aisha #4092, Marcus #8811, Devon #1304) have joined your room!');
+    setTimeout(() => setPartyActionFeedback(null), 4000);
+  }, []);
+
+  const handleLatencyChange = useCallback((val: number) => {
+    setBotLatency(val);
+    MockPartyBackend.transport.setConfig({ latencyMs: val });
+  }, []);
+
+  const handleJitterChange = useCallback((val: number) => {
+    setBotJitter(val);
+    MockPartyBackend.transport.setConfig({ jitterMs: val });
+  }, []);
+
+  const handleDisconnectBots15s = useCallback(() => {
+    MockPartyBackend.disconnectAllBotsFor15Seconds();
+    setBotDisconnectCountdown(15);
+    setPartyActionFeedback('All bots disconnected for 15s. They will reconnect automatically.');
+    const timer = setInterval(() => {
+      setBotDisconnectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
+  // Bot Demo Actions (Requirement 6)
+  const handleBotReaction = useCallback(() => {
+    const result = MockPartyBackend.botSendReaction();
+    if (result) {
+      setPartyActionFeedback(`${result.botName} sent ${result.emoji}!`);
+    } else {
+      setPartyActionFeedback('No active bots in room. Click "Bots join my room" first.');
+    }
+    setTimeout(() => setPartyActionFeedback(null), 3000);
+  }, []);
+
+  const handleBotVoteSkip = useCallback(() => {
+    const result = MockPartyBackend.botVoteToSkip();
+    if (result) {
+      setPartyActionFeedback(`${result.botName} cast a vote to skip the current song.`);
+    } else {
+      setPartyActionFeedback('No active bots available to vote.');
+    }
+    setTimeout(() => setPartyActionFeedback(null), 3000);
+  }, []);
+
+  const handleBotLeaves = useCallback(() => {
+    const result = MockPartyBackend.botLeaveRoom();
+    if (result) {
+      setPartyActionFeedback(`${result.botName} left the party room.`);
+      setBotsActive(MockPartyBackend.areBotsActive());
+    } else {
+      setPartyActionFeedback('No active bots in the room to leave.');
+    }
+    setTimeout(() => setPartyActionFeedback(null), 3000);
+  }, []);
+
+  const handleBotHostSkips = useCallback(() => {
+    const track = MockPartyBackend.botHostSkipSong();
+    if (track) {
+      setPartyActionFeedback(`Host bot DJ Nova skipped to: "${track.title}"!`);
+    } else {
+      setPartyActionFeedback('Demo room hosted by bot is not currently active.');
+    }
+    setTimeout(() => setPartyActionFeedback(null), 3000);
+  }, []);
+
+  const handleToggleBotOnline = useCallback(async () => {
+    const backend = getPartyBackend();
+    if (backend.toggleBotOnline) {
+      await backend.toggleBotOnline();
+      setPartyActionFeedback('Simulated bot online/offline presence toggled.');
+      setTimeout(() => setPartyActionFeedback(null), 3500);
+    }
+  }, []);
+
+  const handleBotSendFriendRequest = useCallback(async () => {
+    const backend = getPartyBackend();
+    if (backend.simulateBotFriendRequest) {
+      const req = await backend.simulateBotFriendRequest();
+      setPartyActionFeedback(`A bot (${req.from.username} #${req.from.tag}) sent you a friend request!`);
+      setTimeout(() => setPartyActionFeedback(null), 3500);
+    }
+  }, []);
+
+  const handleBotInviteToParty = useCallback(async () => {
+    const backend = getPartyBackend();
+    if (backend.simulateBotInvite) {
+      const inv = await backend.simulateBotInvite();
+      setPartyActionFeedback(`A bot (${inv.from.username}) invited you to party room #${inv.roomCode}!`);
+      setTimeout(() => setPartyActionFeedback(null), 3500);
+    }
+  }, []);
+
+  const handleResetDemoData = useCallback(async () => {
+    const backend = getPartyBackend();
+    if (backend.resetDemoData) {
+      await backend.resetDemoData();
+      setPartyActionFeedback('Reset demo party data: friends, requests, and invites restored to initial defaults.');
+      setTimeout(() => setPartyActionFeedback(null), 3500);
+    }
+  }, []);
 
   // Diagnostics
   const [minVersionDiag, setMinVersionDiag] = useState(() => getMinVersionDiagnosticInfo());
@@ -1000,6 +1120,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             >
               <Wifi className="w-3.5 h-3.5" />
               <span>Connection Test</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('party_demo')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+                activeTab === 'party_demo'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              <span>Party Demo & Network</span>
             </button>
           </div>
 
@@ -2051,6 +2184,330 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {/* =========================================================================
+                TAB 5: JTEC PARTY DEMO & NETWORK SIMULATION (Requirement 11)
+               ========================================================================= */}
+            {activeTab === 'party_demo' && (
+              <div className="space-y-6 max-w-4xl mx-auto">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-white tracking-wide">
+                      Party Demo & Network Simulation
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Multiplayer sync engine testing, simulated bot listeners, latency, and drift correction
+                    </p>
+                  </div>
+                </div>
+
+                {partyActionFeedback && (
+                  <div className="p-3.5 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs flex items-center gap-2 animate-in fade-in">
+                    <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span>{partyActionFeedback}</span>
+                  </div>
+                )}
+
+                {/* Card 1: Bot Guests in Active Room */}
+                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+                        <Bot className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Simulated Bot Guests</h4>
+                        <p className="text-xs text-slate-400">
+                          Inject virtual listeners into your active party room with unique clock offsets
+                        </p>
+                      </div>
+                    </div>
+
+                    {botsActive && (
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Bots Active</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Spawns 3 simulated friends who join your room, buffer audio on track change, respond with &apos;ready&apos;, and report live clock drift:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-pink-300">Aisha</span>
+                        <span className="font-mono text-[10px] text-slate-500">#4092</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Clock offset: <strong className="text-white font-mono">+350ms</strong>
+                      </div>
+                      <div className="text-[10px] text-slate-500">Base latency: ~85ms</div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-purple-300">Marcus</span>
+                        <span className="font-mono text-[10px] text-slate-500">#8811</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Clock offset: <strong className="text-white font-mono">-120ms</strong>
+                      </div>
+                      <div className="text-[10px] text-slate-500">Base latency: ~140ms</div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-blue-300">Devon</span>
+                        <span className="font-mono text-[10px] text-slate-500">#1304</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Clock offset: <strong className="text-white font-mono">+45ms</strong>
+                      </div>
+                      <div className="text-[10px] text-slate-500">Base latency: ~55ms</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleBotsJoinRoom}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-purple-600/25 active:scale-95 transition cursor-pointer flex items-center gap-2"
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>Bots join my room</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={botDisconnectCountdown > 0}
+                      onClick={handleDisconnectBots15s}
+                      className="px-4 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Wifi className="w-4 h-4" />
+                      <span>
+                        {botDisconnectCountdown > 0
+                          ? `Reconnecting in ${botDisconnectCountdown}s...`
+                          : 'Disconnect all bots for 15 seconds'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Interactive Bot Simulation Controls (Requirement 6) */}
+                  <div className="pt-3 border-t border-white/5 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Live Bot Actions (Requirement 6)
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBotReaction}
+                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <span className="text-base">👍</span>
+                        <span>A bot sends a reaction</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBotVoteSkip}
+                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <SkipForward className="w-3.5 h-3.5 text-rose-400" />
+                        <span>A bot votes to skip</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBotLeaves}
+                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <UserMinus className="w-3.5 h-3.5 text-amber-400" />
+                        <span>A bot leaves</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBotHostSkips}
+                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>The host (bot) skips a song</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 2: Simulate a Bad Network */}
+                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                      <Sliders className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">Simulate a Bad Network</h4>
+                      <p className="text-xs text-slate-400">
+                        Inject artificial latency and jitter into the transport to test party audio drift correction
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-1">
+                    {/* Latency Slider: 20 to 800 ms */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-300">Artificial Latency</span>
+                        <span className="font-mono text-cyan-300 font-bold bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/30">
+                          {botLatency} ms
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={20}
+                        max={800}
+                        step={5}
+                        value={botLatency}
+                        onChange={(e) => handleLatencyChange(Number(e.target.value))}
+                        className="w-full h-2 rounded-lg bg-slate-950 accent-cyan-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                        <span>20 ms (Broadband)</span>
+                        <span>400 ms (Cellular lag)</span>
+                        <span>800 ms (Extreme lag)</span>
+                      </div>
+                    </div>
+
+                    {/* Jitter Slider: 0 to 200 ms */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-300">Packet Jitter Variance</span>
+                        <span className="font-mono text-purple-300 font-bold bg-purple-950/40 px-2 py-0.5 rounded border border-purple-500/30">
+                          ±{botJitter} ms
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={200}
+                        step={5}
+                        value={botJitter}
+                        onChange={(e) => handleJitterChange(Number(e.target.value))}
+                        className="w-full h-2 rounded-lg bg-slate-950 accent-purple-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                        <span>0 ms (Smooth)</span>
+                        <span>100 ms (Variable network)</span>
+                        <span>200 ms (Unstable jitter)</span>
+                      </div>
+                    </div>
+
+                    {/* Presets */}
+                    <div className="pt-2 border-t border-white/5 space-y-2">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Quick Simulation Profiles
+                      </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleLatencyChange(30);
+                            handleJitterChange(5);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 cursor-pointer"
+                        >
+                          Fast WiFi (30ms / 5ms)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleLatencyChange(95);
+                            handleJitterChange(25);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 cursor-pointer"
+                        >
+                          Standard 4G (95ms / 25ms)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleLatencyChange(380);
+                            handleJitterChange(80);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold border border-amber-500/30 cursor-pointer"
+                        >
+                          Congested (380ms / 80ms)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleLatencyChange(720);
+                            handleJitterChange(160);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 cursor-pointer"
+                        >
+                          Bad Network (720ms / 160ms)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Bot Friends & Social Graph Simulation */}
+                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                      <Bot className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">Bot Friends & Social Actions</h4>
+                      <p className="text-xs text-slate-400">
+                        Simulate friend presence changes, incoming friend requests, party invites, or reset demo data
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleToggleBotOnline}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Bot comes online / offline</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleBotSendFriendRequest}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>A bot sends me a friend request</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleBotInviteToParty}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Radio className="w-3.5 h-3.5 text-purple-400" />
+                      <span>A bot invites me to a party</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResetDemoData}
+                      className="px-3.5 py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-300 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Reset demo data</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

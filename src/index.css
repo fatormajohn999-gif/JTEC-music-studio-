@@ -89,3 +89,26 @@
 input[type="range"] {
   accent-color: #00f0ff;
 }
+
+/* Floating party reaction animation */
+@keyframes floatUp {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-20px) scale(1.05);
+  }
+  30% {
+    transform: translateY(-40px) scale(1);
+  }
+  75% {
+    opacity: 0.95;
+    transform: translateY(-120px) scale(1.02);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-180px) scale(0.85);
+  }
+}

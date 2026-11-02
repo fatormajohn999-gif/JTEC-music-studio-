@@ -3,8 +3,10 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
   BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Play, Info, User, Download
+  ChevronDown, ChevronRight, Play, Info, User, Download, Radio
 } from 'lucide-react';
+import { PartyScreen, PartyErrorBoundary } from '../party';
+import { getPartyBackend } from '../party/backend';
 import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState, Song } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
@@ -28,7 +30,7 @@ import {
   registerBackHandler 
 } from '../services/navigation';
 
-export type SettingsSubView = 'main' | 'privacy' | 'guide' | 'developer' | 'install' | 'update';
+export type SettingsSubView = 'main' | 'privacy' | 'guide' | 'developer' | 'install' | 'update' | 'party';
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -49,6 +51,8 @@ interface SettingsScreenProps {
   onCancelSleepTimer: () => void;
   onExtendSleepTimer: (minutes?: number) => void;
   onResetSoundAndVisual?: () => Promise<void> | void;
+  onNavigateToCloud?: () => void;
+  initialSubView?: SettingsSubView;
 }
 
 type SettingsGroup = 'playback' | 'visualizer' | 'storage' | 'notifications' | 'about';
@@ -66,11 +70,19 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onCancelSleepTimer,
   onExtendSleepTimer,
   onResetSoundAndVisual,
+  onNavigateToCloud,
+  initialSubView,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef<number>(0);
 
-  const [activeSubView, setActiveSubView] = useState<SettingsSubView>('main');
+  const [activeSubView, setActiveSubView] = useState<SettingsSubView>(initialSubView || 'main');
+
+  useEffect(() => {
+    if (initialSubView) {
+      setActiveSubView(initialSubView);
+    }
+  }, [initialSubView]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showResetSoundVisualConfirm, setShowResetSoundVisualConfirm] = useState(false);
   const [isResettingSoundVisual, setIsResettingSoundVisual] = useState(false);
@@ -130,6 +142,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const [persistedStatus, setPersistedStatus] = useState<boolean>(storageStats.isPersisted ?? false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>('prompt');
+  const [pendingPartyInvitesCount, setPendingPartyInvitesCount] = useState<number>(0);
+
+  useEffect(() => {
+    const backend = getPartyBackend();
+    const unsub = backend.subscribeInvites((invites) => {
+      setPendingPartyInvitesCount(invites.length);
+    });
+    return () => unsub();
+  }, []);
   
   const [showManageDownloads, setShowManageDownloads] = useState(false);
   const downloadedSongs = (songs || []).filter((s) => s.hasStoredBlob);
@@ -315,6 +336,41 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* JTEC Party Entry Row */}
+      <button
+        type="button"
+        onClick={() => handleOpenSubView('party')}
+        className="w-full flex items-center justify-between p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-cyan-950/40 via-purple-950/40 to-slate-900/80 border border-cyan-500/30 hover:border-cyan-400/60 shadow-lg shadow-cyan-500/10 text-left cursor-pointer group active:scale-[0.99] transition select-none"
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/25 to-purple-600/30 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition shadow-md shadow-cyan-500/20">
+            <Radio className="w-5 h-5 text-cyan-400 animate-pulse" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">
+                JTEC Party
+              </h3>
+              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 tracking-wider">
+                Listen Together
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 truncate mt-0.5">
+              Listen together with friends
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold shrink-0 pl-2">
+          {pendingPartyInvitesCount > 0 && (
+            <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white font-black text-[10px] animate-pulse shadow-sm shadow-rose-500/50">
+              {pendingPartyInvitesCount} {pendingPartyInvitesCount === 1 ? 'invite' : 'invites'}
+            </span>
+          )}
+          <span>Join / Host</span>
+          <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition-transform" />
+        </div>
+      </button>
 
       {/* =========================================================================
           GROUP 1: PLAYBACK (Open by default)
@@ -1071,6 +1127,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       {activeSubView === 'developer' && <AboutDeveloperView onBack={handleBackToMain} />}
       {activeSubView === 'install' && <InstallGuideView onBack={handleBackToMain} />}
       {activeSubView === 'update' && <HowToUpdateView onBack={handleBackToMain} />}
+      {activeSubView === 'party' && (
+        <PartyErrorBoundary onBack={handleBackToMain}>
+          <PartyScreen
+            onBack={handleBackToMain}
+            songs={songs}
+            onNavigateToCloud={() => {
+              handleBackToMain();
+              if (onNavigateToCloud) onNavigateToCloud();
+            }}
+          />
+        </PartyErrorBoundary>
+      )}
     </>
   );
 };

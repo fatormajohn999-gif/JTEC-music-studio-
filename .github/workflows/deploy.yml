@@ -61,6 +61,10 @@ jobs:
 
           # Category 4: JAMENDO — Jamendo Catalog Client ID
           VITE_JAMENDO_CLIENT_ID: ${{ secrets.VITE_JAMENDO_CLIENT_ID || vars.VITE_JAMENDO_CLIENT_ID }}
+
+          # JTEC Party Supabase Backend
+          VITE_PARTY_SUPABASE_URL: ${{ secrets.VITE_PARTY_SUPABASE_URL }}
+          VITE_PARTY_SUPABASE_ANON_KEY: ${{ secrets.VITE_PARTY_SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Setup GitHub Pages

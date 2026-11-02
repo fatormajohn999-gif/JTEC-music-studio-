@@ -169,11 +169,22 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
         </p>
       </section>
 
-      {/* Section 7: Contact & Updates */}
+      {/* Section 7: JTEC Party Listening & Profiles */}
+      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <Shield className="w-4 h-4 text-purple-400" />
+          <h3>7. JTEC Party Rooms & Profiles</h3>
+        </div>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          JTEC Party profiles contain a username, an ID and an optional picture. They are only used for JTEC Party, and you can delete your profile at any time.
+        </p>
+      </section>
+
+      {/* Section 8: Contact & Updates */}
       <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
           <FileText className="w-4 h-4 text-cyan-400" />
-          <h3>7. Policy Updates & Inquiries</h3>
+          <h3>8. Policy Updates & Inquiries</h3>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
           Any future revisions to this policy will be documented within this screen. If you have questions about how JTEC MUSIC handles data or device storage, contact the developer at <a href="mailto:fatormajohn999@gmail.com" className="text-cyan-400 hover:underline font-mono">fatormajohn999@gmail.com</a>.

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { 
   ChevronDown, Heart, Shuffle, Repeat, Repeat1, SkipBack, SkipForward, 
-  Play, Pause, Sliders, ListMusic, Compass, MoreVertical 
+  Play, Pause, Sliders, ListMusic, Compass, MoreVertical, Radio
 } from 'lucide-react';
 import { 
   Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette, ReactionStrength 
@@ -35,6 +35,7 @@ interface FullPlayerProps {
   onOpenSongOptions: (song: Song) => void;
   autoplayNext?: boolean;
   onToggleAutoplayNext?: () => void;
+  isPartyGuest?: boolean;
 }
 
 const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
@@ -84,6 +85,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onOpenEffects,
   onOpenQueue,
   onOpenSongOptions,
+  isPartyGuest = false,
 }) => {
   const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('dark_spectrum');
   const [showSceneSelector, setShowSceneSelector] = useState(false);
@@ -110,13 +112,14 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
   // Pointer/Touch seeking handlers for smooth tap or drag
   const calculateSeekTime = useCallback((clientX: number) => {
-    if (!progressBarRef.current || totalDuration <= 0) return 0;
+    if (isPartyGuest || !progressBarRef.current || totalDuration <= 0) return 0;
     const rect = progressBarRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return ratio * totalDuration;
-  }, [totalDuration]);
+  }, [totalDuration, isPartyGuest]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isPartyGuest) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     setIsSeeking(true);
     const newTime = calculateSeekTime(e.clientX);
@@ -124,7 +127,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isSeeking) return;
+    if (isPartyGuest || !isSeeking) return;
     const newTime = calculateSeekTime(e.clientX);
     setSeekTime(newTime);
   };
@@ -247,6 +250,14 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
 
       {/* 4. BOTTOM PLAYBACK CONTROLS */}
       <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-3">
+        {/* Party Guest Controlled Banner */}
+        {isPartyGuest && (
+          <div className="py-1 px-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-semibold text-center select-none flex items-center justify-center gap-1.5 animate-in fade-in">
+            <Radio className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
+            <span>In JTEC Party • Controlled by the host</span>
+          </div>
+        )}
+
         {/* ONE Simple Progress Bar */}
         <div className="w-full space-y-1.5 select-none">
           <div
@@ -255,7 +266,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-            className="group relative h-5 flex items-center cursor-pointer touch-none"
+            className={`group relative h-5 flex items-center ${isPartyGuest ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} touch-none`}
           >
             {/* Background Track (faint white line) */}
             <div className="relative w-full h-1 rounded-full bg-white/15 overflow-hidden">
@@ -305,8 +316,10 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           {/* Previous */}
           <button
             onClick={onPrevious}
-            className="p-3 text-slate-300 hover:text-white active:scale-90 transition"
-            title="Previous Track"
+            className={`p-3 text-slate-300 hover:text-white active:scale-90 transition ${
+              isPartyGuest ? 'opacity-40 cursor-not-allowed' : ''
+            }`}
+            title={isPartyGuest ? 'Controlled by the host' : 'Previous Track'}
           >
             <SkipBack className="w-7 h-7 fill-current" />
           </button>
@@ -314,12 +327,14 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           {/* Center Play / Pause with Neon Glow */}
           <button
             onClick={onTogglePlay}
-            className="w-18 h-18 rounded-full flex items-center justify-center text-white shadow-2xl transition-all duration-200 active:scale-95 hover:scale-105"
+            className={`w-18 h-18 rounded-full flex items-center justify-center text-white shadow-2xl transition-all duration-200 active:scale-95 hover:scale-105 ${
+              isPartyGuest ? 'opacity-60 cursor-not-allowed' : ''
+            }`}
             style={{
               background: `linear-gradient(135deg, ${palette.primary} 0%, ${palette.secondary} 50%, ${palette.accent} 100%)`,
               boxShadow: `0 0 28px ${palette.glow}`,
             }}
-            title={isPlaying ? 'Pause' : 'Play'}
+            title={isPartyGuest ? 'Controlled by the host' : isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? (
               <Pause className="w-8 h-8 fill-white" />
@@ -331,8 +346,10 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
           {/* Next */}
           <button
             onClick={onNext}
-            className="p-3 text-slate-300 hover:text-white active:scale-90 transition"
-            title="Next Track"
+            className={`p-3 text-slate-300 hover:text-white active:scale-90 transition ${
+              isPartyGuest ? 'opacity-40 cursor-not-allowed' : ''
+            }`}
+            title={isPartyGuest ? 'Controlled by the host' : 'Next Track'}
           >
             <SkipForward className="w-7 h-7 fill-current" />
           </button>

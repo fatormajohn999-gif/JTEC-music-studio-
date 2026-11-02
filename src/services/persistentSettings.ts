@@ -17,6 +17,7 @@ const KEY_PLAYBACK = 'jtec_persistent_playback_v1';
 const KEY_DOWNLOADS = 'jtec_persistent_downloads_v1';
 const KEY_SORT_VIEW = 'jtec_persistent_sort_view_v1';
 const KEY_DEVICE_NAME = 'jtec_persistent_device_name_v1';
+const KEY_PARTY_NICKNAME = 'jtec_party_nickname_v1';
 
 export interface PersistentAudioEffects extends AudioEffectsConfig {
   preservesPitch: boolean;
@@ -443,6 +444,29 @@ export const PersistentSettingsService = {
     return trimmed;
   },
 
+  getPartyNicknameSync(): string {
+    try {
+      const stored = localStorage.getItem(KEY_PARTY_NICKNAME);
+      if (stored && stored.trim().length > 0) {
+        return stored.trim().slice(0, 20);
+      }
+    } catch {}
+    return 'Guest';
+  },
+
+  async savePartyNickname(nickname: string): Promise<string> {
+    const clean = (nickname || '').trim().slice(0, 20) || 'Guest';
+    try {
+      localStorage.setItem(KEY_PARTY_NICKNAME, clean);
+    } catch {}
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await Preferences.set({ key: KEY_PARTY_NICKNAME, value: clean });
+      } catch {}
+    }
+    return clean;
+  },
+
   // Initial one-time hydration and wipe any saved device name
   async initialize(): Promise<void> {
     try {
@@ -452,12 +476,13 @@ export const PersistentSettingsService = {
     if (Capacitor.isNativePlatform()) {
       try {
         // Read native values into localStorage if not present
-        const [eff, vis, play, down, sort] = await Promise.all([
+        const [eff, vis, play, down, sort, nick] = await Promise.all([
           Preferences.get({ key: KEY_EFFECTS }),
           Preferences.get({ key: KEY_VISUALIZER }),
           Preferences.get({ key: KEY_PLAYBACK }),
           Preferences.get({ key: KEY_DOWNLOADS }),
           Preferences.get({ key: KEY_SORT_VIEW }),
+          Preferences.get({ key: KEY_PARTY_NICKNAME }),
         ]);
 
         if (eff.value) localStorage.setItem(KEY_EFFECTS, eff.value);
@@ -465,6 +490,7 @@ export const PersistentSettingsService = {
         if (play.value) localStorage.setItem(KEY_PLAYBACK, play.value);
         if (down.value) localStorage.setItem(KEY_DOWNLOADS, down.value);
         if (sort.value) localStorage.setItem(KEY_SORT_VIEW, sort.value);
+        if (nick.value) localStorage.setItem(KEY_PARTY_NICKNAME, nick.value);
 
         // Wipe any stored device name from native preferences
         await Preferences.remove({ key: KEY_DEVICE_NAME });
