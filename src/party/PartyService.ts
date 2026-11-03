@@ -2,6 +2,7 @@ import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseService } from '../services/supabase';
 import { audioEngine } from '../services/audioEngine';
 import { PersistentSettingsService } from '../services/persistentSettings';
+import { getPartySupabaseClient } from './backend/supabaseClient';
 import {
   PartyRole,
   PartyMember,
@@ -12,7 +13,9 @@ import {
   PartyListener,
   HostDiagnostic,
   PartyBroadcastPayload,
+  PartyBroadcastInput,
   FloatingReaction,
+  SyncLogEntry,
 } from './types';
 import { MockPartyBackend, DEMO_BOT_TRACKS } from './MockPartyBackend';
 
@@ -44,8 +47,12 @@ export const triggerHapticFeedback = (): void => {
 
 interface PresencePayload {
   id: string;
+  partyId?: string;
+  accountId?: string;
+  username?: string;
   nickname: string;
   avatar?: string;
+  avatarUrl?: string | null;
   tag?: string;
   isHost: boolean;
   status: PartyMemberStatus;
@@ -61,12 +68,23 @@ class PartyServiceClass {
   private selfAvatar = this.getAvatarColor(PersistentSettingsService.getPartyNicknameSync());
   private lastReactionTimeMs = 0;
 
+  // Sync engine deduplication & command tracking
+  private lastSeenSeqBySender: Map<string, number> = new Map();
+  private lastProcessedLoadCommandId: string | null = null;
+  private lastProcessedStartCommandId: string | null = null;
+  private lastProcessedSeekCommandId: string | null = null;
+  private currentCommandId: string = '';
+  private lastGuestSeekPerfMs: number = 0;
+  private lastReachedPositionMs: number = 0;
+
   private state: PartyState = {
     roomCode: null,
     role: 'guest',
     selfId: this.getOrCreateSelfId(),
+    partyId: '',
     nickname: PersistentSettingsService.getPartyNicknameSync(),
     avatar: this.selfAvatar,
+    avatarUrl: null,
     tag: this.selfTag,
     isLocked: false,
     members: [],
@@ -86,6 +104,8 @@ class PartyServiceClass {
     // Reactions
     activeReactions: [],
     isReactionsMuted: false,
+    // Sync logs
+    syncLogs: [],
   };
 
   private listeners: Set<PartyListener> = new Set();
@@ -122,6 +142,7 @@ class PartyServiceClass {
     seek?: (positionSeconds: number) => void;
     getCurrentPositionSeconds?: () => number;
   } = {};
+
 
   constructor() {
     // Listen for window visibility changes to trigger re-sync when returning to foreground
@@ -251,6 +272,32 @@ class PartyServiceClass {
     };
   }
 
+  public addSyncLog(
+    type: SyncLogEntry['type'],
+    summary: string,
+    details?: Record<string, any>
+  ): void {
+    const entry: SyncLogEntry = {
+      id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      timestamp: Date.now(),
+      type,
+      summary,
+      details,
+    };
+    this.state.syncLogs = [entry, ...this.state.syncLogs].slice(0, 30);
+    // Emit state so UI sync log views update
+    this.emitState();
+  }
+
+  private broadcastMessage(payload: PartyBroadcastInput): void {
+    const fullPayload = {
+      ...payload,
+      senderId: payload.senderId || this.state.selfId,
+      seq: payload.seq || ++this.broadcastSeq,
+    } as PartyBroadcastPayload;
+    this.sendBroadcast(fullPayload);
+  }
+
   public setNickname(name: string): void {
     const clean = (name || '').trim().slice(0, 20) || 'Guest';
     this.state.nickname = clean;
@@ -262,8 +309,12 @@ class PartyServiceClass {
       this.channel
         .track({
           id: this.state.selfId,
+          partyId: this.state.partyId || '',
+          accountId: this.state.partyId || '',
+          username: clean,
           nickname: clean,
           avatar: this.state.avatar,
+          avatarUrl: this.state.avatarUrl || null,
           tag: this.state.tag,
           isHost: this.state.role === 'host',
           status: this.state.playbackStatus,
@@ -276,6 +327,8 @@ class PartyServiceClass {
   public setProfile(profile: { username: string; id?: string; avatarUrl?: string | null; tag?: string }): void {
     const clean = (profile.username || '').trim().slice(0, 20) || 'Guest';
     this.state.nickname = clean;
+    this.state.partyId = profile.id || '';
+    this.state.avatarUrl = profile.avatarUrl || null;
     this.state.tag = profile.tag || '';
     this.state.avatar = profile.avatarUrl || this.getAvatarColor(clean);
     PersistentSettingsService.savePartyNickname(clean);
@@ -285,8 +338,12 @@ class PartyServiceClass {
       this.channel
         .track({
           id: this.state.selfId,
+          partyId: this.state.partyId || '',
+          accountId: this.state.partyId || '',
+          username: clean,
           nickname: clean,
           avatar: this.state.avatar,
+          avatarUrl: this.state.avatarUrl || null,
           tag: this.state.tag,
           isHost: this.state.role === 'host',
           status: this.state.playbackStatus,
@@ -323,7 +380,7 @@ class PartyServiceClass {
       this.addFloatingReaction(reaction);
     }
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'reaction',
       id: reactionId,
       emoji,
@@ -370,10 +427,9 @@ class PartyServiceClass {
     this.state.skipVotes = updatedVotes;
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'vote_skip',
       memberId: this.state.selfId,
-      seq: ++this.broadcastSeq,
     });
 
     // If host voted or guest voted, host checks auto-skip
@@ -388,7 +444,7 @@ class PartyServiceClass {
     this.state.autoSkipEnabled = enabled;
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'set_auto_skip',
       enabled,
     });
@@ -421,10 +477,9 @@ class PartyServiceClass {
     let nextTrack: PartyTrack | null = null;
     if (this.state.queue.length > 0) {
       nextTrack = this.state.queue.shift() || null;
-      this.sendBroadcast({
+      this.broadcastMessage({
         type: 'queue_update',
         queue: this.state.queue,
-        seq: ++this.broadcastSeq,
       });
     } else {
       // Pick next demo track if available
@@ -445,10 +500,9 @@ class PartyServiceClass {
     this.state.queue = [...this.state.queue, track];
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'queue_update',
       queue: this.state.queue,
-      seq: ++this.broadcastSeq,
     });
   }
 
@@ -458,10 +512,9 @@ class PartyServiceClass {
     this.state.queue = this.state.queue.filter((_, i) => i !== index);
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'queue_update',
       queue: this.state.queue,
-      seq: ++this.broadcastSeq,
     });
   }
 
@@ -476,10 +529,9 @@ class PartyServiceClass {
     this.state.queue = updated;
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'queue_update',
       queue: this.state.queue,
-      seq: ++this.broadcastSeq,
     });
   }
 
@@ -491,7 +543,7 @@ class PartyServiceClass {
     triggerHapticFeedback();
     const newLock = !this.state.isLocked;
     this.state.isLocked = newLock;
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'room_lock',
       isLocked: newLock,
     });
@@ -513,7 +565,7 @@ class PartyServiceClass {
       return;
     }
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'kick_member',
       targetId: memberId,
       reason: 'You were removed from the room by the host.',
@@ -599,9 +651,10 @@ class PartyServiceClass {
   private async initRoom(code: string, role: PartyRole): Promise<void> {
     await this.leaveRoom(false);
 
-    this.client = SupabaseService.getClientForCategory('jtec_main');
+    // Prefer dedicated Party Supabase client, fallback to main if testing
+    this.client = getPartySupabaseClient() || SupabaseService.getClientForCategory('jtec_main');
     if (!this.client) {
-      throw new Error('Could not connect to JTEC Network. Check your internet connection.');
+      throw new Error('JTEC Party is unavailable right now');
     }
 
     this.state.roomCode = code;
@@ -635,11 +688,12 @@ class PartyServiceClass {
   private async connectChannel(code: string, role: PartyRole): Promise<void> {
     if (!this.client) return;
 
+    const presenceKey = this.state.partyId || this.state.selfId;
     const channelName = `party:${code}`;
     const channel = this.client.channel(channelName, {
       config: {
-        presence: { key: this.state.selfId },
-        broadcast: { self: false },
+        presence: { key: presenceKey },
+        broadcast: { self: false, ack: false },
       },
     });
 
@@ -673,8 +727,12 @@ class PartyServiceClass {
           // Track presence
           await channel.track({
             id: this.state.selfId,
+            partyId: this.state.partyId || '',
+            accountId: this.state.partyId || '',
+            username: this.state.nickname,
             nickname: this.state.nickname,
             avatar: this.state.avatar,
+            avatarUrl: this.state.avatarUrl || null,
             tag: this.state.tag,
             isHost: role === 'host',
             status: this.state.playbackStatus,
@@ -685,11 +743,15 @@ class PartyServiceClass {
 
           if (role === 'guest') {
             // Send hello to host to receive current state immediately
-            this.sendBroadcast({
+            this.broadcastMessage({
               type: 'hello',
               memberId: this.state.selfId,
+              partyId: this.state.partyId || '',
+              accountId: this.state.partyId || '',
+              username: this.state.nickname,
               nickname: this.state.nickname,
               avatar: this.state.avatar,
+              avatarUrl: this.state.avatarUrl || null,
               tag: this.state.tag,
             });
 
@@ -719,8 +781,12 @@ class PartyServiceClass {
     // Always include self in members list
     memberMap.set(this.state.selfId, {
       id: this.state.selfId,
+      partyId: this.state.partyId || '',
+      accountId: this.state.partyId || '',
+      username: this.state.nickname,
       nickname: this.state.nickname,
       avatar: this.state.avatar,
+      avatarUrl: this.state.avatarUrl || null,
       tag: this.state.tag,
       isHost: this.state.role === 'host',
       status: this.state.playbackStatus,
@@ -734,9 +800,13 @@ class PartyServiceClass {
         const existing = this.state.members.find((m) => m.id === p.id);
         memberMap.set(p.id, {
           id: p.id,
+          partyId: p.partyId || existing?.partyId || '',
+          accountId: p.accountId || p.partyId || existing?.accountId || '',
+          username: p.username || p.nickname || 'Guest',
           nickname: p.nickname || 'Guest',
           avatar: p.avatar || this.getAvatarColor(p.nickname || 'Guest'),
-          tag: p.tag || '#2048',
+          avatarUrl: p.avatarUrl || existing?.avatarUrl || null,
+          tag: p.tag || '',
           isHost: Boolean(p.isHost),
           status: p.status || 'idle',
           latencyMs: existing?.latencyMs,
@@ -753,6 +823,47 @@ class PartyServiceClass {
 
     this.realPresenceMembers = Array.from(memberMap.values());
     this.updateMergedMembers();
+
+    // Load member avatars with the RPC get_profiles for the ids in the room (Requirement 5)
+    if (this.client) {
+      const idsToFetch = Array.from(
+        new Set(
+          this.realPresenceMembers
+            .map((m) => m.accountId || m.id)
+            .filter((id): id is string => Boolean(id) && !id.startsWith('bot_'))
+        )
+      );
+
+      if (idsToFetch.length > 0) {
+        Promise.resolve(this.client.rpc('get_profiles', { p_ids: idsToFetch }))
+          .then((res: any) => {
+            const data = res?.data;
+            if (Array.isArray(data) && data.length > 0) {
+              let updated = false;
+              data.forEach((p: any) => {
+                const match = this.realPresenceMembers.find(
+                  (m) => m.accountId === p.id || m.id === p.id || m.partyId === p.party_id
+                );
+                if (match) {
+                  if (p.avatar && match.avatarUrl !== p.avatar) {
+                    match.avatarUrl = p.avatar;
+                    updated = true;
+                  }
+                  if (p.username && match.username !== p.username) {
+                    match.username = p.username;
+                    match.nickname = p.username;
+                    updated = true;
+                  }
+                }
+              });
+              if (updated) {
+                this.updateMergedMembers();
+              }
+            }
+          })
+          .catch(() => {});
+      }
+    }
   }
 
   private updateMergedMembers(): void {
@@ -828,18 +939,63 @@ class PartyServiceClass {
   private handleBroadcastMessage(msg: PartyBroadcastPayload): void {
     if (!msg || !msg.type) return;
 
+    // Requirement 2: Ignore my own messages
+    if (msg.senderId && msg.senderId === this.state.selfId) {
+      return;
+    }
+
+    // Drop messages targeted specifically to another member
+    if (msg.targetMemberId && msg.targetMemberId !== this.state.selfId) {
+      return;
+    }
+
+    // Requirement 2: Drop any message whose sequence number is older than newest already applied for that sender
+    if (msg.senderId && typeof msg.seq === 'number') {
+      const lastSeq = this.lastSeenSeqBySender.get(msg.senderId) ?? -1;
+      if (msg.seq <= lastSeq) {
+        this.addSyncLog(
+          'duplicate_dropped',
+          `Dropped duplicate/out-of-order ${msg.type} from ${msg.senderId.slice(0, 8)} (seq ${msg.seq} <= ${lastSeq})`,
+          { type: msg.type, senderId: msg.senderId, seq: msg.seq, lastSeq }
+        );
+        return;
+      }
+      this.lastSeenSeqBySender.set(msg.senderId, msg.seq);
+    }
+
+    // Record incoming message in sync log
+    this.addSyncLog(
+      'msg_received',
+      `Received ${msg.type} from ${msg.senderId ? msg.senderId.slice(0, 8) : 'unknown'} (seq: ${msg.seq ?? 0})`,
+      { type: msg.type, senderId: msg.senderId, seq: msg.seq }
+    );
+
+    // Requirement 1: The HOST never applies incoming "state", "load", "start" or drift corrections.
+    // Only guests do. The host never seeks because of any received message.
+    if (this.state.role === 'host') {
+      if (msg.type === 'state' || msg.type === 'load' || msg.type === 'start_countdown') {
+        return;
+      }
+    }
+
     switch (msg.type) {
       case 'load': {
+        if (this.state.role !== 'guest') return;
+
+        // Requirement 4: "load" has a unique commandId. Repeated commandId is ignored (idempotent).
+        if (msg.commandId && msg.commandId === this.lastProcessedLoadCommandId) {
+          this.addSyncLog('duplicate_dropped', `Ignored repeated load commandId: ${msg.commandId}`);
+          return;
+        }
+        this.lastProcessedLoadCommandId = msg.commandId;
         this.lastHostSeenMs = Date.now();
+        this.lastReachedPositionMs = 0;
         this.state.currentTrack = msg.track;
         this.state.playbackStatus = 'loading';
-        // Reset votes on new track
         this.state.skipVotes = [];
         this.emitState();
 
-        if (this.state.role === 'guest') {
-          this.bufferTrackAsGuest(msg.track);
-        }
+        this.bufferTrackAsGuest(msg.track);
         break;
       }
 
@@ -857,6 +1013,14 @@ class PartyServiceClass {
       }
 
       case 'start_countdown': {
+        if (this.state.role !== 'guest') return;
+
+        // Requirement 4: "start" has a unique commandId. Repeated commandId is ignored (idempotent).
+        if (msg.commandId && msg.commandId === this.lastProcessedStartCommandId) {
+          this.addSyncLog('duplicate_dropped', `Ignored repeated start commandId: ${msg.commandId}`);
+          return;
+        }
+        this.lastProcessedStartCommandId = msg.commandId;
         this.lastHostSeenMs = Date.now();
         this.executeCountdown(msg.targetStartTime);
         break;
@@ -894,11 +1058,10 @@ class PartyServiceClass {
 
         if (this.state.role === 'host') {
           this.checkAutoSkipCondition();
-          this.sendBroadcast({
+          this.broadcastMessage({
             type: 'skip_votes_update',
             skipVotes: this.state.skipVotes,
             autoSkipEnabled: this.state.autoSkipEnabled,
-            seq: ++this.broadcastSeq,
           });
         }
         break;
@@ -925,11 +1088,12 @@ class PartyServiceClass {
 
       case 'ping': {
         if (this.state.role === 'host') {
-          this.sendBroadcast({
+          this.broadcastMessage({
             type: 'pong',
             forId: msg.fromId,
             t0: msg.t0,
             t_host: Date.now(),
+            targetMemberId: msg.fromId,
           });
         }
         break;
@@ -952,39 +1116,50 @@ class PartyServiceClass {
       case 'hello': {
         if (this.state.role === 'host') {
           if (this.state.isLocked) {
-            this.sendBroadcast({
+            this.broadcastMessage({
               type: 'kick_member',
               targetId: msg.memberId,
               reason: 'This party room is closed to new members.',
+              targetMemberId: msg.memberId,
             });
             return;
           }
 
-          this.broadcastCurrentHostState();
-          this.sendBroadcast({
+          // Requirement 3: A new member joining, a "hello", a presence change or a reconnect
+          // must never restart, seek or reload playback for other members.
+          // The host answers a "hello" with a "state" message addressed only to that member.
+          const posSec = this.playerHandlers.getCurrentPositionSeconds
+            ? this.playerHandlers.getCurrentPositionSeconds()
+            : audioEngine.currentTime;
+
+          this.broadcastMessage({
+            type: 'state',
+            track: this.state.currentTrack,
+            status: this.state.playbackStatus,
+            positionMs: Math.round(posSec * 1000),
+            hostTimestamp: Date.now(),
+            commandId: this.currentCommandId,
+            targetMemberId: msg.memberId,
+          });
+
+          this.broadcastMessage({
             type: 'room_lock',
             isLocked: this.state.isLocked,
+            targetMemberId: msg.memberId,
           });
-          this.sendBroadcast({
+
+          this.broadcastMessage({
             type: 'skip_votes_update',
             skipVotes: this.state.skipVotes,
             autoSkipEnabled: this.state.autoSkipEnabled,
-            seq: ++this.broadcastSeq,
-          });
-          this.sendBroadcast({
-            type: 'queue_update',
-            queue: this.state.queue,
-            seq: ++this.broadcastSeq,
+            targetMemberId: msg.memberId,
           });
 
-          if (this.state.currentTrack) {
-            this.sendBroadcast({
-              type: 'load',
-              track: this.state.currentTrack,
-              hostTimestamp: Date.now(),
-              seq: ++this.broadcastSeq,
-            });
-          }
+          this.broadcastMessage({
+            type: 'queue_update',
+            queue: this.state.queue,
+            targetMemberId: msg.memberId,
+          });
         }
         break;
       }
@@ -1033,7 +1208,7 @@ class PartyServiceClass {
       sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
     );
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'guest_diag',
       memberId: this.state.selfId,
       nickname: this.state.nickname,
@@ -1091,16 +1266,18 @@ class PartyServiceClass {
       throw new Error('This track does not have a streamable audio address.');
     }
 
+    // Requirement 4: unique commandId on load
+    this.currentCommandId = 'cmd_load_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     this.state.currentTrack = track;
     this.state.playbackStatus = 'loading';
     this.state.skipVotes = []; // Reset votes on track change
     this.emitState();
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'load',
       track,
+      commandId: this.currentCommandId,
       hostTimestamp: Date.now(),
-      seq: ++this.broadcastSeq,
     });
 
     if (this.playerHandlers.loadTrack) {
@@ -1135,12 +1312,14 @@ class PartyServiceClass {
     if (this.state.role !== 'host') return;
     if (this.readyCheckTimer) clearTimeout(this.readyCheckTimer);
 
+    // Requirement 4: unique commandId on start
+    const startCmdId = 'cmd_start_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     const targetStartTime = Date.now() + 3000;
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'start_countdown',
+      commandId: startCmdId,
       targetStartTime,
       hostTimestamp: Date.now(),
-      seq: ++this.broadcastSeq,
     });
 
     this.executeCountdown(targetStartTime);
@@ -1192,11 +1371,10 @@ class PartyServiceClass {
       this.state.playbackStatus = 'ready';
       this.emitState();
 
-      this.sendBroadcast({
+      this.broadcastMessage({
         type: 'member_status',
         memberId: this.state.selfId,
         status: 'ready',
-        seq: ++this.broadcastSeq,
       });
     } catch (err) {
       console.warn('[PartyService] Guest buffering failed:', err);
@@ -1232,10 +1410,27 @@ class PartyServiceClass {
   public hostSeek(positionSeconds: number): void {
     if (this.state.role !== 'host') return;
     triggerHapticFeedback();
+    const seekCmdId = 'cmd_seek_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     if (this.playerHandlers.seek) {
       this.playerHandlers.seek(positionSeconds);
     }
-    this.broadcastCurrentHostState();
+    this.addSyncLog('seek_performed', `Host seeked to ${positionSeconds.toFixed(1)}s`, {
+      reason: 'host_seek_action',
+      from: audioEngine.currentTime,
+      to: positionSeconds,
+    });
+
+    // Broadcast seek state immediately
+    this.broadcastMessage({
+      type: 'state',
+      track: this.state.currentTrack,
+      status: this.state.playbackStatus,
+      positionMs: Math.round(positionSeconds * 1000),
+      hostTimestamp: Date.now(),
+      isSeek: true,
+      seekCommandId: seekCmdId,
+      commandId: this.currentCommandId,
+    });
   }
 
   private broadcastCurrentHostState(): void {
@@ -1244,13 +1439,13 @@ class PartyServiceClass {
       ? this.playerHandlers.getCurrentPositionSeconds()
       : audioEngine.currentTime;
 
-    this.sendBroadcast({
+    this.broadcastMessage({
       type: 'state',
       track: this.state.currentTrack,
       status: this.state.playbackStatus,
       positionMs: Math.round(posSec * 1000),
       hostTimestamp: Date.now(),
-      seq: ++this.broadcastSeq,
+      commandId: this.currentCommandId,
     });
   }
 
@@ -1259,11 +1454,17 @@ class PartyServiceClass {
     status: PartyPlaybackStatus;
     positionMs: number;
     hostTimestamp: number;
-    seq: number;
+    commandId?: string;
+    isSeek?: boolean;
+    seekCommandId?: string;
   }): void {
+    if (this.state.role !== 'guest') return;
+
+    // Track change via state (for newly joined guest or reconnect)
     if (msg.track && (!this.state.currentTrack || this.state.currentTrack.id !== msg.track.id)) {
       this.state.currentTrack = msg.track;
-      this.state.skipVotes = []; // Reset votes
+      this.state.skipVotes = [];
+      this.lastReachedPositionMs = 0;
       this.bufferTrackAsGuest(msg.track);
     }
 
@@ -1277,37 +1478,98 @@ class PartyServiceClass {
     }
 
     if (msg.status === 'playing') {
-      this.state.playbackStatus = 'playing';
-
-      if (this.playerHandlers.play && !audioEngine.isPlaying) {
-        this.playerHandlers.play().catch(() => {});
+      if (this.state.playbackStatus === 'ready' || (!audioEngine.isPlaying && this.playerHandlers.play)) {
+        this.state.playbackStatus = 'playing';
+        if (this.playerHandlers.play) {
+          this.playerHandlers.play().catch(() => {});
+        }
       }
 
-      const guestNow = Date.now();
-      const elapsedSinceHostBroadcast = guestNow + this.medianOffsetMs - msg.hostTimestamp;
-      const expectedPositionMs = Math.max(0, msg.positionMs + elapsedSinceHostBroadcast);
+      // Requirement 5: Guest drift correction ONLY after the track has really started
+      const isReallyStarted =
+        this.state.playbackStatus === 'playing' &&
+        audioEngine.isPlaying &&
+        this.state.currentTrack !== null;
 
-      const realPositionMs = Math.round(
-        (this.playerHandlers.getCurrentPositionSeconds?.() || audioEngine.currentTime) * 1000
-      );
-      const diffMs = realPositionMs - expectedPositionMs;
+      if (!isReallyStarted) {
+        return;
+      }
+
+      // Requirement 5: Compare with target computed from host's reported position and clock offset,
+      // using performance.now() for elapsed monotonic time and never Date.now() mixed with it.
+      const transitEstMs = Math.max(0, this.currentLatencyMs);
+      const targetPositionMs = Math.max(0, msg.positionMs + transitEstMs);
+
+      const realPosSec = this.playerHandlers.getCurrentPositionSeconds?.() || audioEngine.currentTime;
+      const realPositionMs = Math.round(realPosSec * 1000);
+
+      // Keep track of the highest position reached by playback
+      this.lastReachedPositionMs = Math.max(this.lastReachedPositionMs, realPositionMs);
+
+      const diffMs = realPositionMs - targetPositionMs;
       this.currentDriftMs = diffMs;
-
       const absDiff = Math.abs(diffMs);
 
-      if (absDiff < 40) {
-        audioEngine.setPartyDriftSpeed(1.0);
-      } else if (absDiff <= 300) {
-        if (diffMs > 0) {
-          audioEngine.setPartyDriftSpeed(0.98);
-        } else {
-          audioEngine.setPartyDriftSpeed(1.02);
+      const nowPerf = performance.now();
+
+      if (absDiff > 300) {
+        // Seek only when drift is more than 300 ms and at least 3 seconds have passed since the last seek
+        const timeSinceLastSeek = nowPerf - this.lastGuestSeekPerfMs;
+        if (timeSinceLastSeek >= 3000) {
+          const isExplicitHostSeek = Boolean(
+            msg.isSeek && msg.seekCommandId && msg.seekCommandId !== this.lastProcessedSeekCommandId
+          );
+
+          if (isExplicitHostSeek) {
+            this.lastProcessedSeekCommandId = msg.seekCommandId || null;
+            if (this.playerHandlers.seek) {
+              this.playerHandlers.seek(targetPositionMs / 1000);
+            }
+            this.lastGuestSeekPerfMs = nowPerf;
+            this.lastReachedPositionMs = targetPositionMs;
+            this.addSyncLog(
+              'seek_performed',
+              `Host seek synced: ${realPosSec.toFixed(1)}s -> ${(targetPositionMs / 1000).toFixed(1)}s`,
+              { reason: 'host_seek_flag', from: realPosSec, to: targetPositionMs / 1000 }
+            );
+            audioEngine.setPartyDriftSpeed(1.0);
+          } else {
+            // Never seek to a position older than the last one reached unless the host actually seeked
+            if (targetPositionMs < this.lastReachedPositionMs) {
+              audioEngine.setPartyDriftSpeed(0.98);
+              this.addSyncLog(
+                'drift_corrected',
+                `Protected playback: avoided jumping backward (${targetPositionMs}ms < ${this.lastReachedPositionMs}ms); rate set to 0.98x`,
+                { diffMs, speed: 0.98 }
+              );
+            } else {
+              if (this.playerHandlers.seek) {
+                this.playerHandlers.seek(targetPositionMs / 1000);
+              }
+              this.lastGuestSeekPerfMs = nowPerf;
+              this.lastReachedPositionMs = targetPositionMs;
+              this.addSyncLog(
+                'seek_performed',
+                `Drift correction seek: ${realPosSec.toFixed(1)}s -> ${(targetPositionMs / 1000).toFixed(1)}s (drift ${diffMs}ms)`,
+                { reason: 'drift > 300ms', from: realPosSec, to: targetPositionMs / 1000 }
+              );
+              audioEngine.setPartyDriftSpeed(1.0);
+            }
+          }
         }
       } else {
-        if (this.playerHandlers.seek) {
-          this.playerHandlers.seek(expectedPositionMs / 1000);
+        // Below 300ms: adjust playbackRate by at most 2%
+        if (absDiff < 40) {
+          audioEngine.setPartyDriftSpeed(1.0);
+        } else {
+          const speed = diffMs > 0 ? 0.98 : 1.02; // +diff = ahead -> slow down; -diff = behind -> speed up
+          audioEngine.setPartyDriftSpeed(speed);
+          this.addSyncLog(
+            'drift_corrected',
+            `Drift ${diffMs > 0 ? '+' : ''}${diffMs}ms -> playbackRate ${speed}x`,
+            { diffMs, speed }
+          );
         }
-        audioEngine.setPartyDriftSpeed(1.0);
       }
 
       this.emitState();
@@ -1323,7 +1585,7 @@ class PartyServiceClass {
             this.handleBroadcastMessage(pong);
           });
         } else {
-          this.sendBroadcast({
+          this.broadcastMessage({
             type: 'ping',
             fromId: this.state.selfId,
             t0: Date.now(),
@@ -1388,14 +1650,17 @@ class PartyServiceClass {
   private handleForegroundReturn(): void {
     this.lastHostSeenMs = Date.now();
     if (this.state.role === 'guest' && this.state.isConnected) {
-      this.sendBroadcast({
+      this.broadcastMessage({
         type: 'hello',
         memberId: this.state.selfId,
+        partyId: this.state.partyId,
+        accountId: this.state.partyId,
         nickname: this.state.nickname,
         avatar: this.state.avatar,
+        avatarUrl: this.state.avatarUrl,
         tag: this.state.tag,
       });
-      this.sendBroadcast({
+      this.broadcastMessage({
         type: 'ping',
         fromId: this.state.selfId,
         t0: Date.now(),
@@ -1431,7 +1696,7 @@ class PartyServiceClass {
     if (this.channel) {
       if (this.state.role === 'host' && notifyHost && this.state.isConnected) {
         try {
-          this.sendBroadcast({
+          this.broadcastMessage({
             type: 'close_room',
             reason: 'The host ended the party.',
           });
@@ -1465,8 +1730,10 @@ class PartyServiceClass {
       roomCode: null,
       role: 'guest',
       selfId: this.state.selfId,
+      partyId: this.state.partyId,
       nickname: this.state.nickname,
       avatar: this.state.avatar,
+      avatarUrl: this.state.avatarUrl,
       tag: this.state.tag,
       isLocked: false,
       members: [],
@@ -1483,9 +1750,15 @@ class PartyServiceClass {
       queue: [],
       activeReactions: [],
       isReactionsMuted: this.state.isReactionsMuted,
+      syncLogs: this.state.syncLogs || [],
     };
 
     this.emitState();
+  }
+
+  public getRoomChannelStatus(): string {
+    if (!this.channel) return 'IDLE';
+    return this.state.isConnected ? 'SUBSCRIBED' : 'CONNECTING';
   }
 
   public clearErrorMessage(): void {

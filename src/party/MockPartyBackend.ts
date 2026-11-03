@@ -14,8 +14,12 @@ import {
 
 export interface SimulatedBotGuest {
   id: string;
+  partyId: string;
+  accountId: string;
+  username: string;
   nickname: string;
   avatar: string;
+  avatarUrl: string | null;
   tag: string;
   clockOffsetMs: number;
   baseLatencyMs: number;
@@ -26,8 +30,12 @@ export interface SimulatedBotGuest {
 const DEFAULT_BOT_GUESTS: SimulatedBotGuest[] = [
   {
     id: 'bot_aisha_4092',
+    partyId: 'K7M2Q9XA',
+    accountId: 'K7M2Q9XA',
+    username: 'Aisha',
     nickname: 'Aisha',
     avatar: '#ec4899',
+    avatarUrl: null,
     tag: '#4092',
     clockOffsetMs: 350,
     baseLatencyMs: 85,
@@ -36,8 +44,12 @@ const DEFAULT_BOT_GUESTS: SimulatedBotGuest[] = [
   },
   {
     id: 'bot_marcus_8811',
+    partyId: 'P4X9J2LQ',
+    accountId: 'P4X9J2LQ',
+    username: 'Marcus',
     nickname: 'Marcus',
     avatar: '#8b5cf6',
+    avatarUrl: null,
     tag: '#8811',
     clockOffsetMs: -120,
     baseLatencyMs: 140,
@@ -46,8 +58,12 @@ const DEFAULT_BOT_GUESTS: SimulatedBotGuest[] = [
   },
   {
     id: 'bot_devon_1304',
+    partyId: 'R8T3N6VY',
+    accountId: 'R8T3N6VY',
+    username: 'Devon',
     nickname: 'Devon',
     avatar: '#3b82f6',
+    avatarUrl: null,
     tag: '#1304',
     clockOffsetMs: 45,
     baseLatencyMs: 55,
@@ -55,6 +71,7 @@ const DEFAULT_BOT_GUESTS: SimulatedBotGuest[] = [
     status: 'idle',
   },
 ];
+
 
 export const DEMO_ONLINE_FRIENDS: OnlineFriend[] = [
   { id: 'friend_1', name: 'Tariq', avatar: '#10b981', tag: '#1024', isOnline: true },
@@ -203,6 +220,8 @@ export class MockPartyBackendClass {
           avatar: '#06b6d4',
           tag: '#0001',
           timestamp: Date.now(),
+          senderId: 'bot_host_dj_nova',
+          seq: ++this.botStateSeq,
         });
         return { botName: 'DJ Nova', emoji };
       }
@@ -222,6 +241,8 @@ export class MockPartyBackendClass {
         avatar: bot.avatar,
         tag: bot.tag,
         timestamp: Date.now(),
+        senderId: bot.id,
+        seq: ++this.botStateSeq,
       });
     });
 
@@ -239,6 +260,7 @@ export class MockPartyBackendClass {
       this.onMessageCallback?.({
         type: 'vote_skip',
         memberId: bot.id,
+        senderId: bot.id,
         seq: ++this.botStateSeq,
       });
     });
@@ -277,9 +299,15 @@ export class MockPartyBackendClass {
           this.onMessageCallback?.({
             type: 'hello',
             memberId: bot.id,
+            partyId: bot.partyId,
+            accountId: bot.accountId,
             nickname: bot.nickname,
+            username: bot.username,
             avatar: bot.avatar,
+            avatarUrl: bot.avatarUrl,
             tag: bot.tag,
+            senderId: bot.id,
+            seq: ++this.botStateSeq,
           });
         });
       }
@@ -299,7 +327,9 @@ export class MockPartyBackendClass {
     this.onHostMessageCallback({
       type: 'load',
       track: nextTrack,
+      commandId: 'cmd_bot_load_' + Date.now(),
       hostTimestamp: Date.now(),
+      senderId: 'bot_host_dj_nova',
       seq: ++this.botStateSeq,
     });
 
@@ -308,8 +338,10 @@ export class MockPartyBackendClass {
       const targetStartTime = Date.now() + 3000;
       this.onHostMessageCallback({
         type: 'start_countdown',
+        commandId: 'cmd_bot_start_' + Date.now(),
         targetStartTime,
         hostTimestamp: Date.now(),
+        senderId: 'bot_host_dj_nova',
         seq: ++this.botStateSeq,
       });
     }, 1500);
@@ -331,7 +363,6 @@ export class MockPartyBackendClass {
         this.publishBotState();
 
         this.bots.forEach((bot, index) => {
-          const bufferDelay = 600 + index * 400 + Math.random() * 300;
           this.transport.deliver(() => {
             if (!this.botsActiveInRoom || this.botsDisconnectedTemporarily) return;
             bot.status = 'ready';
@@ -341,12 +372,14 @@ export class MockPartyBackendClass {
               type: 'member_status',
               memberId: bot.id,
               status: 'ready',
+              senderId: bot.id,
               seq: ++this.botStateSeq,
             });
           });
         });
         break;
       }
+
 
       case 'start_countdown': {
         this.bots.forEach((bot) => {
@@ -382,8 +415,12 @@ export class MockPartyBackendClass {
 
     const members: PartyMember[] = this.bots.map((bot) => ({
       id: bot.id,
+      partyId: bot.partyId,
+      accountId: bot.accountId,
+      username: bot.username,
       nickname: bot.nickname,
       avatar: bot.avatar,
+      avatarUrl: bot.avatarUrl,
       tag: bot.tag,
       isHost: false,
       status: bot.status,
@@ -423,8 +460,12 @@ export class MockPartyBackendClass {
     const code = 'BOT999';
     const hostMember: PartyMember = {
       id: 'bot_host_dj_nova',
+      partyId: 'NOVA9999',
+      accountId: 'NOVA9999',
+      username: 'DJ Nova',
       nickname: 'DJ Nova',
       avatar: '#06b6d4',
+      avatarUrl: null,
       tag: '#0001',
       isHost: true,
       status: 'idle',
@@ -440,7 +481,9 @@ export class MockPartyBackendClass {
       onHostMessage({
         type: 'load',
         track: firstTrack,
+        commandId: 'cmd_bot_first_load',
         hostTimestamp: Date.now(),
+        senderId: 'bot_host_dj_nova',
         seq: ++this.botStateSeq,
       });
 
@@ -451,8 +494,10 @@ export class MockPartyBackendClass {
         const targetStartTime = Date.now() + 3000;
         onHostMessage({
           type: 'start_countdown',
+          commandId: 'cmd_bot_first_start',
           targetStartTime,
           hostTimestamp: Date.now(),
+          senderId: 'bot_host_dj_nova',
           seq: ++this.botStateSeq,
         });
 
@@ -477,6 +522,7 @@ export class MockPartyBackendClass {
               status: 'playing',
               positionMs: Math.round(this.botDemoTrackPositionSec * 1000),
               hostTimestamp: Date.now(),
+              senderId: 'bot_host_dj_nova',
               seq: ++this.botStateSeq,
             });
           }, 2000);
@@ -499,6 +545,8 @@ export class MockPartyBackendClass {
         forId: fromId,
         t0,
         t_host: Date.now(),
+        senderId: 'bot_host_dj_nova',
+        seq: ++this.botStateSeq,
       });
     });
   }

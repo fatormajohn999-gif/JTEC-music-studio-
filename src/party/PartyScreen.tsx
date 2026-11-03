@@ -5,7 +5,7 @@ import {
   Music, Loader2, Lock, UserMinus, UserPlus,
   SkipForward, ListMusic, Plus, Trash2,
   Bell, BellOff, Camera, Edit3, Shield,
-  CheckCircle2, UserX, Ban, User as UserIcon, X
+  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity
 } from 'lucide-react';
 import { PartyService, triggerHapticFeedback } from './PartyService';
 import { PartyState, PartyMember, PARTY_REACTION_EMOJIS, PartyTrack } from './types';
@@ -49,6 +49,12 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // Social Account & Profile states
   const [profile, setProfile] = useState<PartyProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isBackendUnavailable, setIsBackendUnavailable] = useState(false);
+  const [incomingFriendRequestNotification, setIncomingFriendRequestNotification] = useState<{
+    type: 'friend_request';
+    name: string;
+    requestId: string;
+  } | null>(null);
   const [newUsernameInput, setNewUsernameInput] = useState('');
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -91,6 +97,13 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
 
   // Leave / End confirmation modal
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  // Member Profile modal state (tapping member in room page)
+  const [selectedMemberProfile, setSelectedMemberProfile] = useState<PartyMember | null>(null);
+  const [copiedMemberId, setCopiedMemberId] = useState(false);
+
+  // Host Connection Details & Sync Log modal state
+  const [showConnectionDetailsModal, setShowConnectionDetailsModal] = useState(false);
 
   // Synced progress seconds
   const [currentPlaybackSec, setCurrentPlaybackSec] = useState<number>(0);
@@ -142,7 +155,13 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // Load Party Profile on mount
   const loadUserProfile = useCallback(async () => {
     setIsLoadingProfile(true);
+    setIsBackendUnavailable(false);
     try {
+      if (backend.isConfigured && !backend.isConfigured() && !backend.isMock()) {
+        setIsBackendUnavailable(true);
+        setIsLoadingProfile(false);
+        return;
+      }
       const p = await backend.loadProfile();
       setProfile(p);
       if (p) {
@@ -152,8 +171,11 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           avatarUrl: p.avatarUrl,
         });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to load party profile:', err);
+      if (err?.message?.includes('unavailable') || (!backend.isConfigured?.() && !backend.isMock())) {
+        setIsBackendUnavailable(true);
+      }
     } finally {
       setIsLoadingProfile(false);
     }
@@ -194,7 +216,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     }
   }, [profile, refreshSocialLists]);
 
-  // Subscribe to Presence & Invites
+  // Subscribe to Presence, Invites, and Social Notifications
   useEffect(() => {
     if (!profile) return;
 
@@ -206,11 +228,25 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       setPendingInvites(invs);
     });
 
+    const unsubSocial = backend.subscribeSocialNotifications?.((notification) => {
+      if (notification.type === 'friend_request') {
+        setIncomingFriendRequestNotification(notification);
+        refreshSocialLists();
+      } else if (notification.type === 'friend_accepted') {
+        setSocialActionMsg({
+          type: 'success',
+          text: `${notification.name} accepted your request`,
+        });
+        refreshSocialLists();
+      }
+    });
+
     return () => {
       unsubPresence();
       unsubInvites();
+      if (unsubSocial) unsubSocial();
     };
-  }, [backend, profile]);
+  }, [backend, profile, refreshSocialLists]);
 
   // Register Android back gesture to exit full-screen party without disconnecting
   useEffect(() => {
@@ -789,6 +825,43 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       {/* Main Scrollable Viewport (Requirement 5: safe padding, min 44px touch targets) */}
       <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0 px-3 sm:px-4 py-3">
         <div className="max-w-2xl mx-auto space-y-4 pb-32">
+          {/* Incoming Friend Request Notification Banner (Requirement 3) */}
+          {incomingFriendRequestNotification && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/90 via-slate-900 to-cyan-950/90 border border-cyan-400/50 shadow-xl flex items-center justify-between gap-3 animate-in slide-in-from-top duration-200">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white truncate">
+                    <strong className="text-cyan-300 font-bold">{incomingFriendRequestNotification.name}</strong> sent you a friend request
+                  </p>
+                  <p className="text-[10px] text-slate-400">Accept to listen to music together</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncomingFriendRequestNotification(null);
+                    setLobbyTab('friends');
+                    setFriendsSubTab('requests');
+                  }}
+                  className="px-3 py-1.5 min-h-[36px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow cursor-pointer active:scale-95 transition"
+                >
+                  View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncomingFriendRequestNotification(null)}
+                  className="p-1.5 text-slate-400 hover:text-white cursor-pointer rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Status or Error Banner */}
           {(partyState.errorMessage || localError || socialActionMsg) && (
             <div
@@ -836,9 +909,38 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           )}
 
           {/* =========================================================================
-              CASE 1: CREATE ACCOUNT SCREEN (If user has no profile yet)
+              UNAVAILABLE FALLBACK (Requirement 6)
           ========================================================================= */}
-          {!profile && !isLoadingProfile && (
+          {isBackendUnavailable && !partyState.roomCode && (
+            <div className="p-8 rounded-3xl bg-slate-900/80 border border-white/10 text-center space-y-4 shadow-xl animate-in fade-in">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+                <AlertCircle className="w-7 h-7" />
+              </div>
+              <div className="space-y-1.5 max-w-sm mx-auto">
+                <h3 className="text-base font-bold text-white tracking-wide">
+                  JTEC Party is unavailable right now
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Please check your internet connection or tap Retry to reconnect.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBackendUnavailable(false);
+                  loadUserProfile();
+                }}
+                className="px-6 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 active:scale-95 transition cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* =========================================================================
+              CASE 1: CREATE ACCOUNT SCREEN (If user has no profile yet & available)
+          ========================================================================= */}
+          {!profile && !isLoadingProfile && !isBackendUnavailable && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div className="p-6 rounded-3xl bg-gradient-to-br from-cyan-950/40 via-purple-950/30 to-slate-900/80 border border-cyan-500/30 shadow-xl space-y-4">
                 <div className="flex items-center gap-3">
@@ -1500,15 +1602,27 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   </button>
 
                   {partyState.role === 'host' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowInviteModal(true)}
-                      aria-label="Invite friends"
-                      className="flex-1 min-w-[110px] min-h-[44px] px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                    >
-                      <UserPlus className="w-3.5 h-3.5 text-purple-300" />
-                      <span>Invite Friends</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowInviteModal(true)}
+                        aria-label="Invite friends"
+                        className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
+                      >
+                        <UserPlus className="w-3.5 h-3.5 text-purple-300" />
+                        <span>Invite</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowConnectionDetailsModal(true)}
+                        aria-label="Connection details and sync log"
+                        className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
+                      >
+                        <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Connection</span>
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1718,26 +1832,35 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   {partyState.members.map((member) => (
                     <div
                       key={member.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-white/5 text-xs min-h-[48px]"
+                      onClick={() => {
+                        triggerHapticFeedback();
+                        setSelectedMemberProfile(member);
+                      }}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-800/60 border border-white/5 hover:border-cyan-500/30 text-xs min-h-[48px] cursor-pointer transition"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <Avatar
-                          url={member.avatar?.startsWith('data:') ? member.avatar : null}
-                          name={member.nickname}
+                          url={member.avatarUrl || (member.avatar?.startsWith('data:') ? member.avatar : null)}
+                          name={member.username || member.nickname}
                           size={36}
                         />
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-white truncate">{member.nickname}</span>
+                            <span className="font-bold text-white truncate">{member.username || member.nickname}</span>
                             {member.isHost && (
                               <Crown className="w-3 h-3 text-amber-400 shrink-0" />
                             )}
                           </div>
-                          <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                          <div className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
                             <span>Status: {member.status}</span>
                             {member.latencyMs !== undefined && (
                               <span className="font-mono text-cyan-300">
                                 {member.latencyMs}ms ping
+                              </span>
+                            )}
+                            {member.partyId && (
+                              <span className="font-mono text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-white/5">
+                                ID: {member.partyId}
                               </span>
                             )}
                           </div>
@@ -1747,7 +1870,10 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                       {partyState.role === 'host' && !member.isHost && (
                         <button
                           type="button"
-                          onClick={() => handleKickMember(member)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleKickMember(member);
+                          }}
                           className="min-h-[44px] min-w-[44px] p-2 text-slate-400 hover:text-rose-400 transition flex items-center justify-center cursor-pointer"
                           title="Remove from room"
                         >
@@ -2010,6 +2136,309 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   );
                 })
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MEMBER PROFILE MODAL (Tapping a member in the room)
+      ========================================================================= */}
+      {selectedMemberProfile && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-cyan-500/30 p-5 space-y-4 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setSelectedMemberProfile(null)}
+              className="absolute top-4 right-4 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex flex-col items-center text-center space-y-2 pt-2">
+              <Avatar
+                url={
+                  selectedMemberProfile.avatarUrl ||
+                  (selectedMemberProfile.avatar?.startsWith('data:') ? selectedMemberProfile.avatar : null)
+                }
+                name={selectedMemberProfile.username || selectedMemberProfile.nickname}
+                size={72}
+                className="border-2 border-cyan-400 shadow-xl"
+              />
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center justify-center gap-1.5">
+                  <span>{selectedMemberProfile.username || selectedMemberProfile.nickname}</span>
+                  {selectedMemberProfile.isHost && <Crown className="w-4 h-4 text-amber-400" />}
+                </h3>
+                <div className="mt-1 flex items-center justify-center gap-1.5 font-mono text-xs text-cyan-300 bg-slate-950/70 px-3 py-1 rounded-full border border-cyan-500/20">
+                  <span>ID: {selectedMemberProfile.partyId || 'N/A'}</span>
+                  {selectedMemberProfile.partyId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHapticFeedback();
+                        navigator.clipboard.writeText(selectedMemberProfile.partyId!);
+                        setCopiedMemberId(true);
+                        setTimeout(() => setCopiedMemberId(false), 2000);
+                      }}
+                      className="p-1 text-slate-400 hover:text-white"
+                      title="Copy Party ID"
+                    >
+                      {copiedMemberId ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
+                <span className="capitalize">{selectedMemberProfile.isHost ? 'Host' : 'Guest Listener'}</span>
+                <span>•</span>
+                <span>Status: {selectedMemberProfile.status}</span>
+                {selectedMemberProfile.latencyMs !== undefined && (
+                  <>
+                    <span>•</span>
+                    <span className="font-mono text-cyan-300">{selectedMemberProfile.latencyMs}ms ping</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Actions: Add Friend / Status & Block */}
+            <div className="space-y-2 pt-2 border-t border-white/10">
+              {selectedMemberProfile.id === partyState.selfId ? (
+                <div className="py-2.5 text-center text-xs text-slate-400 bg-slate-950/50 rounded-xl border border-white/5">
+                  This is your own profile
+                </div>
+              ) : (
+                <>
+                  {(() => {
+                    const targetId = selectedMemberProfile.partyId || selectedMemberProfile.id;
+                    const isFriend = friends.some(
+                      (f) => f.id === targetId || f.username === selectedMemberProfile.username
+                    );
+                    const isPending = friendRequests.some(
+                      (r) => r.from.id === targetId || r.toId === targetId
+                    );
+                    const isBlocked = blockedUsers.some((b) => b.id === targetId);
+
+                    if (isBlocked) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full min-h-[44px] py-2.5 rounded-xl bg-slate-800 border border-white/5 text-slate-500 text-xs font-semibold cursor-not-allowed flex items-center justify-center gap-1.5"
+                        >
+                          <Ban className="w-4 h-4" />
+                          <span>Blocked</span>
+                        </button>
+                      );
+                    }
+
+                    if (isFriend) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full min-h-[44px] py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold cursor-not-allowed flex items-center justify-center gap-1.5"
+                        >
+                          <Check className="w-4 h-4 text-emerald-400" />
+                          <span>Friends</span>
+                        </button>
+                      );
+                    }
+
+                    if (isPending) {
+                      return (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full min-h-[44px] py-2.5 rounded-xl bg-slate-800 border border-purple-500/30 text-purple-300 text-xs font-semibold cursor-not-allowed flex items-center justify-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-4 h-4 text-purple-400" />
+                          <span>Request Pending</span>
+                        </button>
+                      );
+                    }
+
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          triggerHapticFeedback();
+                          if (!selectedMemberProfile.partyId) return;
+                          try {
+                            await backend.sendFriendRequest(selectedMemberProfile.partyId);
+                            setSocialActionMsg({
+                              type: 'success',
+                              text: `Friend request sent to ${
+                                selectedMemberProfile.username || selectedMemberProfile.nickname
+                              }!`,
+                            });
+                            await refreshSocialLists();
+                            setSelectedMemberProfile(null);
+                          } catch (err) {
+                            setSocialActionMsg({
+                              type: 'error',
+                              text: err instanceof Error ? err.message : 'Failed to send friend request.',
+                            });
+                          }
+                        }}
+                        className="w-full min-h-[44px] py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>Add Friend</span>
+                      </button>
+                    );
+                  })()}
+
+                  {/* Block Option */}
+                  {(() => {
+                    const targetId = selectedMemberProfile.partyId || selectedMemberProfile.id;
+                    const isBlocked = blockedUsers.some((b) => b.id === targetId);
+                    if (isBlocked) return null;
+
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          triggerHapticFeedback();
+                          try {
+                            await backend.blockUser(targetId);
+                            setSocialActionMsg({
+                              type: 'success',
+                              text: `Blocked ${
+                                selectedMemberProfile.username || selectedMemberProfile.nickname
+                              }.`,
+                            });
+                            await refreshSocialLists();
+                            setSelectedMemberProfile(null);
+                          } catch (err) {
+                            setSocialActionMsg({
+                              type: 'error',
+                              text: err instanceof Error ? err.message : 'Failed to block user.',
+                            });
+                          }
+                        }}
+                        className="w-full min-h-[44px] py-2 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 active:scale-95 transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Ban className="w-3.5 h-3.5" />
+                        <span>Block user</span>
+                      </button>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          CONNECTION DETAILS & SYNC LOG MODAL (Requirement 6)
+      ========================================================================= */}
+      {showConnectionDetailsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-cyan-500/30 p-5 space-y-4 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">Connection Details & Sync Log</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConnectionDetailsModal(false)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick stats summary */}
+            <div className="grid grid-cols-3 gap-2 shrink-0">
+              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span className="text-[10px] text-slate-400 block">Status</span>
+                <span className="text-xs font-bold text-emerald-400">
+                  {partyState.isConnected ? 'Connected' : 'Reconnecting'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span className="text-[10px] text-slate-400 block">Listeners</span>
+                <span className="text-xs font-bold text-white">{partyState.members.length}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span className="text-[10px] text-slate-400 block">Events Logged</span>
+                <span className="text-xs font-bold text-cyan-300">
+                  {partyState.syncLogs?.length || 0}
+                </span>
+              </div>
+            </div>
+
+            {/* Sync Log Box (Last 30 events) */}
+            <div className="space-y-1.5 flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span className="font-bold uppercase tracking-wider text-cyan-300">
+                  Sync Log (Last 30 Events)
+                </span>
+                <span className="text-[10px] text-slate-400">Real-time sync telemetry</span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 min-h-[200px] bg-slate-950/80 rounded-2xl p-3 border border-white/10 font-mono text-[11px]">
+                {!partyState.syncLogs || partyState.syncLogs.length === 0 ? (
+                  <p className="text-slate-500 text-center py-8">No sync events recorded yet.</p>
+                ) : (
+                  partyState.syncLogs.map((log) => {
+                    const timeStr =
+                      new Date(log.timestamp).toLocaleTimeString('en-US', {
+                        hour12: false,
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      }) +
+                      '.' +
+                      (log.timestamp % 1000).toString().padStart(3, '0');
+
+                    const badgeColor =
+                      log.type === 'seek_performed'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        : log.type === 'drift_corrected'
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                        : log.type === 'duplicate_dropped'
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                        : 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+
+                    return (
+                      <div
+                        key={log.id}
+                        className="p-2 rounded-xl bg-slate-900/60 border border-white/5 space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${badgeColor}`}>
+                            {log.type.replace('_', ' ').toUpperCase()}
+                          </span>
+                          <span className="text-slate-500 text-[10px]">{timeStr}</span>
+                        </div>
+                        <p className="text-slate-200 text-[11px] leading-tight break-all font-sans">
+                          {log.summary}
+                        </p>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-white/10 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowConnectionDetailsModal(false)}
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

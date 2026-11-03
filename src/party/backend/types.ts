@@ -5,6 +5,7 @@ export const PARTY_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export interface PartyProfile {
   id: string; // 8-character Party ID from PARTY_ID_ALPHABET, e.g. "K7M2Q9XA"
+  accountId?: string; // Supabase auth user UUID
   username: string; // 2 to 20 characters
   avatarUrl: string | null; // 256x256 JPEG under 40 KB data URL
   createdAt: number;
@@ -57,6 +58,19 @@ export interface RealtimeSubscription {
   getLatency: () => number;
 }
 
+export type SocialNotification =
+  | { type: 'friend_request'; name: string; requestId: string }
+  | { type: 'friend_accepted'; name: string };
+
+export interface BackendPartyStatus {
+  backendType: 'Supabase' | 'Local';
+  accountId: string | null;
+  partyId: string | null;
+  onlineChannelState: string;
+  roomChannelState: string;
+  lastError: string | null;
+}
+
 export interface PartyBackend {
   // Accounts & Profile
   createProfile(username: string): Promise<PartyProfile>;
@@ -93,6 +107,12 @@ export interface PartyBackend {
     onMessage: (msg: any) => void,
     onPresenceChange?: (presences: any[]) => void
   ): RealtimeSubscription;
+
+  // Real-time notifications & Status
+  subscribeSocialNotifications?(callback: (notification: SocialNotification) => void): () => void;
+  getStatus?(): BackendPartyStatus;
+  isConfigured?(): boolean;
+  reconnect?(): Promise<void>;
 
   // Helpers
   isMock(): boolean;

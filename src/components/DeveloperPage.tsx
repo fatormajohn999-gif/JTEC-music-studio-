@@ -5,7 +5,7 @@ import {
   Clock, Sparkles, AlertTriangle, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
   Ban, Unlock, HelpCircle, ChevronRight, Radio, Bot, Sliders,
-  SkipForward, UserMinus, UserPlus
+  SkipForward, UserMinus, UserPlus, Activity
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
@@ -28,7 +28,8 @@ import {
   PingDiagnosticInfo
 } from '../services/appConfig';
 import { MockPartyBackend } from '../party/MockPartyBackend';
-import { getPartyBackend } from '../party/backend';
+import { getPartyBackend, getPartyBackendStatus } from '../party/backend';
+import { PartyService } from '../party/PartyService';
 
 export interface AppInstallRow {
   install_id: string;
@@ -136,6 +137,17 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [botsActive, setBotsActive] = useState<boolean>(() => MockPartyBackend.areBotsActive());
   const [botDisconnectCountdown, setBotDisconnectCountdown] = useState<number>(0);
   const [partyActionFeedback, setPartyActionFeedback] = useState<string | null>(null);
+  const [partyStatus, setPartyStatus] = useState(() => getPartyBackendStatus());
+
+  useEffect(() => {
+    if (activeTab === 'party_demo') {
+      setPartyStatus(getPartyBackendStatus());
+      const timer = setInterval(() => {
+        setPartyStatus(getPartyBackendStatus());
+      }, 2000);
+      return () => clearInterval(timer);
+    }
+  }, [activeTab]);
 
   const handleBotsJoinRoom = useCallback(() => {
     MockPartyBackend.addBotsToCurrentRoom();
@@ -2211,6 +2223,89 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                   </div>
                 )}
 
+                {/* Party Status Box (Requirement 7) */}
+                <div className="rounded-3xl border border-cyan-500/30 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-900/90 p-5 sm:p-6 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Party Status</h4>
+                        <p className="text-xs text-slate-400">
+                          Realtime infrastructure, session identity & channel connection diagnostics
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                      partyStatus.backendType === 'Supabase'
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                        : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                    }`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                      <span>{partyStatus.backendType} Backend</span>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Backend Engine</span>
+                      <p className="text-sm font-bold text-cyan-300 font-mono">
+                        {partyStatus.backendType === 'Supabase' ? 'Supabase Realtime' : 'Local Mock Transport'}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Party ID</span>
+                      <p className="text-sm font-bold text-purple-300 font-mono">
+                        {partyStatus.partyId || PartyService.getState().partyId || 'None'}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Account ID</span>
+                      <p className="text-xs font-mono text-slate-200 truncate" title={partyStatus.accountId || ''}>
+                        {partyStatus.accountId || 'Not signed in'}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Online Channel</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${
+                          partyStatus.onlineChannelState === 'SUBSCRIBED' ? 'bg-emerald-400' : 'bg-slate-500'
+                        }`} />
+                        <span className="font-mono font-bold text-xs text-white">
+                          {partyStatus.onlineChannelState || 'DISCONNECTED'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Room Channel</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${
+                          PartyService.getState().isConnected || partyStatus.roomChannelState === 'SUBSCRIBED'
+                            ? 'bg-emerald-400'
+                            : 'bg-slate-500'
+                        }`} />
+                        <span className="font-mono font-bold text-xs text-white">
+                          {PartyService.getState().roomCode
+                            ? `${PartyService.getState().roomCode} (${PartyService.getState().isConnected ? 'SUBSCRIBED' : 'CONNECTING'})`
+                            : partyStatus.roomChannelState || 'IDLE'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Last Error</span>
+                      <p className={`text-xs truncate ${partyStatus.lastError ? 'text-rose-400 font-bold' : 'text-slate-400'}`}>
+                        {partyStatus.lastError || 'None'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Card 1: Bot Guests in Active Room */}
                 <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-4">
                   <div className="flex items-start justify-between gap-3">
@@ -2507,6 +2602,67 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
                       <span>Reset demo data</span>
                     </button>
+                  </div>
+                </div>
+
+                {/* Card 5: Realtime Sync Log (Requirement 6) */}
+                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Party Sync Engine Log</h4>
+                        <p className="text-xs text-slate-400">
+                          Last 30 events: message received, seek performed, drift correction, dropped duplicates
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto space-y-1.5 p-3 rounded-2xl bg-slate-950/80 border border-white/10 font-mono text-xs">
+                    {(() => {
+                      const logs = PartyService.getState().syncLogs || [];
+                      if (logs.length === 0) {
+                        return <p className="text-slate-500 text-center py-6 font-sans">No sync events recorded yet.</p>;
+                      }
+                      return logs.map((log) => {
+                        const timeStr =
+                          new Date(log.timestamp).toLocaleTimeString('en-US', {
+                            hour12: false,
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          }) +
+                          '.' +
+                          (log.timestamp % 1000).toString().padStart(3, '0');
+
+                        const badgeColor =
+                          log.type === 'seek_performed'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            : log.type === 'drift_corrected'
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                            : log.type === 'duplicate_dropped'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                            : 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+
+                        return (
+                          <div
+                            key={log.id}
+                            className="p-2 rounded-xl bg-slate-900/70 border border-white/5 space-y-1"
+                          >
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className={`px-1.5 py-0.5 rounded font-bold border ${badgeColor}`}>
+                                {log.type.replace('_', ' ').toUpperCase()}
+                              </span>
+                              <span className="text-slate-500">{timeStr}</span>
+                            </div>
+                            <p className="text-slate-200 text-xs font-sans leading-tight">{log.summary}</p>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               </div>
