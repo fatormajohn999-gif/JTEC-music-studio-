@@ -914,7 +914,9 @@ export default function App() {
               setRepeatMode(savedSession.repeatMode);
             }
             if (savedSession.visualizerTheme) {
-              setSettings((prev) => ({ ...prev, visualizerMode: savedSession.visualizerTheme }));
+              const validThemes = ['auto', 'jt_night', 'dark_spectrum', 'cyber_city', 'fire_energy', 'rainy_night', 'deep_ocean', 'off'];
+              const safeTheme = validThemes.includes(savedSession.visualizerTheme) ? savedSession.visualizerTheme : 'dark_spectrum';
+              setSettings((prev) => ({ ...prev, visualizerMode: safeTheme }));
             }
           }
         }

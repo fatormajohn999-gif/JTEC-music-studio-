@@ -2,24 +2,12 @@
 
 export type CinematicScene =
   | 'auto'
+  | 'jt_night'
   | 'dark_spectrum'
   | 'cyber_city'
-  | 'galaxy'
   | 'fire_energy'
   | 'rainy_night'
-  | 'anime_ninja'
-  | 'samurai'
   | 'deep_ocean'
-  | 'music_tunnel'
-  | 'minimal_pro'
-  | 'shadow_strike'
-  | 'shuriken_storm'
-  | 'smoke_vanish'
-  | 'aurora_skies'
-  | 'thunder_storm'
-  | 'dragon_spirit'
-  | 'hyperspace_warp'
-  | 'night_walk'
   | 'off';
 
 export type VisualizerMode = CinematicScene;

@@ -10,6 +10,7 @@ interface CinematicVisualizerProps {
   className?: string;
   reactionStrength?: ReactionStrength;
   onAutoSceneDetermined?: (detectedScene: CinematicScene) => void;
+  currentTime?: number;
 }
 
 // Particle structures for specialized environments
@@ -52,18 +53,6 @@ interface SplashRipple {
   alpha: number;
 }
 
-interface PetalParticle {
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  rot: number;
-  vRot: number;
-  size: number;
-  alpha: number;
-}
-
 interface BubbleParticle {
   x: number;
   y: number;
@@ -83,166 +72,58 @@ interface BokehOrb {
   pulsePhase: number;
 }
 
-// 3 New Ninja Environments Structures
-interface ShadowTrailItem {
+// JT Night structures
+interface JTNightStar {
+  x: number; // 0..1
+  y: number; // 0..1
+  radius: number; // 0.5 to 1.6
+  twinklePhase: number;
+  twinkleSpeed: number;
+  baseAlpha: number;
+  isPeriwinkle: boolean;
+}
+
+interface JTNightBubble {
   x: number;
   y: number;
-  stride: number;
+  radius: number;
+  strokeWidth: number;
+  speed: number;
+  swayPhase: number;
+  swaySpeed: number;
+  swayAmp: number;
   alpha: number;
+  baseAlpha: number;
 }
 
-interface ShadowSpark {
+interface JTNightSpawnRing {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  alpha: number;
-  size: number;
-  color: string;
-}
-
-interface ShurikenItem {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  rot: number;
-  rotSpeed: number;
-  size: number;
-  stuck: boolean;
-  stickTime: number;
-  stickX: number;
-  stickY: number;
-  targetX: number;
-  trail: { x: number; y: number; rot: number; alpha: number }[];
-}
-
-interface DojoSparkItem {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  size: number;
-  color: string;
-}
-
-interface SmokePuffItem {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
   radius: number;
   maxRadius: number;
   alpha: number;
-  rot: number;
-  rotSpeed: number;
-  color: string;
+  growthSpeed: number;
 }
 
-interface ForestFireflyItem {
+interface JTNightBuilding {
   x: number;
-  y: number;
-  baseX: number;
-  baseY: number;
-  phase: number;
+  w: number;
+  h: number;
+  windows: { col: number; row: number; color: string; twinkleOffset: number }[];
+}
+
+interface JTNightMeteor {
+  active: boolean;
+  startX: number;
+  startY: number;
+  curX: number;
+  curY: number;
+  endX: number;
+  endY: number;
+  len: number;
   speed: number;
-  size: number;
-  color: string;
-}
-
-// 1. AURORA SKIES structures
-interface AuroraStar {
-  x: number;
-  y: number;
-  size: number;
+  progress: number;
   alpha: number;
-  twinkleSpeed: number;
-}
-
-interface AuroraParticle {
-  x: number;
-  y: number;
-  vy: number;
-  vx: number;
-  size: number;
-  alpha: number;
-}
-
-// 2. THUNDER STORM structures
-interface StormCloud {
-  x: number;
-  y: number;
-  radius: number;
-  speed: number;
-  alpha: number;
-}
-
-interface StormRainDrop {
-  x: number;
-  y: number;
-  speed: number;
-  length: number;
-  alpha: number;
-}
-
-interface LightningSegment {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  branches: { x1: number; y1: number; x2: number; y2: number }[];
-}
-
-// 3. DRAGON SPIRIT structures
-interface DragonBodyJoint {
-  x: number;
-  y: number;
-  radius: number;
-}
-
-interface DragonEmber {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  alpha: number;
-  life: number;
-  maxLife: number;
-  color: string;
-}
-
-interface DragonSmokeTrail {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  alpha: number;
-  color: string;
-}
-
-// 4. HYPERSPACE WARP structures
-interface WarpStar {
-  x: number;
-  y: number;
-  z: number;
-  prevZ: number;
-  colorType: 'main' | 'sec' | 'white';
-}
-
-// 5. NIGHT WALK structures
-interface NightWalkParticle {
-  x: number;
-  y: number;
-  size: number;
-  vx: number;
-  vy: number;
-  alpha: number;
-  phase: number;
-  type: 'dust' | 'mist';
 }
 
 interface RGB {
@@ -292,43 +173,15 @@ function rgbToHex(rgb: RGB): string {
   );
 }
 
-// Authentic default colors for every scene when no cover is present
+// Authentic default colors for kept themes when no cover is present
 const THEME_ORIGINAL_COLORS: Record<string, { main: RGB; secondary: RGB; accent: RGB }> = {
-  auto: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
+  auto: { main: hexToRgb('#818cf8'), secondary: hexToRgb('#2a2fc9'), accent: hexToRgb('#c7d2fe') },
+  jt_night: { main: hexToRgb('#818cf8'), secondary: hexToRgb('#2a2fc9'), accent: hexToRgb('#c7d2fe') },
   dark_spectrum: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
   cyber_city: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#ec4899'), accent: hexToRgb('#f59e0b') },
-  galaxy: { main: hexToRgb('#a855f7'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#06b6d4') },
   fire_energy: { main: hexToRgb('#ff6a00'), secondary: hexToRgb('#dc2626'), accent: hexToRgb('#fbbf24') },
   rainy_night: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#1e293b'), accent: hexToRgb('#e0f2fe') },
-  anime_ninja: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#f43f5e') },
-  samurai: { main: hexToRgb('#ef4444'), secondary: hexToRgb('#b91c1c'), accent: hexToRgb('#f472b6') },
   deep_ocean: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#0e7490'), accent: hexToRgb('#34d399') },
-  music_tunnel: { main: hexToRgb('#6366f1'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
-  minimal_pro: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#64748b'), accent: hexToRgb('#ffffff') },
-  shadow_strike: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#1e293b'), accent: hexToRgb('#f59e0b') },
-  shuriken_storm: { main: hexToRgb('#94a3b8'), secondary: hexToRgb('#ea580c'), accent: hexToRgb('#fde047') },
-  smoke_vanish: { main: hexToRgb('#10b981'), secondary: hexToRgb('#064e3b'), accent: hexToRgb('#a3e635') },
-  // 4 New Atmospheric Visualizer Effects
-  aurora_skies: { main: hexToRgb('#10b981'), secondary: hexToRgb('#14b8a6'), accent: hexToRgb('#a855f7') },      // green, teal, purple
-  thunder_storm: { main: hexToRgb('#475569'), secondary: hexToRgb('#f8fafc'), accent: hexToRgb('#c084fc') },     // steel blue, white, purple
-  dragon_spirit: { main: hexToRgb('#eab308'), secondary: hexToRgb('#dc2626'), accent: hexToRgb('#ea580c') },     // gold, deep red, orange
-  hyperspace_warp: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#ffffff'), accent: hexToRgb('#d946ef') },   // electric blue, white, magenta
-  night_walk: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#818cf8'), accent: hexToRgb('#c084fc') },        // sky blue, indigo, purple
-  // Backwards compatibility legacy aliases
-  aurora: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
-  neon_city: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#ec4899'), accent: hexToRgb('#f59e0b') },
-  dream: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#1e293b'), accent: hexToRgb('#e0f2fe') },
-  energy: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#f43f5e') },
-  inferno: { main: hexToRgb('#ff6a00'), secondary: hexToRgb('#dc2626'), accent: hexToRgb('#fbbf24') },
-  ocean: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#0e7490'), accent: hexToRgb('#34d399') },
-  deep_space: { main: hexToRgb('#a855f7'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#06b6d4') },
-  crystal: { main: hexToRgb('#38bdf8'), secondary: hexToRgb('#64748b'), accent: hexToRgb('#ffffff') },
-  vortex: { main: hexToRgb('#6366f1'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
-  prism: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
-  meteor_shower: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#ec4899'), accent: hexToRgb('#f59e0b') },
-  nature: { main: hexToRgb('#ef4444'), secondary: hexToRgb('#b91c1c'), accent: hexToRgb('#f472b6') },
-  neural_network: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#f43f5e') },
-  black_hole: { main: hexToRgb('#a855f7'), secondary: hexToRgb('#3b82f6'), accent: hexToRgb('#06b6d4') },
   off: { main: hexToRgb('#00f0ff'), secondary: hexToRgb('#a855f7'), accent: hexToRgb('#ec4899') },
 };
 
@@ -340,6 +193,7 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   className = '',
   reactionStrength = 'medium',
   onAutoSceneDetermined,
+  currentTime = 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -391,188 +245,36 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   const starsRef = useRef<StarParticle[]>([]);
   const embersRef = useRef<EmberParticle[]>([]);
   const rainRef = useRef<RainParticle[]>([]);
-  const ripplesRef = useRef<SplashRipple[]>([]);
-  const petalsRef = useRef<PetalParticle[]>([]);
   const bubblesRef = useRef<BubbleParticle[]>([]);
   const bokehRef = useRef<BokehOrb[]>([]);
+  const ripplesRef = useRef<{ x: number; y: number; radius: number; maxRadius: number; alpha: number }[]>([]);
 
-  // Slash animation state for Samurai mode
-  const slashAnimRef = useRef<{ active: boolean; progress: number; x1: number; y1: number; x2: number; y2: number }>({
-    active: false,
-    progress: 0,
-    x1: 0,
-    y1: 0,
-    x2: 0,
-    y2: 0,
-  });
+  const currentTimeRef = useRef<number>(currentTime ?? 0);
+  currentTimeRef.current = currentTime ?? 0;
 
-  // Specialized state refs for 3 ninja scenes
-  const shadowStrikeRef = useRef<{
-    ninjaX: number;
-    ninjaY: number;
-    stride: number;
-    trail: ShadowTrailItem[];
-    slashActive: boolean;
-    slashProgress: number;
-    slashX1: number;
-    slashY1: number;
-    slashX2: number;
-    slashY2: number;
-    sparks: ShadowSpark[];
-  }>({
-    ninjaX: 100,
-    ninjaY: 300,
-    stride: 0,
-    trail: [],
-    slashActive: false,
-    slashProgress: 0,
-    slashX1: 0,
-    slashY1: 0,
-    slashX2: 0,
-    slashY2: 0,
-    sparks: [],
-  });
-
-  const shurikenStormRef = useRef<{
-    shurikens: ShurikenItem[];
-    sparks: DojoSparkItem[];
-    lastThrowTime: number;
-  }>({
-    shurikens: [],
-    sparks: [],
-    lastThrowTime: 0,
-  });
-
-  const smokeVanishRef = useRef<{
-    puffs: SmokePuffItem[];
-    fireflies: ForestFireflyItem[];
-    ninjaX: number;
-    ninjaY: number;
-    ninjaAlpha: number;
-    ninjaTargetAlpha: number;
-    currentPose: 'ground' | 'branch' | 'crouch';
-    lastTeleportTime: number;
-  }>({
-    puffs: [],
-    fireflies: [],
-    ninjaX: 0,
-    ninjaY: 0,
-    ninjaAlpha: 0.85,
-    ninjaTargetAlpha: 0.85,
-    currentPose: 'ground',
-    lastTeleportTime: 0,
-  });
-
-  // 1. Aurora Skies persistent state
-  const auroraSkiesRef = useRef<{
-    stars: AuroraStar[];
-    shimmer: AuroraParticle[];
-    waveOffset1: number;
-    waveOffset2: number;
-    waveOffset3: number;
-    waveOffset4: number;
-    beatFlare: number;
+  // JT Night dedicated persistent state
+  const jtNightRef = useRef<{
+    stars: JTNightStar[];
+    bubbles: JTNightBubble[];
+    spawnRings: JTNightSpawnRing[];
+    buildings: JTNightBuilding[];
+    beatMeteor: JTNightMeteor | null;
+    lastBeatMeteorTime: number;
+    ringRotation: number;
+    spikes: number[];
   }>({
     stars: [],
-    shimmer: [],
-    waveOffset1: 0,
-    waveOffset2: 1.5,
-    waveOffset3: 3.2,
-    waveOffset4: 4.8,
-    beatFlare: 0,
+    bubbles: [],
+    spawnRings: [],
+    buildings: [],
+    beatMeteor: null,
+    lastBeatMeteorTime: 0,
+    ringRotation: 0,
+    spikes: new Array(96).fill(0),
   });
 
-  // 2. Thunder Storm persistent state
-  const thunderStormRef = useRef<{
-    clouds: StormCloud[];
-    rain: StormRainDrop[];
-    lightning: LightningSegment[];
-    flashAlpha: number;
-    internalCloudGlow: number;
-    lastStrikeTime: number;
-  }>({
-    clouds: [],
-    rain: [],
-    lightning: [],
-    flashAlpha: 0,
-    internalCloudGlow: 0,
-    lastStrikeTime: 0,
-  });
-
-  // 3. Dragon Spirit persistent state
-  const dragonSpiritRef = useRef<{
-    headX: number;
-    headY: number;
-    vx: number;
-    vy: number;
-    joints: DragonBodyJoint[];
-    embers: DragonEmber[];
-    smoke: DragonSmokeTrail[];
-    targetAngle: number;
-    currentAngle: number;
-    pathT: number;
-    phase1: number;
-    phase2: number;
-    beatSurge: number;
-  }>({
-    headX: 400,
-    headY: 300,
-    vx: 1.5,
-    vy: 0.5,
-    joints: [],
-    embers: [],
-    smoke: [],
-    targetAngle: 0,
-    currentAngle: 0,
-    pathT: 0,
-    phase1: 0,
-    phase2: 1.2,
-    beatSurge: 0,
-  });
-
-  // 4. Hyperspace Warp persistent state
-  const hyperspaceWarpRef = useRef<{
-    stars: WarpStar[];
-    speedBoost: number;
-    rotationAngle: number;
-    beatPulse: number;
-    flashAlpha: number;
-  }>({
-    stars: [],
-    speedBoost: 0,
-    rotationAngle: 0,
-    beatPulse: 0,
-    flashAlpha: 0,
-  });
-
-  // 5. Night Walk persistent state & DOM element refs
-  const nightWalkRef = useRef<{
-    beatPulse: number;
-    particles: NightWalkParticle[];
-  }>({
-    beatPulse: 0,
-    particles: [],
-  });
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const nightWalkContainerRef = useRef<HTMLDivElement | null>(null);
-  const nightWalkGlowRef = useRef<HTMLDivElement | null>(null);
-  const nightWalkTintRef = useRef<HTMLDivElement | null>(null);
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
-
-  // Sync video play/pause with song playback and active scene
-  useEffect(() => {
-    const vid = videoRef.current;
-    if (!vid) return;
-    vid.muted = true;
-    vid.volume = 0;
-    if (isActive && (scene === 'night_walk' || internalSceneRef.current === 'night_walk')) {
-      vid.play().catch(() => {});
-    } else {
-      vid.pause();
-    }
-  }, [isActive, scene]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -639,19 +341,6 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       thickness: Math.random() * 1.2 + 0.8,
     }));
 
-    const petalCount = performanceMode === 'battery' ? 20 : performanceMode === 'balanced' ? 40 : 65;
-    petalsRef.current = Array.from({ length: petalCount }, () => ({
-      x: Math.random() * 900,
-      y: Math.random() * 800,
-      z: Math.random() * 500 + 50,
-      vx: Math.random() * 1.5 + 0.8,
-      vy: Math.random() * 1.2 + 0.6,
-      rot: Math.random() * Math.PI * 2,
-      vRot: (Math.random() - 0.5) * 0.05,
-      size: Math.random() * 6 + 4,
-      alpha: Math.random() * 0.6 + 0.3,
-    }));
-
     const bubbleCount = performanceMode === 'battery' ? 18 : performanceMode === 'balanced' ? 35 : 55;
     bubblesRef.current = Array.from({ length: bubbleCount }, () => ({
       x: Math.random() * 800,
@@ -674,142 +363,73 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       pulsePhase: Math.random() * Math.PI * 2,
     }));
 
-    // Initialize 3 Ninja environments persistent data
-    shadowStrikeRef.current = {
-      ninjaX: 60,
-      ninjaY: 280,
-      stride: 0,
-      trail: [],
-      slashActive: false,
-      slashProgress: 0,
-      slashX1: 0,
-      slashY1: 0,
-      slashX2: 0,
-      slashY2: 0,
-      sparks: [],
-    };
+    // Initialize JT Night particles (scaled by Engine & Battery profile: Battery 40%, Balanced 70%, High 100%)
+    const jtStarCount = performanceMode === 'battery' ? 100 : performanceMode === 'balanced' ? 175 : 250;
+    const jtStars: JTNightStar[] = Array.from({ length: jtStarCount }, () => ({
+      x: Math.random(),
+      y: Math.random() * 0.85,
+      radius: Math.random() * 1.1 + 0.5, // 0.5 to 1.6 px
+      twinklePhase: Math.random() * Math.PI * 2,
+      twinkleSpeed: Math.random() * 2.5 + 1.2,
+      baseAlpha: Math.random() * 0.5 + 0.45,
+      isPeriwinkle: Math.random() > 0.4,
+    }));
 
-    shurikenStormRef.current = {
-      shurikens: [],
-      sparks: [],
-      lastThrowTime: 0,
-    };
+    const jtBubbleCount = performanceMode === 'battery' ? 32 : performanceMode === 'balanced' ? 56 : 80;
+    const jtBubbles: JTNightBubble[] = Array.from({ length: jtBubbleCount }, () => ({
+      x: Math.random() * 800,
+      y: Math.random() * 800,
+      radius: Math.random() * 12 + 2, // 2 to 14 px
+      strokeWidth: Math.random() > 0.5 ? 2 : 1, // 1 to 2 px stroke
+      speed: Math.random() * 0.9 + 0.4,
+      swayPhase: Math.random() * Math.PI * 2,
+      swaySpeed: Math.random() * 1.2 + 0.6,
+      swayAmp: Math.random() * 1.6 + 0.6,
+      alpha: Math.random() * 0.45 + 0.35,
+      baseAlpha: Math.random() * 0.45 + 0.35,
+    }));
 
-    smokeVanishRef.current = {
-      puffs: [],
-      fireflies: Array.from({ length: 25 }, () => ({
-        x: Math.random() * 800,
-        y: Math.random() * 600,
-        baseX: Math.random() * 800,
-        baseY: Math.random() * 600,
-        phase: Math.random() * Math.PI * 2,
-        speed: Math.random() * 0.03 + 0.015,
-        size: Math.random() * 2.5 + 1.2,
-        color: '#a3e635',
-      })),
-      ninjaX: 0,
-      ninjaY: 0,
-      ninjaAlpha: 0.85,
-      ninjaTargetAlpha: 0.85,
-      currentPose: 'ground',
-      lastTeleportTime: 0,
-    };
+    // Generate city skyline silhouette buildings along bottom
+    const buildingCount = 14;
+    let curBx = 0;
+    const jtBuildings: JTNightBuilding[] = [];
+    for (let b = 0; b < buildingCount; b++) {
+      const bWidth = Math.random() * 0.05 + 0.05;
+      const bHeight = Math.random() * 0.13 + 0.07;
+      const windows: { col: number; row: number; color: string; twinkleOffset: number }[] = [];
+      const windowCols = Math.floor(Math.random() * 3 + 2);
+      const windowRows = Math.floor(Math.random() * 6 + 3);
+      for (let r = 0; r < windowRows; r++) {
+        for (let c = 0; c < windowCols; c++) {
+          if (Math.random() > 0.38) {
+            const winColors = ['#fef08a', '#93c5fd', '#c7d2fe', '#ffffff'];
+            windows.push({
+              col: c / windowCols,
+              row: r / windowRows,
+              color: winColors[Math.floor(Math.random() * winColors.length)],
+              twinkleOffset: Math.random() * Math.PI * 2,
+            });
+          }
+        }
+      }
+      jtBuildings.push({
+        x: curBx,
+        w: bWidth,
+        h: bHeight,
+        windows,
+      });
+      curBx += bWidth - 0.005;
+    }
 
-    // 1. Initialize Aurora Skies persistent particles
-    const auroraStarCount = performanceMode === 'battery' ? 35 : performanceMode === 'balanced' ? 60 : 90;
-    const auroraShimmerCount = performanceMode === 'battery' ? 20 : performanceMode === 'balanced' ? 40 : 65;
-    auroraSkiesRef.current = {
-      stars: Array.from({ length: auroraStarCount }, () => ({
-        x: Math.random() * 1000,
-        y: Math.random() * 500,
-        size: Math.random() * 1.8 + 0.8,
-        alpha: Math.random() * 0.7 + 0.3,
-        twinkleSpeed: Math.random() * 0.04 + 0.01,
-      })),
-      shimmer: Array.from({ length: auroraShimmerCount }, () => ({
-        x: Math.random() * 1000,
-        y: Math.random() * 400 + 50,
-        vy: -(Math.random() * 0.8 + 0.3),
-        vx: (Math.random() - 0.5) * 0.6,
-        size: Math.random() * 2 + 1,
-        alpha: Math.random() * 0.8 + 0.2,
-      })),
-      waveOffset1: 0,
-      waveOffset2: 1.5,
-      waveOffset3: 3.2,
-      waveOffset4: 4.8,
-      beatFlare: 0,
-    };
-
-    // 2. Initialize Thunder Storm persistent particles (lighter rain than Rainy Night)
-    const stormCloudCount = performanceMode === 'battery' ? 12 : 22;
-    const stormRainCount = performanceMode === 'battery' ? 30 : performanceMode === 'balanced' ? 55 : 85;
-    thunderStormRef.current = {
-      clouds: Array.from({ length: stormCloudCount }, () => ({
-        x: Math.random() * 1200 - 100,
-        y: Math.random() * 180 + 30,
-        radius: Math.random() * 90 + 70,
-        speed: Math.random() * 0.35 + 0.15,
-        alpha: Math.random() * 0.35 + 0.25,
-      })),
-      rain: Array.from({ length: stormRainCount }, () => ({
-        x: Math.random() * 1100,
-        y: Math.random() * 900,
-        speed: Math.random() * 9 + 11,
-        length: Math.random() * 16 + 10,
-        alpha: Math.random() * 0.35 + 0.2,
-      })),
-      lightning: [],
-      flashAlpha: 0,
-      internalCloudGlow: 0,
-      lastStrikeTime: 0,
-    };
-
-    // 3. Initialize Dragon Spirit persistent joint, ember, and smoke arrays (40-60 segments)
-    const dragonJointCount = 52;
-    dragonSpiritRef.current = {
-      headX: 400,
-      headY: 300,
-      vx: 1.2,
-      vy: 0.6,
-      pathT: 0,
-      phase1: 0,
-      phase2: 1.2,
-      beatSurge: 0,
-      joints: Array.from({ length: dragonJointCount }, (_, i) => {
-        // Body thickest near the head, tapering smoothly to the tail
-        const progress = i / dragonJointCount;
-        const r = 26 * (1 - progress * 0.86);
-        return {
-          x: 400 - i * 13,
-          y: 300,
-          radius: Math.max(3.2, r),
-        };
-      }),
-      embers: [],
-      smoke: [],
-      targetAngle: 0,
-      currentAngle: 0,
-    };
-
-    // 4. Initialize Hyperspace Warp persistent 3D starfield
-    const warpStarCount = performanceMode === 'battery' ? 90 : performanceMode === 'balanced' ? 170 : 250;
-    hyperspaceWarpRef.current = {
-      stars: Array.from({ length: warpStarCount }, () => {
-        const cType: 'main' | 'sec' | 'white' = Math.random() > 0.6 ? 'main' : Math.random() > 0.3 ? 'sec' : 'white';
-        const z = Math.random() * 1000 + 10;
-        return {
-          x: (Math.random() - 0.5) * 1600,
-          y: (Math.random() - 0.5) * 1200,
-          z,
-          prevZ: z,
-          colorType: cType,
-        };
-      }),
-      speedBoost: 0,
-      rotationAngle: 0,
-      beatPulse: 0,
-      flashAlpha: 0,
+    jtNightRef.current = {
+      stars: jtStars,
+      bubbles: jtBubbles,
+      spawnRings: [],
+      buildings: jtBuildings,
+      beatMeteor: null,
+      lastBeatMeteorTime: 0,
+      ringRotation: 0,
+      spikes: new Array(96).fill(0),
     };
 
     let isDocumentVisible = true;
@@ -871,17 +491,6 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       const isBeat = rawBass > beatThreshold && currentTime - lastBeatTimeRef.current > beatCooldown;
       if (isBeat) {
         lastBeatTimeRef.current = currentTime;
-        // Trigger samurai slash attack on heavy beat
-        if (Math.random() > 0.35) {
-          slashAnimRef.current = {
-            active: true,
-            progress: 0,
-            x1: Math.random() * (width * 0.4) + width * 0.1,
-            y1: Math.random() * (height * 0.4) + height * 0.1,
-            x2: Math.random() * (width * 0.4) + width * 0.5,
-            y2: Math.random() * (height * 0.4) + height * 0.4,
-          };
-        }
       }
 
       // Map legacy or resolve active scene name
@@ -892,18 +501,18 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         if (autoCooldownRef.current > 400) {
           let detected: CinematicScene = internalSceneRef.current;
           if (sBass > 0.65) {
-            const highBassPool: CinematicScene[] = ['fire_energy', 'cyber_city', 'shadow_strike', 'thunder_storm', 'dragon_spirit'];
+            const highBassPool: CinematicScene[] = ['fire_energy', 'cyber_city', 'jt_night'];
             detected = highBassPool[Math.floor(Math.random() * highBassPool.length)];
           } else if (sBass > 0.45 && sHigh > 0.45) {
-            const energyPool: CinematicScene[] = ['anime_ninja', 'music_tunnel', 'shuriken_storm', 'hyperspace_warp'];
+            const energyPool: CinematicScene[] = ['jt_night', 'cyber_city', 'dark_spectrum'];
             detected = energyPool[Math.floor(Math.random() * energyPool.length)];
           } else if (sMid > 0.45 && sHigh > 0.4) {
-            const midPool: CinematicScene[] = ['galaxy', 'samurai', 'smoke_vanish', 'aurora_skies'];
+            const midPool: CinematicScene[] = ['jt_night', 'dark_spectrum', 'deep_ocean'];
             detected = midPool[Math.floor(Math.random() * midPool.length)];
           } else if (sVol < 0.28 && sBass < 0.3) {
-            detected = Math.random() > 0.5 ? 'minimal_pro' : 'deep_ocean';
+            detected = Math.random() > 0.5 ? 'deep_ocean' : 'rainy_night';
           } else {
-            detected = Math.random() > 0.5 ? 'dark_spectrum' : 'rainy_night';
+            detected = Math.random() > 0.5 ? 'jt_night' : 'dark_spectrum';
           }
 
           if (detected !== internalSceneRef.current) {
@@ -913,38 +522,12 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
           }
         }
         resolvedScene = internalSceneRef.current;
-      } else {
-        // Backwards compatibility mappings for older scene names
-        const sceneStr = activeSceneProp as string;
-        if (sceneStr === 'aurora' || sceneStr === 'prism') resolvedScene = 'dark_spectrum';
-        else if (sceneStr === 'neon_city' || sceneStr === 'meteor_shower') resolvedScene = 'cyber_city';
-        else if (sceneStr === 'deep_space' || sceneStr === 'black_hole') resolvedScene = 'galaxy';
-        else if (sceneStr === 'inferno') resolvedScene = 'fire_energy';
-        else if (sceneStr === 'dream') resolvedScene = 'rainy_night';
-        else if (sceneStr === 'energy' || sceneStr === 'neural_network') resolvedScene = 'anime_ninja';
-        else if (sceneStr === 'nature') resolvedScene = 'samurai';
-        else if (sceneStr === 'ocean') resolvedScene = 'deep_ocean';
-        else if (sceneStr === 'vortex') resolvedScene = 'music_tunnel';
-        else if (sceneStr === 'crystal') resolvedScene = 'minimal_pro';
       }
 
-      // Sync Night Walk video container visibility & playback
-      if (nightWalkContainerRef.current) {
-        if (resolvedScene === 'night_walk') {
-          nightWalkContainerRef.current.style.display = 'flex';
-          if (videoRef.current) {
-            if (isActiveRef.current) {
-              if (videoRef.current.paused) videoRef.current.play().catch(() => {});
-            } else {
-              if (!videoRef.current.paused) videoRef.current.pause();
-            }
-          }
-        } else {
-          nightWalkContainerRef.current.style.display = 'none';
-          if (videoRef.current && !videoRef.current.paused) {
-            videoRef.current.pause();
-          }
-        }
+      // If resolvedScene is any removed or unrecognized theme, switch to dark_spectrum
+      const VALID_THEMES: CinematicScene[] = ['jt_night', 'dark_spectrum', 'cyber_city', 'fire_energy', 'rainy_night', 'deep_ocean'];
+      if (!VALID_THEMES.includes(resolvedScene)) {
+        resolvedScene = 'dark_spectrum';
       }
 
       // =======================================================================
@@ -1250,96 +833,6 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         ctx.fillRect(0, horizonY, width, height - horizonY);
       }
 
-      // =======================================================================
-      // 3. GALAXY 🌌 (Realistic stars, nebula, spiral cosmic dust)
-      // =======================================================================
-      else if (resolvedScene === 'galaxy') {
-        // Deep cosmic void
-        ctx.fillStyle = '#010207';
-        ctx.fillRect(0, 0, width, height);
-
-        // Swirling multi-layered cosmic nebula gas
-        const nebulaRad = Math.min(cx, cy) * (0.85 + sBass * 0.25);
-        const nebGrad1 = ctx.createRadialGradient(cx + Math.sin(t * 0.4) * 40, cy + Math.cos(t * 0.3) * 30, 20, cx, cy, nebulaRad);
-        nebGrad1.addColorStop(0, colors.mainRgba(0.45));
-        nebGrad1.addColorStop(0.5, colors.secondaryRgba(0.25));
-        nebGrad1.addColorStop(1, 'transparent');
-        ctx.fillStyle = nebGrad1;
-        ctx.fillRect(0, 0, width, height);
-
-        const nebGrad2 = ctx.createRadialGradient(cx - 30, cy + 20, 10, cx, cy, nebulaRad * 0.7);
-        nebGrad2.addColorStop(0, colors.accentRgba(0.35));
-        nebGrad2.addColorStop(1, 'transparent');
-        ctx.fillStyle = nebGrad2;
-        ctx.fillRect(0, 0, width, height);
-
-        // 3D Parallax Starfield with high-frequency twinkle flares
-        const stars = starsRef.current;
-        for (let i = 0; i < stars.length; i++) {
-          const s = stars[i];
-          s.z -= 0.6 + sBass * 2.2;
-          if (s.z <= 10) {
-            s.z = 900;
-            s.x = (Math.random() - 0.5) * 1200;
-            s.y = (Math.random() - 0.5) * 1200;
-          }
-
-          const fov = 350;
-          const px = cx + (s.x / s.z) * fov;
-          const py = cy + (s.y / s.z) * fov;
-          const rad = Math.max(0.6, (s.baseRadius * fov) / s.z + (sHigh > 0.4 ? 0.8 : 0));
-
-          if (px >= 0 && px <= width && py >= 0 && py <= height) {
-            const twinkle = 0.5 + Math.sin(t * 3 + s.twinklePhase) * 0.4;
-            ctx.fillStyle = s.hueOffset > 0 ? colors.accent : colors.main;
-            ctx.globalAlpha = Math.min(1, (1 - s.z / 900) * (s.alpha * twinkle + sHigh * 0.5));
-            ctx.beginPath();
-            ctx.arc(px, py, rad, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Star flare cross on high frequencies
-            if (sHigh > 0.45 && rad > 2.0) {
-              ctx.strokeStyle = colors.accent;
-              ctx.lineWidth = 1;
-              ctx.beginPath();
-              ctx.moveTo(px - rad * 2.5, py);
-              ctx.lineTo(px + rad * 2.5, py);
-              ctx.moveTo(px, py - rad * 2.5);
-              ctx.lineTo(px, py + rad * 2.5);
-              ctx.stroke();
-            }
-          }
-        }
-        ctx.globalAlpha = 1.0;
-
-        // Tilted spiral galactic arms
-        const armCount = 2;
-        const pointsPerArm = currentPerf === 'battery' ? 35 : 60;
-        const rot = t * (0.15 + sBass * 0.2);
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(0.35); // Celestial tilt
-
-        for (let a = 0; a < armCount; a++) {
-          const armOffset = a * Math.PI;
-          for (let p = 1; p < pointsPerArm; p++) {
-            const dist = p * (Math.min(cx, cy) / pointsPerArm) * 0.85;
-            const angle = armOffset + (p * 0.12) + rot;
-            const px = Math.cos(angle) * dist;
-            const py = Math.sin(angle) * (dist * 0.42);
-
-            const pSize = Math.max(1, (1 - p / pointsPerArm) * 3.5 + sBass * 1.5);
-            ctx.fillStyle = a === 0 ? colors.main : colors.secondary;
-            ctx.globalAlpha = Math.min(1, 0.4 + sVol * 0.5);
-            ctx.beginPath();
-            ctx.arc(px, py, pSize, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-        ctx.restore();
-        ctx.globalAlpha = 1.0;
-      }
 
       // =======================================================================
       // 4. FIRE ENERGY 🔥 (Realistic fire, sparks & energy surging upward)
@@ -1526,283 +1019,7 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         }
       }
 
-      // =======================================================================
-      // 6. ANIME NINJA 🥷 (Original ninja warrior silhouette + reactive chakra aura)
-      // =======================================================================
-      else if (resolvedScene === 'anime_ninja') {
-        const ninjaBg = ctx.createLinearGradient(0, 0, 0, height);
-        ninjaBg.addColorStop(0, '#02040b');
-        ninjaBg.addColorStop(0.5, colors.darkBg);
-        ninjaBg.addColorStop(1, '#02050c');
-        ctx.fillStyle = ninjaBg;
-        ctx.fillRect(0, 0, width, height);
 
-        // Huge glowing full moon behind the warrior
-        const moonX = cx;
-        const moonY = cy * 0.65;
-        const moonRadius = Math.min(cx, cy) * 0.45;
-
-        const moonHalo = ctx.createRadialGradient(moonX, moonY, moonRadius * 0.4, moonX, moonY, moonRadius * 1.8);
-        moonHalo.addColorStop(0, colors.secondaryRgba(0.35));
-        moonHalo.addColorStop(0.6, colors.secondaryRgba(0.1));
-        moonHalo.addColorStop(1, 'transparent');
-        ctx.fillStyle = moonHalo;
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonRadius * 1.8, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#f0fdf4';
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonRadius, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Jagged mountain silhouette beneath the moon
-        ctx.fillStyle = '#060b17';
-        ctx.beginPath();
-        ctx.moveTo(0, height * 0.75);
-        ctx.lineTo(width * 0.25, height * 0.65);
-        ctx.lineTo(width * 0.5, height * 0.72);
-        ctx.lineTo(width * 0.78, height * 0.62);
-        ctx.lineTo(width, height * 0.75);
-        ctx.lineTo(width, height);
-        ctx.lineTo(0, height);
-        ctx.closePath();
-        ctx.fill();
-
-        // Reactive Chakra / Spirit Energy Aura surrounding the warrior
-        const ninjaX = cx;
-        const ninjaY = height * 0.65;
-        const auraR = 85 + sBass * 75;
-
-        const auraGrad = ctx.createRadialGradient(ninjaX, ninjaY - 30, 10, ninjaX, ninjaY - 30, auraR);
-        auraGrad.addColorStop(0, colors.main);
-        auraGrad.addColorStop(0.5, colors.secondaryRgba(0.45));
-        auraGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = auraGrad;
-        ctx.globalAlpha = 0.65 + sBass * 0.35;
-        ctx.beginPath();
-        ctx.arc(ninjaX, ninjaY - 30, auraR, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-
-        // Chakra electric lightning arcs crackling on high transients
-        if (sHigh > 0.35) {
-          ctx.strokeStyle = colors.accent;
-          ctx.lineWidth = 2;
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 10;
-          for (let arc = 0; arc < 4; arc++) {
-            ctx.beginPath();
-            let ax = ninjaX + (Math.random() - 0.5) * 50;
-            let ay = ninjaY - 80;
-            ctx.moveTo(ax, ay);
-            for (let seg = 0; seg < 5; seg++) {
-              ax += (Math.random() - 0.5) * 35;
-              ay += 18;
-              ctx.lineTo(ax, ay);
-            }
-            ctx.stroke();
-          }
-          ctx.shadowBlur = 0;
-        }
-
-        // Ninja Warrior Silhouette
-        ctx.save();
-        ctx.translate(ninjaX, ninjaY);
-
-        ctx.fillStyle = '#030509';
-        ctx.strokeStyle = colors.main;
-        ctx.lineWidth = 1;
-
-        // Head / Cowl
-        ctx.beginPath();
-        ctx.arc(0, -75, 14, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Headband tails fluttering in wind
-        const ribbonWobble = Math.sin(t * 8) * (15 + sBass * 20);
-        ctx.beginPath();
-        ctx.moveTo(10, -75);
-        ctx.quadraticCurveTo(35 + ribbonWobble, -80, 55 + ribbonWobble * 1.5, -65);
-        ctx.lineTo(50 + ribbonWobble * 1.5, -60);
-        ctx.quadraticCurveTo(30 + ribbonWobble, -72, 10, -72);
-        ctx.closePath();
-        ctx.fillStyle = colors.main;
-        ctx.fill();
-
-        // Torso / Ninja vest
-        ctx.fillStyle = '#030509';
-        ctx.beginPath();
-        ctx.moveTo(-16, -60);
-        ctx.lineTo(16, -60);
-        ctx.lineTo(12, -20);
-        ctx.lineTo(-12, -20);
-        ctx.closePath();
-        ctx.fill();
-
-        // Crouched Legs
-        ctx.beginPath();
-        ctx.moveTo(-12, -20);
-        ctx.lineTo(-38, -8);
-        ctx.lineTo(-44, 18);
-        ctx.lineTo(-24, 18);
-        ctx.lineTo(-20, -6);
-        ctx.lineTo(12, -20);
-        ctx.lineTo(34, -4);
-        ctx.lineTo(46, 18);
-        ctx.lineTo(28, 18);
-        ctx.closePath();
-        ctx.fill();
-
-        // Forearm with Kunai Blade
-        ctx.beginPath();
-        ctx.moveTo(-14, -50);
-        ctx.lineTo(-38, -40);
-        ctx.lineTo(-30, -32);
-        ctx.closePath();
-        ctx.fill();
-
-        // Kunai blade outline
-        ctx.strokeStyle = colors.accent;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-38, -40);
-        ctx.lineTo(-58, -45);
-        ctx.lineTo(-52, -38);
-        ctx.closePath();
-        ctx.stroke();
-
-        ctx.restore();
-      }
-
-      // =======================================================================
-      // 7. SAMURAI ⚔️ (Cinematic samurai silhouette, wind, fog & sakura petals)
-      // =======================================================================
-      else if (resolvedScene === 'samurai') {
-        const samBg = ctx.createLinearGradient(0, 0, 0, height);
-        samBg.addColorStop(0, '#0c0205');
-        samBg.addColorStop(0.5, colors.darkBg);
-        samBg.addColorStop(1, '#080104');
-        ctx.fillStyle = samBg;
-        ctx.fillRect(0, 0, width, height);
-
-        // Giant eclipse moon
-        const moonX = cx;
-        const moonY = cy * 0.58;
-        const moonR = Math.min(cx, cy) * 0.42;
-
-        const redHalo = ctx.createRadialGradient(moonX, moonY, moonR * 0.5, moonX, moonY, moonR * 1.6);
-        redHalo.addColorStop(0, colors.mainRgba(0.5));
-        redHalo.addColorStop(0.7, colors.secondaryRgba(0.15));
-        redHalo.addColorStop(1, 'transparent');
-        ctx.fillStyle = redHalo;
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonR * 1.6, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#fee2e2';
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Drifting Sakura petals tumbling in the wind
-        const petals = petalsRef.current;
-        for (let i = 0; i < petals.length; i++) {
-          const p = petals[i];
-          p.x += p.vx + sMid * 2.5;
-          p.y += p.vy + Math.sin(t * 2 + p.x * 0.01) * 0.8;
-          p.rot += p.vRot;
-
-          if (p.x > width + 30) p.x = -20;
-          if (p.y > height + 20) p.y = -20;
-
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.rot);
-          ctx.fillStyle = colors.accentRgba(p.alpha);
-          ctx.beginPath();
-          ctx.ellipse(0, 0, p.size, p.size * 0.45, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-        ctx.globalAlpha = 1.0;
-
-        // Ground hill silhouette
-        const groundY = height * 0.72;
-        ctx.fillStyle = '#060103';
-        ctx.beginPath();
-        ctx.ellipse(cx, groundY + 120, width * 0.7, 140, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Rolling ground fog
-        const fogGrad = ctx.createLinearGradient(0, groundY - 30, 0, groundY + 50);
-        fogGrad.addColorStop(0, colors.secondaryRgba(0.25));
-        fogGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = fogGrad;
-        ctx.fillRect(0, groundY - 30, width, 80);
-
-        // Samurai Silhouette (standing with Katana & flowing cloak)
-        ctx.save();
-        ctx.translate(cx, groundY);
-
-        ctx.fillStyle = '#040102';
-
-        // Traditional Hat (Kasa)
-        ctx.beginPath();
-        ctx.ellipse(0, -95, 28, 9, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Flowing haori cloak billowed by the wind
-        const cloakFlutter = Math.sin(t * 5) * (8 + sBass * 18);
-        ctx.beginPath();
-        ctx.moveTo(0, -85);
-        ctx.lineTo(-24, -20);
-        ctx.lineTo(-38 + cloakFlutter, 10);
-        ctx.lineTo(24, 10);
-        ctx.lineTo(18, -20);
-        ctx.closePath();
-        ctx.fill();
-
-        // Katana Sheath at Hip
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(-16, -22);
-        ctx.lineTo(-58, 2);
-        ctx.stroke();
-
-        // Katana edge gleam on high frequencies
-        if (sHigh > 0.3) {
-          ctx.fillStyle = colors.accent;
-          ctx.shadowColor = colors.accent;
-          ctx.shadowBlur = 12;
-          ctx.beginPath();
-          ctx.arc(-58, 2, 3 + sHigh * 3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.shadowBlur = 0;
-        }
-
-        ctx.restore();
-
-        // Sword slash animation triggered on beats
-        if (slashAnimRef.current.active) {
-          const slash = slashAnimRef.current;
-          slash.progress += 0.08;
-          if (slash.progress >= 1.0) {
-            slash.active = false;
-          } else {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 3.5;
-            ctx.shadowColor = colors.main;
-            ctx.shadowBlur = 16;
-            ctx.beginPath();
-            ctx.moveTo(slash.x1, slash.y1);
-            ctx.lineTo(slash.x1 + (slash.x2 - slash.x1) * slash.progress, slash.y1 + (slash.y2 - slash.y1) * slash.progress);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-          }
-        }
-      }
 
       // =======================================================================
       // 8. DEEP OCEAN 🌊 (Underwater abyss, caustics, bubbles & marine life)
@@ -1904,2201 +1121,472 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       }
 
       // =======================================================================
-      // 9. MUSIC TUNNEL 🌀 (Cinematic polygonal tunnel with frequency distortion)
+      // 6. JT NIGHT 🌙 (Deep indigo-midnight sky, twinkling stars, city skyline,
+      //    drifting bubbles, badge with JT / JTEC, reactive soundwave ring & song timer)
       // =======================================================================
-      else if (resolvedScene === 'music_tunnel') {
-        ctx.fillStyle = '#020205';
-        ctx.fillRect(0, 0, width, height);
-
-        const ringCount = currentPerf === 'battery' ? 12 : 20;
-        const sides = 8;
-        const speed = (t * (1.2 + sBass * 2.8 + sVol * 1.5)) % 1;
-
-        // Concentric polygonal tunnel frames
-        for (let r = 0; r < ringCount; r++) {
-          const ringProgress = (r / ringCount + speed) % 1;
-          const scale = Math.pow(ringProgress, 2.8) * Math.min(cx, cy) * 1.5;
-          if (scale < 5) continue;
-
-          const ringDistort = sBass * 22;
-
-          ctx.beginPath();
-          for (let s = 0; s < sides; s++) {
-            const angle = (s * Math.PI * 2) / sides + t * 0.3;
-            const freqVal = freq ? freq[(s * 12) % (freq.length || 1)] / 255 : 0;
-            const rad = scale + freqVal * ringDistort;
-
-            const px = cx + Math.cos(angle) * rad;
-            const py = cy + Math.sin(angle) * (rad * 0.82);
-            if (s === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          }
-          ctx.closePath();
-
-          ctx.strokeStyle = r % 2 === 0 ? colors.main : colors.accent;
-          ctx.lineWidth = Math.max(1, ringProgress * 3.5);
-          ctx.globalAlpha = Math.min(1, ringProgress * (0.4 + sVol * 0.6));
-          ctx.stroke();
-        }
-
-        // Perspective speed rails
-        ctx.strokeStyle = colors.secondary;
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.25 + sBass * 0.35;
-        for (let s = 0; s < sides; s++) {
-          const angle = (s * Math.PI * 2) / sides + t * 0.3;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(cx + Math.cos(angle) * width, cy + Math.sin(angle) * height);
-          ctx.stroke();
-        }
-        ctx.globalAlpha = 1.0;
-      }
-
-      // =======================================================================
-      // 10. MINIMAL PRO ⚡ (Clean pure black background with an elegant reactive waveform)
-      // =======================================================================
-      else if (resolvedScene === 'minimal_pro') {
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, width, height);
-
-        const centerY = cy;
-        const amp = 45 + sBass * 65;
-
-        // Faint horizontal reference line
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(width * 0.05, centerY);
-        ctx.lineTo(width * 0.95, centerY);
-        ctx.stroke();
-
-        // Audio measurement crosshairs
-        const markers = [0.2, 0.4, 0.6, 0.8];
-        const labels = ['SUB', 'LOW', 'MID', 'HIGH'];
-        ctx.fillStyle = colors.secondaryRgba(0.5);
-        ctx.font = '9px monospace';
-        for (let m = 0; m < markers.length; m++) {
-          const mx = width * markers[m];
-          ctx.beginPath();
-          ctx.moveTo(mx, centerY - 6);
-          ctx.lineTo(mx, centerY + 6);
-          ctx.stroke();
-          ctx.fillText(labels[m], mx - 10, centerY + 20);
-        }
-
-        // Mirrored ghost harmonic curves
-        if (freq && freq.length > 0) {
-          ctx.beginPath();
-          for (let x = 0; x <= width; x += 10) {
-            const idx = Math.floor((x / width) * 60);
-            const val = freq[idx] ? freq[idx] / 255 : 0;
-            const gy = centerY - val * (amp * 0.6);
-            if (x === 0) ctx.moveTo(x, gy);
-            else ctx.lineTo(x, gy);
-          }
-          ctx.strokeStyle = colors.secondaryRgba(0.2);
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
-
-        // Primary precise vector oscilloscope waveform
-        if (timeDomain && timeDomain.length > 0) {
-          ctx.beginPath();
-          const waveStartX = width * 0.05;
-          const waveW = width * 0.9;
-
-          for (let x = 0; x < waveW; x += 3) {
-            const idx = Math.min(timeDomain.length - 1, Math.floor((x / waveW) * timeDomain.length));
-            const norm = (timeDomain[idx] - 128) / 128;
-            const py = centerY + norm * amp;
-            if (x === 0) ctx.moveTo(waveStartX + x, py);
-            else ctx.lineTo(waveStartX + x, py);
-          }
-
-          ctx.strokeStyle = colors.main;
-          ctx.lineWidth = 2.0;
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 10 + sBass * 14;
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-        }
-
-        // Live RMS Energy text indicator in corner
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.font = '10px monospace';
-        ctx.fillText(`LVL: ${(sVol * 100).toFixed(0)}% | SUB: ${(sBass * 100).toFixed(0)}%`, width * 0.05, height * 0.88);
-      }
-
-      // =======================================================================
-      // 11. SHADOW STRIKE 🗡️ (Moonlit rooftops, ninja dashing with afterimages & bass blade slash)
-      // =======================================================================
-      else if (resolvedScene === 'shadow_strike') {
-        const state = shadowStrikeRef.current;
-
-        // Dark moody moonlit night sky
-        const nightGrad = ctx.createLinearGradient(0, 0, 0, height);
-        nightGrad.addColorStop(0, '#02040a');
-        nightGrad.addColorStop(0.5, colors.darkBg);
-        nightGrad.addColorStop(0.85, colors.secondaryRgba(0.25));
-        nightGrad.addColorStop(1, '#03060f');
-        ctx.fillStyle = nightGrad;
-        ctx.fillRect(0, 0, width, height);
-
-        // Stars twinkling in sky with treble glints
-        const starPool = starsRef.current;
-        for (let i = 0; i < Math.min(starPool.length, 60); i++) {
-          const s = starPool[i];
-          const sx = (s.x + 600) % width;
-          const sy = (s.y + 600) % (height * 0.55);
-          const starAlpha = (Math.sin(t * 3 + s.twinklePhase) * 0.3 + 0.7) * (0.4 + sHigh * 0.6);
-          ctx.fillStyle = s.hueOffset > 0 ? colors.accentRgba(starAlpha) : `rgba(224, 242, 254, ${starAlpha})`;
-          ctx.fillRect(sx, sy, s.baseRadius, s.baseRadius);
-        }
-
-        // Colossal Moon with soft bloom in cover tint
-        const moonX = width * 0.75;
-        const moonY = height * 0.28;
-        const moonR = Math.min(width, height) * 0.26;
-
-        const moonHalo = ctx.createRadialGradient(moonX, moonY, moonR * 0.2, moonX, moonY, moonR * 2.2);
-        moonHalo.addColorStop(0, colors.mainRgba(0.28));
-        moonHalo.addColorStop(0.5, colors.secondaryRgba(0.12));
-        moonHalo.addColorStop(1, 'transparent');
-        ctx.fillStyle = moonHalo;
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonR * 2.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Moon disc with soft shading
-        const moonDisc = ctx.createRadialGradient(moonX - moonR * 0.25, moonY - moonR * 0.25, moonR * 0.1, moonX, moonY, moonR);
-        moonDisc.addColorStop(0, '#f8fafc');
-        moonDisc.addColorStop(0.6, '#e2e8f0');
-        moonDisc.addColorStop(1, '#94a3b8');
-        ctx.fillStyle = moonDisc;
-        ctx.beginPath();
-        ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Subtle lunar craters
-        ctx.fillStyle = 'rgba(71, 85, 105, 0.18)';
-        ctx.beginPath();
-        ctx.arc(moonX - moonR * 0.3, moonY - moonR * 0.1, moonR * 0.25, 0, Math.PI * 2);
-        ctx.arc(moonX + moonR * 0.2, moonY + moonR * 0.25, moonR * 0.22, 0, Math.PI * 2);
-        ctx.arc(moonX - moonR * 0.1, moonY + moonR * 0.35, moonR * 0.18, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Drifting background fog layers
-        const fogOffset1 = (t * 22) % width;
-        const fogGrad1 = ctx.createLinearGradient(0, height * 0.42, 0, height * 0.72);
-        fogGrad1.addColorStop(0, 'transparent');
-        fogGrad1.addColorStop(0.5, colors.secondaryRgba(0.22));
-        fogGrad1.addColorStop(1, 'transparent');
-        ctx.fillStyle = fogGrad1;
-        ctx.fillRect(0, height * 0.42, width, height * 0.3);
-
-        const fogOffset2 = (t * 35 + 200) % width;
-        ctx.fillStyle = colors.secondaryRgba(0.14);
-        ctx.fillRect(-fogOffset2, height * 0.52, width * 2, height * 0.18);
-
-        // Multi-layered Japanese Pagoda Rooftops
-        // Layer A: Distant roofs
-        ctx.fillStyle = '#060a14';
-        ctx.beginPath();
-        ctx.moveTo(0, height * 0.68);
-        ctx.quadraticCurveTo(width * 0.2, height * 0.62, width * 0.38, height * 0.7);
-        ctx.lineTo(width * 0.38, height);
-        ctx.lineTo(0, height);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.moveTo(width * 0.32, height * 0.72);
-        ctx.quadraticCurveTo(width * 0.6, height * 0.64, width * 0.85, height * 0.73);
-        ctx.lineTo(width * 0.85, height);
-        ctx.lineTo(width * 0.32, height);
-        ctx.closePath();
-        ctx.fill();
-
-        // Layer B: Main foreground roofline where ninja dashes
-        const roofBaseY = height * 0.68;
-        const roofPeakY = height * 0.61;
-
-        ctx.fillStyle = '#020509';
-        ctx.beginPath();
-        ctx.moveTo(0, roofBaseY);
-        ctx.quadraticCurveTo(width * 0.22, roofPeakY, width * 0.5, roofBaseY - 10);
-        ctx.quadraticCurveTo(width * 0.78, roofPeakY - 15, width, roofBaseY + 15);
-        ctx.lineTo(width, height);
-        ctx.lineTo(0, height);
-        ctx.closePath();
-        ctx.fill();
-
-        // Moonlight rim highlight along curved roof ridge
-        ctx.strokeStyle = colors.mainRgba(0.35);
-        ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.moveTo(0, roofBaseY);
-        ctx.quadraticCurveTo(width * 0.22, roofPeakY, width * 0.5, roofBaseY - 10);
-        ctx.quadraticCurveTo(width * 0.78, roofPeakY - 15, width, roofBaseY + 15);
-        ctx.stroke();
-
-        // Vertical roof tiles
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-        ctx.lineWidth = 1;
-        for (let rx = 10; rx < width; rx += 24) {
-          ctx.beginPath();
-          ctx.moveTo(rx, roofPeakY + 15);
-          ctx.lineTo(rx + 8, height);
-          ctx.stroke();
-        }
-
-        // Ninja physics & movement
-        const dashSpeed = 4.2 + sBass * 11.0;
-        state.ninjaX += dashSpeed;
-        state.stride += 0.28 + sBass * 0.45;
-
-        // Wrap around screen
-        if (state.ninjaX > width + 80) {
-          state.ninjaX = -60;
-          state.trail = [];
-        }
-
-        // Roof curvature Y matching
-        const normX = Math.max(0, Math.min(1, state.ninjaX / width));
-        const curveOffset = Math.sin(normX * Math.PI) * 28;
-        state.ninjaY = roofBaseY - curveOffset - 18;
-
-        // Bass hit: Trigger dash afterimage & fast blade slash
-        if (isBeat && sBass > 0.58) {
-          state.slashActive = true;
-          state.slashProgress = 0;
-          state.slashX1 = state.ninjaX - 40;
-          state.slashY1 = state.ninjaY - 20;
-          state.slashX2 = state.ninjaX + 90 + sBass * 50;
-          state.slashY2 = state.ninjaY - 35 + (Math.random() - 0.5) * 30;
-
-          // Spawn katana sparks
-          const sparkCount = Math.floor(10 + sBass * 18);
-          for (let sp = 0; sp < sparkCount; sp++) {
-            state.sparks.push({
-              x: state.ninjaX + 30,
-              y: state.ninjaY - 20,
-              vx: (Math.random() * 5 + 2) * (Math.random() > 0.3 ? 1 : -1),
-              vy: -(Math.random() * 4 + 2),
-              alpha: 1.0,
-              size: Math.random() * 2.5 + 1.2,
-              color: Math.random() > 0.3 ? colors.accent : colors.main,
-            });
-          }
-        }
-
-        // Afterimage trail sampling
-        if (Math.random() > 0.25 || sBass > 0.4) {
-          state.trail.push({
-            x: state.ninjaX,
-            y: state.ninjaY,
-            stride: state.stride,
-            alpha: 0.55,
-          });
-        }
-        if (state.trail.length > 14) {
-          state.trail.shift();
-        }
-
-        // Draw Ninja Silhouette Helper
-        const drawNinjaFigure = (nx: number, ny: number, nStride: number, nAlpha: number, isGhost: boolean) => {
-          ctx.save();
-          ctx.translate(nx, ny);
-          ctx.globalAlpha = Math.max(0, Math.min(1, nAlpha));
-
-          if (isGhost) {
-            ctx.fillStyle = colors.mainRgba(nAlpha * 0.4);
-            ctx.shadowColor = colors.main;
-            ctx.shadowBlur = 8;
-          } else {
-            ctx.fillStyle = '#010307';
-          }
-
-          // Crouched Torso
-          ctx.beginPath();
-          ctx.ellipse(0, -18, 11, 16, -0.4, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Head with Ninja Mask
-          ctx.beginPath();
-          ctx.arc(12, -34, 7.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Ninja Headband fluttering behind
-          const flutter = Math.sin(t * 12 + nStride) * 6;
-          ctx.beginPath();
-          ctx.moveTo(6, -34);
-          ctx.quadraticCurveTo(-12, -38 + flutter, -28, -32 + flutter * 1.5);
-          ctx.lineTo(-24, -28 + flutter * 1.5);
-          ctx.quadraticCurveTo(-10, -32 + flutter, 6, -30);
-          ctx.closePath();
-          ctx.fillStyle = isGhost ? colors.main : colors.main;
-          ctx.fill();
-
-          // Scabbard on back
-          ctx.strokeStyle = '#1e293b';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.moveTo(-10, -38);
-          ctx.lineTo(8, -4);
-          ctx.stroke();
-
-          // Katana hilt glint
-          if (sHigh > 0.3) {
-            ctx.fillStyle = colors.accent;
-            ctx.fillRect(-12, -40, 3, 3);
-          }
-
-          // Dashing forward legs
-          const legPhase = Math.sin(nStride);
-          ctx.strokeStyle = isGhost ? colors.main : '#010307';
-          ctx.lineWidth = 5;
-          ctx.lineCap = 'round';
-
-          // Leading Leg
-          ctx.beginPath();
-          ctx.moveTo(4, -8);
-          ctx.lineTo(16 + legPhase * 8, 4);
-          ctx.lineTo(26 + legPhase * 6, 14);
-          ctx.stroke();
-
-          // Trailing Leg
-          ctx.beginPath();
-          ctx.moveTo(-6, -8);
-          ctx.lineTo(-18 - legPhase * 8, 2);
-          ctx.lineTo(-24 - legPhase * 6, 12);
-          ctx.stroke();
-
-          // Leading Outstretched Arm holding blade
-          ctx.beginPath();
-          ctx.moveTo(4, -22);
-          ctx.lineTo(24, -16);
-          ctx.stroke();
-
-          // Katana blade extending forward
-          ctx.strokeStyle = isGhost ? colors.main : '#e2e8f0';
-          ctx.lineWidth = 1.8;
-          ctx.beginPath();
-          ctx.moveTo(24, -16);
-          ctx.lineTo(44, -12);
-          ctx.stroke();
-
-          ctx.restore();
-        };
-
-        // Render fading afterimage trails
-        for (let tr = 0; tr < state.trail.length; tr++) {
-          const item = state.trail[tr];
-          item.alpha -= 0.038;
-          if (item.alpha > 0) {
-            drawNinjaFigure(item.x, item.y, item.stride, item.alpha, true);
-          }
-        }
-        state.trail = state.trail.filter((it) => it.alpha > 0);
-
-        // Render real ninja silhouette
-        drawNinjaFigure(state.ninjaX, state.ninjaY, state.stride, 1.0, false);
-
-        // Fast blade slash streak on bass hits
-        if (state.slashActive) {
-          state.slashProgress += 0.12;
-          if (state.slashProgress >= 1.0) {
-            state.slashActive = false;
-          } else {
-            const curSlashX = state.slashX1 + (state.slashX2 - state.slashX1) * state.slashProgress;
-            const curSlashY = state.slashY1 + (state.slashY2 - state.slashY1) * state.slashProgress;
-
-            // Broad outer neon streak
-            ctx.strokeStyle = colors.mainRgba(0.85);
-            ctx.lineWidth = 7.0;
-            ctx.shadowColor = colors.main;
-            ctx.shadowBlur = 18;
-            ctx.beginPath();
-            ctx.moveTo(state.slashX1, state.slashY1);
-            ctx.lineTo(curSlashX, curSlashY);
-            ctx.stroke();
-
-            // Intense white razor core
-            ctx.strokeStyle = colors.accent;
-            ctx.lineWidth = 2.0;
-            ctx.beginPath();
-            ctx.moveTo(state.slashX1, state.slashY1);
-            ctx.lineTo(curSlashX, curSlashY);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-          }
-        }
-
-        // Showering katana sparks physics
-        for (let sp = state.sparks.length - 1; sp >= 0; sp--) {
-          const spark = state.sparks[sp];
-          spark.x += spark.vx;
-          spark.y += spark.vy;
-          spark.vy += 0.22; // Gravity
-          spark.alpha -= 0.024;
-
-          if (spark.alpha <= 0) {
-            state.sparks.splice(sp, 1);
-            continue;
-          }
-
-          ctx.fillStyle = spark.color;
-          ctx.globalAlpha = spark.alpha;
-          ctx.beginPath();
-          ctx.arc(spark.x, spark.y, spark.size, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.globalAlpha = 1.0;
-      }
-
-      // =======================================================================
-      // 12. SHURIKEN STORM ⭐ (Realistic metallic shuriken spinning with motion blur into wooden beams)
-      // =======================================================================
-      else if (resolvedScene === 'shuriken_storm') {
-        const dojo = shurikenStormRef.current;
-
-        // Dark moody wooden dojo background
-        const dojoGrad = ctx.createLinearGradient(0, 0, 0, height);
-        dojoGrad.addColorStop(0, '#040203');
-        dojoGrad.addColorStop(0.5, colors.darkBg);
-        dojoGrad.addColorStop(1, '#050203');
-        ctx.fillStyle = dojoGrad;
-        ctx.fillRect(0, 0, width, height);
-
-        // Warm paper lantern glow in upper corner with bass breathing
-        const lanternX = width * 0.82;
-        const lanternY = height * 0.22;
-        const lanternPulse = 70 + Math.sin(t * 3) * 8 + sBass * 45;
-
-        const lanternGrad = ctx.createRadialGradient(lanternX, lanternY, 5, lanternX, lanternY, lanternPulse * 2.2);
-        lanternGrad.addColorStop(0, colors.secondaryRgba(0.5));
-        lanternGrad.addColorStop(0.4, colors.secondaryRgba(0.18));
-        lanternGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = lanternGrad;
-        ctx.beginPath();
-        ctx.arc(lanternX, lanternY, lanternPulse * 2.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Traditional Hanging Paper Lantern fixture
-        ctx.strokeStyle = '#451a03';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(lanternX, 0);
-        ctx.lineTo(lanternX, lanternY - 24);
-        ctx.stroke();
-
-        ctx.fillStyle = colors.secondary;
-        ctx.beginPath();
-        ctx.roundRect(lanternX - 14, lanternY - 24, 28, 42, [6, 6, 6, 6]);
-        ctx.fill();
-
-        // Heavy ancient wooden pillar beams (target surfaces)
-        const pillar1X = width * 0.16;
-        const pillar2X = width * 0.72;
-        const pillarW = 42;
-
-        const drawPillar = (px: number) => {
-          ctx.fillStyle = '#0f0805';
-          ctx.fillRect(px, 0, pillarW, height);
-
-          // Wood grain grooves
-          ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-          ctx.lineWidth = 1.2;
-          for (let g = 6; g < pillarW; g += 10) {
-            ctx.beginPath();
-            ctx.moveTo(px + g, 0);
-            ctx.lineTo(px + g + (g % 4), height);
-            ctx.stroke();
-          }
-
-          // Warm lantern edge highlight on wood
-          ctx.strokeStyle = colors.secondaryRgba(0.3);
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(px + pillarW, 0);
-          ctx.lineTo(px + pillarW, height);
-          ctx.stroke();
-        };
-
-        drawPillar(pillar1X);
-        drawPillar(pillar2X);
-
-        // Tatami floor perspective at bottom
-        const floorY = height * 0.82;
-        ctx.fillStyle = '#0a0805';
-        ctx.fillRect(0, floorY, width, height - floorY);
-        ctx.strokeStyle = 'rgba(120, 80, 40, 0.12)';
-        ctx.lineWidth = 1.5;
-        for (let ty = floorY; ty < height; ty += 14) {
-          ctx.beginPath();
-          ctx.moveTo(0, ty);
-          ctx.lineTo(width, ty);
-          ctx.stroke();
-        }
-
-        // Shuriken throwing spawner
-        const throwInterval = Math.max(120, 380 - sBass * 280);
-        if (currentTime - dojo.lastThrowTime > throwInterval) {
-          dojo.lastThrowTime = currentTime;
-          const targetIsRight = Math.random() > 0.4;
-          const targetPillarX = targetIsRight ? pillar2X : pillar1X;
-          const throwY = Math.random() * (height * 0.5) + height * 0.2;
-
-          dojo.shurikens.push({
-            x: -40,
-            y: throwY + (Math.random() - 0.5) * 60,
-            vx: 18 + sBass * 22,
-            vy: (Math.random() - 0.5) * 2.5,
-            rot: 0,
-            rotSpeed: 0.45 + sBass * 0.4,
-            size: 16 + Math.random() * 4,
-            stuck: false,
-            stickTime: 0,
-            stickX: targetPillarX + 6,
-            stickY: throwY,
-            targetX: targetPillarX,
-            trail: [],
-          });
-        }
-
-        // Helper to draw 4-pointed metallic ninja star (Shuriken)
-        const drawShurikenStar = (sx: number, sy: number, sRot: number, sSize: number, isMotionBlur = false) => {
-          ctx.save();
-          ctx.translate(sx, sy);
-          ctx.rotate(sRot);
-
-          if (isMotionBlur) {
-            ctx.fillStyle = colors.mainRgba(0.22);
-            ctx.beginPath();
-            ctx.arc(0, 0, sSize * 0.9, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-            return;
-          }
-
-          // Realistic 4-pointed Ninja Hira-Shuriken
-          ctx.fillStyle = colors.main;
-          ctx.beginPath();
-          for (let pt = 0; pt < 4; pt++) {
-            const angle = (pt * Math.PI) / 2;
-            const tipX = Math.cos(angle) * sSize;
-            const tipY = Math.sin(angle) * sSize;
-            const indentAngle = angle + Math.PI / 4;
-            const indentX = Math.cos(indentAngle) * (sSize * 0.32);
-            const indentY = Math.sin(indentAngle) * (sSize * 0.32);
-
-            if (pt === 0) ctx.moveTo(tipX, tipY);
-            else ctx.lineTo(tipX, tipY);
-            ctx.lineTo(indentX, indentY);
-          }
-          ctx.closePath();
-          ctx.fill();
-
-          // Razor beveled blade facets
-          ctx.strokeStyle = colors.accent;
-          ctx.lineWidth = 1.0;
-          for (let pt = 0; pt < 4; pt++) {
-            const angle = (pt * Math.PI) / 2;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(Math.cos(angle) * sSize, Math.sin(angle) * sSize);
-            ctx.stroke();
-          }
-
-          // Center circular weight hole
-          ctx.fillStyle = '#0f0805';
-          ctx.beginPath();
-          ctx.arc(0, 0, sSize * 0.22, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Treble gleam on outer blade tip
-          if (sHigh > 0.35) {
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowColor = colors.accent;
-            ctx.shadowBlur = 8;
-            ctx.beginPath();
-            ctx.arc(sSize * 0.9, 0, 2.5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-          }
-
-          ctx.restore();
-        };
-
-        // Update and draw flying and stuck shurikens
-        for (let i = dojo.shurikens.length - 1; i >= 0; i--) {
-          const s = dojo.shurikens[i];
-
-          if (s.stuck) {
-            s.stickTime += 1;
-            // Draw stuck shuriken lodged deep into wood
-            drawShurikenStar(s.stickX, s.stickY, s.rot, s.size, false);
-
-            // Fade out old stuck shurikens
-            if (s.stickTime > 140) {
-              dojo.shurikens.splice(i, 1);
-            }
-            continue;
-          }
-
-          // In-flight physics
-          s.x += s.vx;
-          s.y += s.vy;
-          s.rot += s.rotSpeed;
-
-          // Motion blur trail capture
-          s.trail.push({ x: s.x, y: s.y, rot: s.rot, alpha: 0.4 });
-          if (s.trail.length > 5) s.trail.shift();
-
-          // Check collision with wooden beam
-          if (s.x >= s.targetX) {
-            s.stuck = true;
-            s.stickX = s.targetX + 4;
-            s.stickY = s.y;
-
-            // Spawn dynamic sparks upon impact
-            const sparkCount = Math.floor(8 + sBass * 20);
-            for (let sp = 0; sp < sparkCount; sp++) {
-              dojo.sparks.push({
-                x: s.stickX,
-                y: s.stickY,
-                vx: -(Math.random() * 6 + 1.5),
-                vy: (Math.random() - 0.5) * 5,
-                life: 0,
-                maxLife: Math.random() * 24 + 16,
-                size: Math.random() * 2.2 + 1.0,
-                color: Math.random() > 0.3 ? colors.accent : colors.main,
-              });
-            }
-            continue;
-          }
-
-          // Draw motion blur trail arcs
-          for (let tr = 0; tr < s.trail.length; tr++) {
-            const item = s.trail[tr];
-            drawShurikenStar(item.x, item.y, item.rot, s.size, true);
-          }
-
-          // Draw crisp spinning shuriken
-          drawShurikenStar(s.x, s.y, s.rot, s.size, false);
-        }
-
-        // Render beam impact sparks
-        for (let sp = dojo.sparks.length - 1; sp >= 0; sp--) {
-          const spark = dojo.sparks[sp];
-          spark.x += spark.vx;
-          spark.y += spark.vy;
-          spark.vy += 0.25; // Gravity
-          spark.life += 1;
-
-          if (spark.life >= spark.maxLife) {
-            dojo.sparks.splice(sp, 1);
-            continue;
-          }
-
-          const sparkAlpha = 1 - spark.life / spark.maxLife;
-          ctx.fillStyle = spark.color;
-          ctx.globalAlpha = sparkAlpha;
-          ctx.beginPath();
-          ctx.arc(spark.x, spark.y, spark.size, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.globalAlpha = 1.0;
-      }
-
-      // =======================================================================
-      // 13. SMOKE VANISH 💨 (Ninja in dark bamboo forest, realistic smoke & fireflies)
-      // =======================================================================
-      else if (resolvedScene === 'smoke_vanish') {
-        const forest = smokeVanishRef.current;
-
-        // Dark moody nocturnal bamboo forest gradient
-        const forestBg = ctx.createLinearGradient(0, 0, 0, height);
-        forestBg.addColorStop(0, '#020904');
-        forestBg.addColorStop(0.5, colors.darkBg);
-        forestBg.addColorStop(1, '#010603');
-        ctx.fillStyle = forestBg;
-        ctx.fillRect(0, 0, width, height);
-
-        // 1. Distant Parallax Bamboo Stalks
-        ctx.fillStyle = '#061a0e';
-        const bgStalkCount = 10;
-        for (let b = 0; b < bgStalkCount; b++) {
-          const bx = (width / bgStalkCount) * b + Math.sin(b * 3) * 12;
-          ctx.fillRect(bx, 0, 10, height);
-
-          // Bamboo horizontal node ridges
-          ctx.strokeStyle = '#030d07';
-          ctx.lineWidth = 2;
-          for (let nd = 40; nd < height; nd += 65) {
-            ctx.beginPath();
-            ctx.moveTo(bx - 2, nd);
-            ctx.lineTo(bx + 12, nd);
-            ctx.stroke();
-          }
-        }
-
-        // Drifting forest mist layer
-        const mistGrad = ctx.createLinearGradient(0, height * 0.45, 0, height * 0.85);
-        mistGrad.addColorStop(0, 'transparent');
-        mistGrad.addColorStop(0.5, colors.secondaryRgba(0.2));
-        mistGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = mistGrad;
-        ctx.fillRect(0, height * 0.45, width, height * 0.4);
-
-        // 2. Midground Prominent Bamboo Stalks
-        const midStalks = [width * 0.18, width * 0.45, width * 0.76, width * 0.92];
-        for (let m = 0; m < midStalks.length; m++) {
-          const mx = midStalks[m];
-          const stalkGrad = ctx.createLinearGradient(mx, 0, mx + 22, 0);
-          stalkGrad.addColorStop(0, '#0a2615');
-          stalkGrad.addColorStop(0.5, '#124024');
-          stalkGrad.addColorStop(1, '#061a0e');
-          ctx.fillStyle = stalkGrad;
-          ctx.fillRect(mx, 0, 22, height);
-
-          // Ring ridges
-          ctx.fillStyle = '#041009';
-          for (let r = 50; r < height; r += 75) {
-            ctx.beginPath();
-            ctx.ellipse(mx + 11, r, 13, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-
-        // 3. Bioluminescent Fireflies floating around with treble glow
-        for (let f = 0; f < forest.fireflies.length; f++) {
-          const fly = forest.fireflies[f];
-          fly.phase += fly.speed;
-          fly.x = fly.baseX + Math.sin(fly.phase) * 35;
-          fly.y = fly.baseY + Math.cos(fly.phase * 0.8) * 25;
-
-          // Wrap fireflies on resize
-          if (fly.x < 0) fly.baseX = width;
-          if (fly.x > width) fly.baseX = 0;
-          if (fly.y < 0) fly.baseY = height;
-          if (fly.y > height) fly.baseY = 0;
-
-          const glowPulse = Math.sin(t * 3 + fly.phase) * 0.35 + 0.65 + sHigh * 0.5;
-          const flyR = fly.size * glowPulse;
-
-          const flyGrad = ctx.createRadialGradient(fly.x, fly.y, 1, fly.x, fly.y, flyR * 4);
-          flyGrad.addColorStop(0, colors.accent);
-          flyGrad.addColorStop(0.4, colors.accentRgba(0.3));
-          flyGrad.addColorStop(1, 'transparent');
-          ctx.fillStyle = flyGrad;
-          ctx.beginPath();
-          ctx.arc(fly.x, fly.y, flyR * 4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Initialize ninja position if zero
-        if (forest.ninjaX === 0) {
-          forest.ninjaX = width * 0.35;
-          forest.ninjaY = height * 0.72;
-        }
-
-        // Bass Hit: Smoke bomb burst -> Ninja vanishes & reappears in a new spot!
-        const canTeleport = currentTime - forest.lastTeleportTime > 650;
-        if (isBeat && sBass > 0.62 && canTeleport) {
-          forest.lastTeleportTime = currentTime;
-
-          // Explode smoke bomb at old position
-          const smokePuffCount = Math.floor(18 + sBass * 25);
-          for (let p = 0; p < smokePuffCount; p++) {
-            const angle = Math.random() * Math.PI * 2;
-            const spd = Math.random() * 5 + 2 + sBass * 6;
-            forest.puffs.push({
-              x: forest.ninjaX + (Math.random() - 0.5) * 20,
-              y: forest.ninjaY - 25 + (Math.random() - 0.5) * 30,
-              vx: Math.cos(angle) * spd,
-              vy: Math.sin(angle) * spd * 0.6 - 1.2,
-              radius: Math.random() * 22 + 16,
-              maxRadius: Math.random() * 55 + 40,
-              alpha: 0.85,
-              rot: Math.random() * Math.PI * 2,
-              rotSpeed: (Math.random() - 0.5) * 0.04,
-              color: Math.random() > 0.4 ? colors.secondary : colors.main,
-            });
-          }
-
-          // Pick new spot in the bamboo forest
-          const poses: ('ground' | 'branch' | 'crouch')[] = ['ground', 'branch', 'crouch'];
-          forest.currentPose = poses[Math.floor(Math.random() * poses.length)];
-          const newX = Math.random() * (width * 0.65) + width * 0.15;
-          const newY = forest.currentPose === 'branch' ? height * 0.48 : height * 0.72;
-          forest.ninjaX = newX;
-          forest.ninjaY = newY;
-
-          // Explode secondary smoke burst at new appearance location
-          for (let p = 0; p < 12; p++) {
-            const angle = Math.random() * Math.PI * 2;
-            const spd = Math.random() * 3.5 + 1.5;
-            forest.puffs.push({
-              x: newX,
-              y: newY - 20,
-              vx: Math.cos(angle) * spd,
-              vy: Math.sin(angle) * spd * 0.6 - 1.0,
-              radius: Math.random() * 18 + 12,
-              maxRadius: Math.random() * 45 + 30,
-              alpha: 0.75,
-              rot: Math.random() * Math.PI * 2,
-              rotSpeed: (Math.random() - 0.5) * 0.03,
-              color: colors.secondary,
-            });
-          }
-        }
-
-        // Ninja breathing alpha animation
-        forest.ninjaAlpha += (forest.ninjaTargetAlpha - forest.ninjaAlpha) * 0.1;
-
-        // 4. Draw Ninja Silhouette at current spot
-        if (forest.ninjaAlpha > 0.05) {
-          ctx.save();
-          ctx.translate(forest.ninjaX, forest.ninjaY);
-          ctx.globalAlpha = forest.ninjaAlpha;
-
-          // Silhouette edge glow in cover main color
-          ctx.fillStyle = '#010502';
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 10;
-
-          if (forest.currentPose === 'branch') {
-            // Perched perched crouch pose atop bamboo node
-            ctx.beginPath();
-            ctx.arc(0, -42, 8, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.ellipse(0, -25, 12, 14, 0, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Crouched tucked legs
-            ctx.beginPath();
-            ctx.moveTo(-10, -18);
-            ctx.lineTo(-18, -4);
-            ctx.lineTo(-6, 2);
-            ctx.lineTo(6, 2);
-            ctx.lineTo(18, -4);
-            ctx.lineTo(10, -18);
-            ctx.closePath();
-            ctx.fill();
-
-            // Scabbard on back
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.moveTo(-14, -48);
-            ctx.lineTo(12, -10);
-            ctx.stroke();
-          } else if (forest.currentPose === 'crouch') {
-            // Low stealth stalker stance
-            ctx.beginPath();
-            ctx.arc(10, -32, 8, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.ellipse(0, -18, 14, 11, -0.3, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.moveTo(-12, -14);
-            ctx.lineTo(-26, -2);
-            ctx.lineTo(-32, 8);
-            ctx.lineTo(4, 8);
-            ctx.lineTo(24, 6);
-            ctx.closePath();
-            ctx.fill();
-
-            // Kunai blade ready in hand
-            ctx.strokeStyle = colors.accent;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(18, -16);
-            ctx.lineTo(34, -12);
-            ctx.stroke();
-          } else {
-            // Standing shadow guardian stance
-            ctx.beginPath();
-            ctx.arc(0, -56, 8.5, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.moveTo(-14, -46);
-            ctx.lineTo(14, -46);
-            ctx.lineTo(10, -16);
-            ctx.lineTo(-10, -16);
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.fillRect(-9, -16, 7, 24);
-            ctx.fillRect(2, -16, 7, 24);
-
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.moveTo(-16, -68);
-            ctx.lineTo(12, -22);
-            ctx.stroke();
-          }
-
-          ctx.shadowBlur = 0;
-          ctx.restore();
-        }
-
-        // 5. Volumetric Smoke Clouds Rendering & Billowing Simulation
-        for (let i = forest.puffs.length - 1; i >= 0; i--) {
-          const puff = forest.puffs[i];
-          puff.x += puff.vx;
-          puff.y += puff.vy;
-          puff.radius += 0.8;
-          puff.rot += puff.rotSpeed;
-          puff.alpha -= 0.012;
-
-          if (puff.alpha <= 0 || puff.radius >= puff.maxRadius) {
-            forest.puffs.splice(i, 1);
-            continue;
-          }
-
-          const smokeGrad = ctx.createRadialGradient(
-            puff.x, puff.y, puff.radius * 0.1,
-            puff.x, puff.y, puff.radius
-          );
-          smokeGrad.addColorStop(0, puff.color === colors.main ? colors.mainRgba(puff.alpha) : colors.secondaryRgba(puff.alpha));
-          smokeGrad.addColorStop(0.5, puff.color === colors.main ? colors.mainRgba(puff.alpha * 0.5) : colors.secondaryRgba(puff.alpha * 0.5));
-          smokeGrad.addColorStop(1, 'transparent');
-
-          ctx.fillStyle = smokeGrad;
-          ctx.beginPath();
-          ctx.arc(puff.x, puff.y, puff.radius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // 6. Foreground framing bamboo stalks and bamboo leaves
-        ctx.fillStyle = '#031209';
-        ctx.fillRect(-10, 0, 28, height);
-        ctx.fillRect(width - 18, 0, 28, height);
-
-        ctx.fillStyle = '#082f18';
-        const leafClusters = [
-          { x: 30, y: 50, angle: 0.4 },
-          { x: 45, y: 80, angle: 0.6 },
-          { x: width - 35, y: 60, angle: -0.5 },
-          { x: width - 50, y: 95, angle: -0.7 },
-        ];
-        for (let lc = 0; lc < leafClusters.length; lc++) {
-          const lf = leafClusters[lc];
-          const sway = Math.sin(t * 2 + lc) * 0.08;
-          ctx.save();
-          ctx.translate(lf.x, lf.y);
-          ctx.rotate(lf.angle + sway);
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 24, 6, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      // =======================================================================
-      // 15. AURORA SKIES 🌌
-      // Dark night sky, faint stars, mountain silhouette at bottom, 3-4 layered
-      // aurora ribbons waving across the upper 60% with blurred glowing edges.
-      // Semi-transparent, sky visible behind, no solid wash of color.
-      // Mids = wave flow speed & movement. Bass = flare brightness & ribbon height.
-      // Treble = twinkling stars & shimmering particles.
-      // Fallback: green, teal, purple.
-      // =======================================================================
-      if (resolvedScene === 'aurora_skies') {
-        // A. Deep dark night sky as the base
+      else if (resolvedScene === 'jt_night') {
+        const jtNight = jtNightRef.current;
+        const blurMult = currentPerf === 'battery' ? 0 : currentPerf === 'balanced' ? 0.6 : 1.0;
+
+        // Apply slow zoom in/out with the bass (1.00x to 1.03x)
+        const sceneZoom = 1.0 + 0.03 * sBass;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(sceneZoom, sceneZoom);
+        ctx.translate(-cx, -cy);
+
+        // 1. SKY: Deep indigo to midnight vertical gradient (#04021a -> #0b0a3d -> #2a2fc9 horizon glow)
         const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
-        skyGrad.addColorStop(0, '#01040a');
-        skyGrad.addColorStop(0.4, '#030a16');
-        skyGrad.addColorStop(0.7, '#040d1a');
-        skyGrad.addColorStop(1, '#010306');
+        skyGrad.addColorStop(0, '#04021a');
+        skyGrad.addColorStop(0.48, '#0b0a3d');
+        skyGrad.addColorStop(0.82, '#141452');
+        skyGrad.addColorStop(1, colors.secondaryRgba(0.55 + sBass * 0.45));
         ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, width, height);
 
-        const auroraData = auroraSkiesRef.current;
+        // Horizon glow pulsing with the bass
+        const horizonGlowY = height * 0.88;
+        const hGlow = ctx.createRadialGradient(cx, horizonGlowY, 15, cx, horizonGlowY, width * 0.75);
+        hGlow.addColorStop(0, colors.secondaryRgba(0.4 + sBass * 0.5));
+        hGlow.addColorStop(0.65, colors.mainRgba(0.18 + sBass * 0.25));
+        hGlow.addColorStop(1, 'transparent');
+        ctx.fillStyle = hGlow;
+        ctx.fillRect(0, horizonGlowY - 140, width, 200);
 
-        // Beat Detection: Flare brightness +60%, height +40%, ease back within 300ms
-        if (isBeat) {
-          auroraData.beatFlare = 1.0;
-        } else {
-          auroraData.beatFlare = Math.max(0, auroraData.beatFlare - (0.016 / 0.30));
-        }
+        // 2. STARS: ~250 tiny stars (radius 0.5 to 1.6 px, white to soft periwinkle)
+        // Treble makes stars sparkle brighter
+        const jtStars = jtNight.stars;
+        for (let i = 0; i < jtStars.length; i++) {
+          const s = jtStars[i];
+          const sx = s.x * width;
+          const sy = s.y * height;
+          const twinkle = 0.4 + 0.6 * Math.sin(s.twinklePhase + t * s.twinkleSpeed);
+          const sAlpha = Math.min(1.0, s.baseAlpha * twinkle * (1.0 + sHigh * 1.5));
 
-        // B. Faint twinkling stars across sky (visible through and behind aurora; boosted by Treble)
-        const twinkleBoost = 1.0 + sHigh * 2.8;
-        for (let i = 0; i < auroraData.stars.length; i++) {
-          const star = auroraData.stars[i];
-          const tw = Math.sin(t * 3 * star.twinkleSpeed * 50 + i) * 0.4 + 0.6;
-          const starAlpha = Math.min(1, star.alpha * tw * twinkleBoost);
-          ctx.fillStyle = `rgba(255, 255, 255, ${starAlpha})`;
+          ctx.fillStyle = s.isPeriwinkle ? colors.accentRgba(sAlpha) : `rgba(255, 255, 255, ${sAlpha.toFixed(3)})`;
           ctx.beginPath();
-          ctx.arc(star.x % width, (star.y % (height * 0.65)), star.size * (1 + sHigh * 0.35), 0, Math.PI * 2);
+          ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // C. 3 to 4 Layered, Thinner, Semi-transparent Aurora Ribbons
-        // Strictly limited to upper 60% of screen (y <= height * 0.60)
-        // Mids controls wave speed
-        const flowSpeed = 0.5 + sMid * 1.8;
-        auroraData.waveOffset1 += 0.0035 * flowSpeed;
-        auroraData.waveOffset2 += 0.0028 * flowSpeed;
-        auroraData.waveOffset3 += 0.0042 * flowSpeed;
-        auroraData.waveOffset4 += 0.0032 * flowSpeed;
+        // 3. CLOUDS: Soft wispy cloud bands across the lower third (blurred low-opacity ellipses with blue glow)
+        for (let cl = 0; cl < 4; cl++) {
+          const clCenter = ((cl * 0.26 * width + Math.sin(t * 0.2 + cl * 1.8) * 45) % (width + 260)) - 130;
+          const clY = height * (0.64 + cl * 0.045);
+          const clW = width * 0.46;
+          const clH = 22;
 
-        // On every beat: brightness up ~60%, height up ~40%, ease back in 300ms
-        const beatHeightMult = 1.0 + 0.40 * auroraData.beatFlare;
-        const beatBrightnessMult = 1.0 + 0.60 * auroraData.beatFlare;
+          const cGrad = ctx.createRadialGradient(clCenter + clW / 2, clY, 8, clCenter + clW / 2, clY, clW / 2);
+          cGrad.addColorStop(0, colors.secondaryRgba(0.15 + sBass * 0.1));
+          cGrad.addColorStop(0.7, colors.secondaryRgba(0.04));
+          cGrad.addColorStop(1, 'transparent');
 
-        // Bass drives ribbon brightness directly
-        const maxCurtainH = height * 0.28;
-        const flareHeight = Math.min(maxCurtainH, ((height * 0.10) + sBass * (height * 0.09)) * beatHeightMult);
-        const bassBrightness = 0.08 + sBass * 0.26;
-        const flareAlpha = Math.min(1.0, bassBrightness * beatBrightnessMult);
-
-        const ribbonConfigs = [
-          {
-            colorRgb: activeMain, // green
-            offset: auroraData.waveOffset1,
-            baseY: height * 0.42,
-            amplitude: 15 + sMid * 12,
-            freq: 0.0025,
-            curtainHeight: flareHeight * 1.0,
-            alpha: flareAlpha * 0.85,
-          },
-          {
-            colorRgb: activeSecondary, // teal
-            offset: auroraData.waveOffset2,
-            baseY: height * 0.48,
-            amplitude: 18 + sMid * 14,
-            freq: 0.0020,
-            curtainHeight: flareHeight * 1.1,
-            alpha: flareAlpha * 0.75,
-          },
-          {
-            colorRgb: activeAccent, // purple
-            offset: auroraData.waveOffset3,
-            baseY: height * 0.36,
-            amplitude: 14 + sMid * 10,
-            freq: 0.0030,
-            curtainHeight: flareHeight * 0.9,
-            alpha: flareAlpha * 0.70,
-          },
-          {
-            colorRgb: activeMain, // green/emerald
-            offset: auroraData.waveOffset4,
-            baseY: height * 0.52,
-            amplitude: 20 + sMid * 15,
-            freq: 0.0016,
-            curtainHeight: flareHeight * 1.15,
-            alpha: flareAlpha * 0.60,
-          },
-        ];
-
-        // Draw layered curtain ribbons with additive blending (lighter)
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-
-        for (let r = 0; r < ribbonConfigs.length; r++) {
-          const cfg = ribbonConfigs[r];
-          const ribH = cfg.curtainHeight;
-          const stepX = currentPerf === 'battery' ? 14 : 8;
-
-          ctx.save();
+          ctx.fillStyle = cGrad;
           ctx.beginPath();
-
-          // Bottom wavy baseline strictly capped below upper 60% (height * 0.58)
-          const baseYPoints: { x: number; y: number }[] = [];
-          for (let x = 0; x <= width + stepX; x += stepX) {
-            const waveY = Math.min(
-              height * 0.58,
-              cfg.baseY +
-                Math.sin(x * cfg.freq + cfg.offset) * cfg.amplitude +
-                Math.sin(x * cfg.freq * 2.2 - cfg.offset * 1.1) * (cfg.amplitude * 0.3)
-            );
-            baseYPoints.push({ x, y: waveY });
-          }
-
-          // Move along bottom wavy baseline
-          ctx.moveTo(baseYPoints[0].x, baseYPoints[0].y);
-          for (let i = 1; i < baseYPoints.length; i++) {
-            ctx.lineTo(baseYPoints[i].x, baseYPoints[i].y);
-          }
-
-          // Top boundary fading upward
-          for (let i = baseYPoints.length - 1; i >= 0; i--) {
-            const foldOffset = Math.sin(baseYPoints[i].x * 0.012 + cfg.offset * 1.6) * 6;
-            ctx.lineTo(baseYPoints[i].x, Math.max(15, baseYPoints[i].y - ribH + foldOffset));
-          }
-          ctx.closePath();
-
-          // Vertical curtain gradient fading softly both upward and toward the bottom
-          const cr = Math.round(cfg.colorRgb.r);
-          const cg = Math.round(cfg.colorRgb.g);
-          const cb = Math.round(cfg.colorRgb.b);
-
-          const rGrad = ctx.createLinearGradient(0, cfg.baseY, 0, cfg.baseY - ribH);
-          // Soft bottom fade out
-          rGrad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0)`);
-          rGrad.addColorStop(0.2, `rgba(${cr}, ${cg}, ${cb}, ${cfg.alpha * 0.65})`);
-          // Radiant mid-band
-          rGrad.addColorStop(0.5, `rgba(${cr}, ${cg}, ${cb}, ${cfg.alpha * 0.85})`);
-          // Soft top feather
-          rGrad.addColorStop(0.85, `rgba(${cr}, ${cg}, ${cb}, ${cfg.alpha * 0.25})`);
-          rGrad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
-
-          ctx.fillStyle = rGrad;
-          ctx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, 0.35)`;
-          ctx.shadowBlur = currentPerf === 'battery' ? 10 : 18;
-          ctx.fill();
-
-          // Soft subtle vertical curtain folds
-          if (currentPerf !== 'battery') {
-            ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${cfg.alpha * 0.18})`;
-            ctx.lineWidth = 1.0;
-            ctx.beginPath();
-            for (let i = 0; i < baseYPoints.length; i += 5) {
-              const pt = baseYPoints[i];
-              ctx.moveTo(pt.x, pt.y - 2);
-              ctx.lineTo(pt.x + (Math.sin(pt.x * 0.007 + cfg.offset) * 8), Math.max(15, pt.y - ribH * 0.85));
-            }
-            ctx.stroke();
-          }
-
-          ctx.restore();
-        }
-
-        ctx.restore(); // restore globalCompositeOperation
-
-        // D. Shimmering tiny particles & shooting sparkles (excited by Treble)
-        const shimmerSpeed = 1.0 + sHigh * 3.5;
-        for (let i = 0; i < auroraData.shimmer.length; i++) {
-          const p = auroraData.shimmer[i];
-          p.y += p.vy * shimmerSpeed;
-          p.x += p.vx * (1.0 + sHigh * 1.5);
-          if (p.y < 30) {
-            p.y = height * 0.55 + Math.random() * 50;
-            p.x = Math.random() * width;
-          }
-          const pAlpha = Math.min(1.0, p.alpha * (0.35 + sHigh * 0.85));
-          ctx.fillStyle = i % 2 === 0 ? colors.mainRgba(pAlpha) : colors.accentRgba(pAlpha);
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Treble makes sparkles shoot & glint across sky
-          if (sHigh > 0.28 && i % 3 === 0) {
-            const spkR = 2.0 + sHigh * 3.5;
-            ctx.fillStyle = `rgba(255, 255, 255, ${pAlpha * 0.95})`;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, spkR, 0, Math.PI * 2);
-            ctx.fill();
-            // Star cross glint
-            ctx.strokeStyle = `rgba(255, 255, 255, ${pAlpha * 0.75})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(p.x - spkR * 2, p.y);
-            ctx.lineTo(p.x + spkR * 2, p.y);
-            ctx.moveTo(p.x, p.y - spkR * 2);
-            ctx.lineTo(p.x, p.y + spkR * 2);
-            ctx.stroke();
-          }
-        }
-
-        // D. Atmospheric soft mountain silhouette at the bottom
-        ctx.fillStyle = '#010307';
-        ctx.beginPath();
-        ctx.moveTo(0, height);
-        ctx.lineTo(0, height * 0.82);
-
-        // Mountain peaks
-        const mPoints = [
-          { x: 0, y: height * 0.82 },
-          { x: width * 0.15, y: height * 0.74 },
-          { x: width * 0.28, y: height * 0.79 },
-          { x: width * 0.45, y: height * 0.68 },
-          { x: width * 0.62, y: height * 0.77 },
-          { x: width * 0.78, y: height * 0.71 },
-          { x: width * 0.92, y: height * 0.78 },
-          { x: width, y: height * 0.80 },
-        ];
-        for (let pt = 1; pt < mPoints.length; pt++) {
-          ctx.lineTo(mPoints[pt].x, mPoints[pt].y);
-        }
-        ctx.lineTo(width, height);
-        ctx.closePath();
-        ctx.fill();
-
-        // Mountain ridge highlight
-        ctx.strokeStyle = colors.mainRgba(0.12 + sBass * 0.2);
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        for (let pt = 0; pt < mPoints.length; pt++) {
-          if (pt === 0) ctx.moveTo(mPoints[pt].x, mPoints[pt].y);
-          else ctx.lineTo(mPoints[pt].x, mPoints[pt].y);
-        }
-        ctx.stroke();
-
-        // Mist above mountain base
-        const mistGrad = ctx.createLinearGradient(0, height * 0.68, 0, height);
-        mistGrad.addColorStop(0, 'transparent');
-        mistGrad.addColorStop(0.7, colors.secondaryRgba(0.08 + sBass * 0.1));
-        mistGrad.addColorStop(1, '#010307');
-        ctx.fillStyle = mistGrad;
-        ctx.fillRect(0, height * 0.68, width, height * 0.32);
-      }
-
-      // =======================================================================
-      // 16. THUNDER STORM ⚡
-      // Heavy dark clouds moving slowly, light rain (lighter than Rainy Night).
-      // Strong beat = realistic branching lightning bolt from clouds + bright flash
-      // that lights clouds & whole screen then fades. Weak beats = faint internal glow.
-      // Bass = lightning strength. Mids = cloud movement. Treble = rain intensity.
-      // Fallback: steel blue, white, purple.
-      // =======================================================================
-      if (resolvedScene === 'thunder_storm') {
-        const storm = thunderStormRef.current;
-
-        // A. Flash effect lighting entire sky & clouds
-        storm.flashAlpha = Math.max(0, storm.flashAlpha - 0.055);
-        storm.internalCloudGlow = Math.max(0, storm.internalCloudGlow - 0.04);
-
-        // Dark overcast sky background
-        const stormSky = ctx.createLinearGradient(0, 0, 0, height);
-        const flashVal = storm.flashAlpha * 0.65;
-        const skyR = Math.min(255, Math.round(10 + flashVal * activeSecondary.r));
-        const skyG = Math.min(255, Math.round(14 + flashVal * activeSecondary.g));
-        const skyB = Math.min(255, Math.round(24 + flashVal * activeSecondary.b));
-
-        stormSky.addColorStop(0, `rgb(${skyR}, ${skyG}, ${skyB})`);
-        stormSky.addColorStop(1, '#030508');
-        ctx.fillStyle = stormSky;
-        ctx.fillRect(0, 0, width, height);
-
-        // Beat Trigger: Spawn Branching Lightning on strong beat
-        const nowMs = performance.now();
-        const isStrongBeat = isBeat && sBass > 0.62 && nowMs - storm.lastStrikeTime > 450;
-        const isWeakBeat = isBeat && sBass <= 0.62;
-
-        if (isStrongBeat) {
-          storm.lastStrikeTime = nowMs;
-          storm.flashAlpha = Math.min(1, 0.45 + sBass * 0.55);
-
-          // Generate branching lightning bolt
-          const startX = width * 0.2 + Math.random() * (width * 0.6);
-          const startY = height * 0.12;
-          const targetGroundY = height * (0.75 + Math.random() * 0.2);
-
-          const segments: LightningSegment[] = [];
-          let curX = startX;
-          let curY = startY;
-          const boltSteps = 16;
-          const stepY = (targetGroundY - startY) / boltSteps;
-
-          for (let step = 0; step < boltSteps; step++) {
-            const nextX = curX + (Math.random() - 0.5) * 44;
-            const nextY = curY + stepY;
-
-            const branches: { x1: number; y1: number; x2: number; y2: number }[] = [];
-            // Chance to sprout secondary branch
-            if (Math.random() < 0.42 && step > 2) {
-              const bAngle = (Math.random() - 0.5) * 1.2 + (nextX > curX ? 0.4 : -0.4);
-              const bLen = Math.random() * 45 + 25;
-              branches.push({
-                x1: curX,
-                y1: curY,
-                x2: curX + Math.sin(bAngle) * bLen,
-                y2: curY + Math.cos(bAngle) * bLen,
-              });
-            }
-
-            segments.push({
-              x1: curX,
-              y1: curY,
-              x2: nextX,
-              y2: nextY,
-              branches,
-            });
-
-            curX = nextX;
-            curY = nextY;
-          }
-          storm.lightning = segments;
-        } else if (isWeakBeat) {
-          storm.internalCloudGlow = Math.min(1, 0.35 + sBass * 0.4);
-        }
-
-        // Fade lightning segments over time
-        if (storm.flashAlpha <= 0.05) {
-          storm.lightning = [];
-        }
-
-        // B. Heavy Dark Storm Clouds (Mids control speed)
-        const cloudSpeed = (0.25 + sMid * 0.8);
-        for (let i = 0; i < storm.clouds.length; i++) {
-          const c = storm.clouds[i];
-          c.x += c.speed * cloudSpeed;
-          if (c.x - c.radius > width) c.x = -c.radius;
-
-          const cloudGrad = ctx.createRadialGradient(c.x, c.y, c.radius * 0.1, c.x, c.y, c.radius);
-          const internalIllum = storm.internalCloudGlow * 0.35 + storm.flashAlpha * 0.45;
-          const cr = Math.min(255, Math.round(25 + internalIllum * activeMain.r));
-          const cg = Math.min(255, Math.round(30 + internalIllum * activeMain.g));
-          const cb = Math.min(255, Math.round(45 + internalIllum * activeMain.b));
-
-          cloudGrad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${c.alpha + internalIllum * 0.3})`);
-          cloudGrad.addColorStop(0.65, `rgba(${Math.round(cr * 0.6)}, ${Math.round(cg * 0.6)}, ${Math.round(cb * 0.6)}, ${c.alpha * 0.8})`);
-          cloudGrad.addColorStop(1, 'transparent');
-
-          ctx.fillStyle = cloudGrad;
-          ctx.beginPath();
-          ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+          ctx.ellipse(clCenter + clW / 2, clY, clW / 2, clH, 0, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // C. Draw Branching Lightning Bolt
-        if (storm.lightning.length > 0 && storm.flashAlpha > 0.02) {
-          ctx.save();
-          const boltAlpha = Math.min(1, storm.flashAlpha * 1.5);
+        // 4. SHOOTING STAR: Ambient streak in upper-left sky (fades and brightens slowly)
+        const ambCycle = (t * 0.22) % 1;
+        if (ambCycle > 0.06 && ambCycle < 0.48) {
+          const ambProg = (ambCycle - 0.06) / 0.42;
+          const ambAlpha = Math.sin(ambProg * Math.PI) * 0.9;
+          const msX1 = width * 0.05 + ambProg * (width * 0.26);
+          const msY1 = height * 0.07 + ambProg * (height * 0.15);
+          const streakLen = 46;
+          const msX2 = msX1 - streakLen * 0.86;
+          const msY2 = msY1 - streakLen * 0.51;
 
-          // Glow pass
-          ctx.strokeStyle = colors.secondaryRgba(boltAlpha * 0.7);
-          ctx.lineWidth = 6 + sBass * 4;
-          ctx.shadowColor = colors.secondary;
-          ctx.shadowBlur = 24;
+          const msGrad = ctx.createLinearGradient(msX2, msY2, msX1, msY1);
+          msGrad.addColorStop(0, 'transparent');
+          msGrad.addColorStop(0.65, colors.accentRgba(ambAlpha * 0.45));
+          msGrad.addColorStop(1, `rgba(255, 255, 255, ${ambAlpha.toFixed(3)})`);
+
+          ctx.strokeStyle = msGrad;
+          ctx.lineWidth = 1.4;
           ctx.beginPath();
-          for (let seg of storm.lightning) {
-            ctx.moveTo(seg.x1, seg.y1);
-            ctx.lineTo(seg.x2, seg.y2);
-            for (let br of seg.branches) {
-              ctx.moveTo(br.x1, br.y1);
-              ctx.lineTo(br.x2, br.y2);
-            }
-          }
+          ctx.moveTo(msX2, msY2);
+          ctx.lineTo(msX1, msY1);
           ctx.stroke();
 
-          // Core hot white pass
-          ctx.strokeStyle = `rgba(255, 255, 255, ${boltAlpha})`;
-          ctx.lineWidth = 2.2;
-          ctx.shadowColor = '#ffffff';
-          ctx.shadowBlur = 8;
-          ctx.beginPath();
-          for (let seg of storm.lightning) {
-            ctx.moveTo(seg.x1, seg.y1);
-            ctx.lineTo(seg.x2, seg.y2);
-            for (let br of seg.branches) {
-              ctx.moveTo(br.x1, br.y1);
-              ctx.lineTo(br.x2, br.y2);
-            }
-          }
-          ctx.stroke();
-          ctx.restore();
-        }
-
-        // D. Light Rain falling (lighter than Rainy Night, Treble controls intensity & slant)
-        const rainSlant = (sMid - 0.5) * 2 - 1.2;
-        const rainSpeedMult = 1.0 + sHigh * 0.8;
-        ctx.strokeStyle = colors.secondaryRgba(0.22 + sHigh * 0.3);
-        ctx.lineWidth = 1.0;
-        ctx.beginPath();
-
-        for (let i = 0; i < storm.rain.length; i++) {
-          const drop = storm.rain[i];
-          drop.y += drop.speed * rainSpeedMult;
-          drop.x += rainSlant;
-
-          if (drop.y > height + 20) {
-            drop.y = -20;
-            drop.x = Math.random() * width;
-          }
-
-          ctx.moveTo(drop.x, drop.y);
-          ctx.lineTo(drop.x + rainSlant * 2, drop.y + drop.length);
-        }
-        ctx.stroke();
-
-        // Dark horizon silhouette
-        ctx.fillStyle = '#020306';
-        ctx.fillRect(0, height * 0.94, width, height * 0.06);
-      }
-
-      // =======================================================================
-      // 17. DRAGON SPIRIT 🐉
-      // A glowing smoky dragon made of flowing particles & soft energy trails,
-      // =======================================================================
-      // 17. DRAGON SPIRIT 🐉
-      // Glowing smoky dragon made of flowing particles and soft energy trails,
-      // moving along a big curving S-shaped / looping path across the whole screen.
-      // Bigger clear head with snout, two horns, glowing eyes, and open mouth breathing fire.
-      // Body thickest near the head, tapering smoothly to tail with dorsal spikes and embers.
-      // Mids = coiling / curve speed. Bass = surges forward & breathes fire embers.
-      // Treble = sparkling scales & small glints along body.
-      // Fallback: gold, deep red, orange.
-      // =======================================================================
-      if (resolvedScene === 'dragon_spirit') {
-        const bgGrad = ctx.createRadialGradient(cx, cy, 10, cx, cy, Math.max(width, height) * 0.7);
-        bgGrad.addColorStop(0, '#0c0704');
-        bgGrad.addColorStop(0.65, '#050201');
-        bgGrad.addColorStop(1, '#000000');
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, width, height);
-
-        const dragon = dragonSpiritRef.current;
-
-        // Beat Detection: surge speed ~2x, head scale +25%, glow brighter, ease back in 300ms
-        if (isBeat) {
-          dragon.beatSurge = 1.0;
-        } else {
-          dragon.beatSurge = Math.max(0, dragon.beatSurge - (0.016 / 0.30));
-        }
-
-        // On every beat: whole dragon surges, speed up about 2x for 300 ms
-        const surgeSpeedMult = 1.0 + 1.0 * dragon.beatSurge;
-        const coilSpeed = (0.007 + sMid * 0.012) * surgeSpeedMult;
-        const surgeSpeed = (sBass * 0.008) * surgeSpeedMult;
-
-        dragon.pathT += (coilSpeed + surgeSpeed);
-        // Slowly shifting phase so dragon slowly changes direction and loops uniquely
-        dragon.phase1 += (0.0016 + sMid * 0.0015) * surgeSpeedMult;
-        dragon.phase2 += 0.0011 * surgeSpeedMult;
-
-        const pT = dragon.pathT;
-        const p1 = dragon.phase1;
-        const p2 = dragon.phase2;
-
-        // Big curving S-shaped or looping path across the WHOLE screen (up, down and sideways)
-        // Path from multi-frequency sine waves with changing phase
-        const normX = Math.sin(pT * 0.82 + p1) * 0.70 + Math.sin(pT * 1.68 + p2 * 1.4) * 0.26;
-        const normY = Math.sin(pT * 1.24 + p2) * 0.68 + Math.cos(pT * 0.62 + p1 * 1.1) * 0.28;
-
-        // "slowly changes direction and sometimes moves toward the center, so it feels alive"
-        // centerCycle smoothly modulates amplitude: periodically swooping right into the center
-        const centerCycle = 0.55 + 0.45 * Math.sin(pT * 0.36 + p1 * 0.7);
-        const spanX = (width * 0.44) * (0.32 + centerCycle * 0.68);
-        const spanY = (height * 0.42) * (0.32 + centerCycle * 0.68);
-
-        const targetX = cx + normX * spanX;
-        const targetY = cy + normY * spanY;
-
-        const moveDx = targetX - dragon.headX;
-        const moveDy = targetY - dragon.headY;
-        const moveDist = Math.hypot(moveDx, moveDy);
-
-        if (moveDist > 0.05) {
-          const desiredAngle = Math.atan2(moveDy, moveDx);
-          const angleDiff = Math.atan2(Math.sin(desiredAngle - dragon.currentAngle), Math.cos(desiredAngle - dragon.currentAngle));
-          dragon.currentAngle += angleDiff * 0.16;
-        }
-
-        dragon.headX = targetX;
-        dragon.headY = targetY;
-
-        // Segments follow the head, so the body bends smoothly
-        if (dragon.joints.length > 0) {
-          dragon.joints[0].x = dragon.headX;
-          dragon.joints[0].y = dragon.headY;
-
-          for (let i = 1; i < dragon.joints.length; i++) {
-            const prev = dragon.joints[i - 1];
-            const curr = dragon.joints[i];
-            const dx = curr.x - prev.x;
-            const dy = curr.y - prev.y;
-            const dist = Math.hypot(dx, dy) || 1;
-            const segmentDist = 13.5;
-
-            curr.x = prev.x + (dx / dist) * segmentDist;
-            curr.y = prev.y + (dy / dist) * segmentDist;
-          }
-        }
-
-        // Spawn soft smoke trails behind the dragon body
-        if (Math.random() < 0.5 || isBeat) {
-          const spawnIndex = Math.floor(Math.random() * (dragon.joints.length - 12)) + 8;
-          const sj = dragon.joints[spawnIndex];
-          if (sj) {
-            dragon.smoke.push({
-              x: sj.x + (Math.random() - 0.5) * 16,
-              y: sj.y + (Math.random() - 0.5) * 16,
-              vx: (Math.random() - 0.5) * 0.8,
-              vy: (Math.random() - 0.5) * 0.8,
-              radius: Math.random() * 14 + sj.radius * 0.85,
-              alpha: 0.35 + sBass * 0.25,
-              color: Math.random() > 0.5 ? colors.secondary : colors.main,
-            });
-          }
-        }
-
-        // Clear burst of fire & glowing embers from OPEN MOUTH on beat or strong bass
-        const isFireBreathing = isBeat || sBass > 0.40 || dragon.beatSurge > 0.45;
-        if (isFireBreathing) {
-          const flameCount = isBeat ? 26 : 16;
-          const mouthX = dragon.headX + Math.cos(dragon.currentAngle) * 52;
-          const mouthY = dragon.headY + Math.sin(dragon.currentAngle) * 52;
-
-          for (let e = 0; e < flameCount; e++) {
-            const spread = (Math.random() - 0.5) * 0.75;
-            const eAngle = dragon.currentAngle + spread;
-            const eSpd = Math.random() * 8.5 + 5.0 + sBass * 6.5;
-            dragon.embers.push({
-              x: mouthX,
-              y: mouthY,
-              vx: Math.cos(eAngle) * eSpd,
-              vy: Math.sin(eAngle) * eSpd,
-              size: Math.random() * 5.8 + 2.5,
-              alpha: 1.0,
-              life: 0,
-              maxLife: Math.random() * 45 + 30,
-              color: Math.random() > 0.35 ? colors.accent : colors.main,
-            });
-          }
-        }
-
-        // Draw Layer 1: Soft smoke trails drifting behind
-        for (let i = dragon.smoke.length - 1; i >= 0; i--) {
-          const smk = dragon.smoke[i];
-          smk.x += smk.vx;
-          smk.y += smk.vy;
-          smk.radius += 0.45;
-          smk.alpha -= 0.008;
-
-          if (smk.alpha <= 0 || smk.radius > 60) {
-            dragon.smoke.splice(i, 1);
-            continue;
-          }
-
-          const sGrad = ctx.createRadialGradient(smk.x, smk.y, 2, smk.x, smk.y, smk.radius);
-          sGrad.addColorStop(0, smk.color === colors.main ? colors.mainRgba(smk.alpha) : colors.secondaryRgba(smk.alpha));
-          sGrad.addColorStop(0.6, smk.color === colors.main ? colors.mainRgba(smk.alpha * 0.4) : colors.secondaryRgba(smk.alpha * 0.4));
-          sGrad.addColorStop(1, 'transparent');
-
-          ctx.fillStyle = sGrad;
-          ctx.beginPath();
-          ctx.arc(smk.x, smk.y, smk.radius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw Layer 2: Deep Volumetric Glowing Body Aura (Bass controls glow; beat makes it much brighter)
-        ctx.save();
-        const bassGlowMult = 0.25 + sBass * 0.85; // Bass controls the body glow directly
-        const glowBoost = bassGlowMult * (1.0 + 0.90 * dragon.beatSurge); // surges much brighter on beat
-        for (let i = dragon.joints.length - 1; i >= 0; i--) {
-          const joint = dragon.joints[i];
-          const ratio = i / dragon.joints.length; // 0 = head, 1 = tail
-          const glowR = joint.radius * (3.0 + sBass * 1.6 + dragon.beatSurge * 1.5);
-          const bodyGlow = ctx.createRadialGradient(joint.x, joint.y, 2, joint.x, joint.y, glowR);
-          bodyGlow.addColorStop(0, colors.secondaryRgba(Math.min(1.0, 0.60 * glowBoost * (1 - ratio * 0.35))));
-          bodyGlow.addColorStop(0.5, colors.mainRgba(Math.min(1.0, 0.38 * glowBoost * (1 - ratio * 0.35))));
-          bodyGlow.addColorStop(1, 'transparent');
-
-          ctx.fillStyle = bodyGlow;
-          ctx.beginPath();
-          ctx.arc(joint.x, joint.y, glowR, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw Layer 3: Solid Fleshed Dragon Body (Thickest near head, tapering smoothly to tail)
-        for (let i = dragon.joints.length - 1; i >= 0; i--) {
-          const joint = dragon.joints[i];
-          const segGrad = ctx.createRadialGradient(
-            joint.x, joint.y - joint.radius * 0.2, 1,
-            joint.x, joint.y, joint.radius
-          );
-          segGrad.addColorStop(0, colors.mainRgba(0.95));
-          segGrad.addColorStop(0.7, colors.secondaryRgba(0.85));
-          segGrad.addColorStop(1, colors.accentRgba(0.55));
-
-          ctx.fillStyle = segGrad;
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 10;
-          ctx.beginPath();
-          ctx.arc(joint.x, joint.y, joint.radius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw Layer 4: Dorsal Spikes along the dragon's back (Treble makes spikes sparkle)
-        const spikeSparkle = sHigh * 2.8;
-        ctx.fillStyle = colors.accentRgba(0.95);
-        ctx.shadowColor = colors.accent;
-        ctx.shadowBlur = 12 + spikeSparkle * 12;
-
-        for (let i = 2; i < dragon.joints.length - 6; i += 2) {
-          const j = dragon.joints[i];
-          const prev = dragon.joints[i - 1];
-          const nx = -(j.y - prev.y);
-          const ny = j.x - prev.x;
-          const nLen = Math.hypot(nx, ny) || 1;
-          const spikeLen = j.radius * (1.15 + Math.sin(i * 0.4 + t * 4) * 0.25);
-
-          const spX = j.x + (nx / nLen) * (j.radius + spikeLen);
-          const spY = j.y + (ny / nLen) * (j.radius + spikeLen);
-          const b1X = j.x - (prev.x - j.x) * 0.4;
-          const b1Y = j.y - (prev.y - j.y) * 0.4;
-          const b2X = j.x + (prev.x - j.x) * 0.4;
-          const b2Y = j.y + (prev.y - j.y) * 0.4;
-
-          ctx.beginPath();
-          ctx.moveTo(b1X, b1Y);
-          ctx.lineTo(spX, spY);
-          ctx.lineTo(b2X, b2Y);
-          ctx.closePath();
-          ctx.fill();
-
-          // Treble makes spike tips sparkle
-          if (sHigh > 0.25 && i % 4 === 0) {
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(spX, spY, 1.5 + sHigh * 2.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = colors.accentRgba(0.95);
-          }
-        }
-
-        // Draw Layer 5: Layered Inner Spine Core Line
-        ctx.beginPath();
-        for (let i = 0; i < dragon.joints.length; i++) {
-          const j = dragon.joints[i];
-          if (i === 0) ctx.moveTo(j.x, j.y);
-          else ctx.lineTo(j.x, j.y);
-        }
-        ctx.strokeStyle = `rgba(255, 255, 255, ${0.75 + sBass * 0.25})`;
-        ctx.lineWidth = 3.5;
-        ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur = 8;
-        ctx.stroke();
-
-        // Draw Layer 6: Treble Sparkling Scales along the body
-        const glintBoost = sHigh * 4.2;
-        ctx.fillStyle = colors.mainRgba(0.95);
-        for (let i = 2; i < dragon.joints.length - 4; i += 3) {
-          const j = dragon.joints[i];
-          const prev = dragon.joints[i - 1];
-          const nx = -(j.y - prev.y);
-          const ny = j.x - prev.x;
-          const nLen = Math.hypot(nx, ny) || 1;
-          const scaleOff = j.radius * 0.55;
-
-          const sx = j.x - (nx / nLen) * scaleOff;
-          const sy = j.y - (ny / nLen) * scaleOff;
-          const sz = 1.8 + Math.sin(t * 8 + i) * 1.2 + glintBoost;
-
-          ctx.beginPath();
-          ctx.arc(sx, sy, Math.max(1, sz), 0, Math.PI * 2);
-          ctx.fill();
-
-          // Sparkling glints on treble
-          if (sHigh > 0.28 && i % 5 === 2) {
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(sx, sy, Math.max(1, sz * 0.65), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = colors.mainRgba(0.95);
-          }
-        }
-
-        // Draw Layer 7: Wispy Tail Tuft at the tip
-        if (dragon.joints.length > 0) {
-          const tailJoint = dragon.joints[dragon.joints.length - 1];
-          const prevTail = dragon.joints[dragon.joints.length - 2] || tailJoint;
-          const tdx = tailJoint.x - prevTail.x;
-          const tdy = tailJoint.y - prevTail.y;
-          const tailAngle = Math.atan2(tdy, tdx);
-
-          ctx.save();
-          ctx.translate(tailJoint.x, tailJoint.y);
-          ctx.rotate(tailAngle);
-
-          ctx.fillStyle = colors.accentRgba(0.85);
-          ctx.shadowColor = colors.accent;
-          ctx.shadowBlur = 14;
-          for (let f = -1; f <= 1; f += 2) {
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(16, f * 12 + Math.sin(t * 10) * 4, 30, f * 6);
-            ctx.quadraticCurveTo(14, 0, 0, 0);
-            ctx.fill();
-          }
-          ctx.restore();
-        }
-
-        // Draw Layer 8: Bigger, Clearer Dragon Head with Snout, 2 Horns, Glowing Eyes, and OPEN MOUTH
-        // Head scales up about 25% on every beat
-        const headScale = 1.0 + 0.25 * dragon.beatSurge;
-        ctx.save();
-        ctx.translate(dragon.headX, dragon.headY);
-        ctx.rotate(dragon.currentAngle);
-        ctx.scale(headScale, headScale);
-
-        // Head Scale & Glow (Prominent, large sculpted skull)
-        const headGrad = ctx.createRadialGradient(14, 0, 4, 14, 0, 40);
-        headGrad.addColorStop(0, colors.main);
-        headGrad.addColorStop(0.65, colors.secondary);
-        headGrad.addColorStop(1, colors.accent);
-
-        ctx.fillStyle = headGrad;
-        ctx.shadowColor = colors.main;
-        ctx.shadowBlur = 32;
-
-        // Upper Jaw & Distinct Dragon Snout Contour
-        ctx.beginPath();
-        ctx.moveTo(-18, -24);
-        ctx.quadraticCurveTo(16, -30, 46, -14); // Snout bridge
-        ctx.quadraticCurveTo(62, -4, 48, 0);    // Snout tip / upper lip
-        ctx.quadraticCurveTo(26, -3, 10, -8);   // Roof of open mouth
-        ctx.lineTo(10, -16);
-        ctx.quadraticCurveTo(-18, -18, -18, -24);
-        ctx.closePath();
-        ctx.fill();
-
-        // Lower Jaw (Distinct, clear open mouth aperture)
-        ctx.beginPath();
-        ctx.moveTo(8, 8);
-        ctx.quadraticCurveTo(24, 7, 46, 14);   // Lower lip tip
-        ctx.quadraticCurveTo(22, 30, -16, 24);  // Chin & throat
-        ctx.lineTo(-18, 0);
-        ctx.quadraticCurveTo(0, 5, 8, 8);
-        ctx.closePath();
-        ctx.fill();
-
-        // Open Mouth Internal Fire Glow cavity
-        const mouthGlow = ctx.createRadialGradient(24, 3, 2, 24, 3, 24);
-        mouthGlow.addColorStop(0, colors.accentRgba(0.95));
-        mouthGlow.addColorStop(0.55, colors.mainRgba(0.75));
-        mouthGlow.addColorStop(1, 'transparent');
-        ctx.fillStyle = mouthGlow;
-        ctx.beginPath();
-        const fireJawSpread = isFireBreathing ? 10 + sBass * 6 + dragon.beatSurge * 4 : 6;
-        ctx.ellipse(24, 3, 18, fireJawSpread, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Blazing Fire Core inside mouth on bass hits or beat
-        if (isFireBreathing) {
+          // Glowing head
           ctx.fillStyle = '#ffffff';
-          ctx.shadowColor = colors.accent;
-          ctx.shadowBlur = 24;
+          if (blurMult > 0) {
+            ctx.shadowColor = colors.accent;
+            ctx.shadowBlur = 8 * blurMult;
+          }
           ctx.beginPath();
-          ctx.arc(28, 3, 6 + sBass * 10 + dragon.beatSurge * 8, 0, Math.PI * 2);
+          ctx.arc(msX1, msY1, 1.5, 0, Math.PI * 2);
           ctx.fill();
+          ctx.shadowBlur = 0;
         }
 
-        // Sharp fangs in the open mouth
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur = 6;
-        ctx.beginPath();
-        // Upper fangs
-        ctx.moveTo(26, -6);
-        ctx.lineTo(30, 0);
-        ctx.lineTo(32, -6);
-        ctx.moveTo(38, -4);
-        ctx.lineTo(41, 1);
-        ctx.lineTo(43, -4);
-        // Lower fangs
-        ctx.moveTo(28, 8);
-        ctx.lineTo(31, 2);
-        ctx.lineTo(33, 8);
-        ctx.moveTo(38, 9);
-        ctx.lineTo(41, 3);
-        ctx.lineTo(43, 9);
-        ctx.fill();
+        // Beat Meteor: On strong beats, trigger short extra meteor crossing quickly (at most one every 4s)
+        const nowMs = performance.now();
+        if (isBeat && sBass > 0.58 && nowMs - jtNight.lastBeatMeteorTime > 4000) {
+          jtNight.lastBeatMeteorTime = nowMs;
+          const startX = width * (0.05 + Math.random() * 0.35);
+          const startY = height * (0.04 + Math.random() * 0.16);
+          const angle = 0.56;
+          const travel = width * 0.46;
+          jtNight.beatMeteor = {
+            active: true,
+            startX,
+            startY,
+            curX: startX,
+            curY: startY,
+            endX: startX + Math.cos(angle) * travel,
+            endY: startY + Math.sin(angle) * travel,
+            len: 80,
+            speed: 1200,
+            progress: 0,
+            alpha: 1.0,
+          };
+        }
 
-        // Nostril glow on top of snout
-        ctx.fillStyle = colors.accentRgba(0.95);
-        ctx.beginPath();
-        ctx.arc(40, -9, 3.2, 0, Math.PI * 2);
-        ctx.fill();
+        if (jtNight.beatMeteor && jtNight.beatMeteor.active) {
+          const bm = jtNight.beatMeteor;
+          bm.progress += 0.042;
+          if (bm.progress >= 1.0) {
+            bm.active = false;
+          } else {
+            const headX = bm.startX + (bm.endX - bm.startX) * bm.progress;
+            const headY = bm.startY + (bm.endY - bm.startY) * bm.progress;
+            const tailX = headX - Math.cos(0.56) * bm.len;
+            const tailY = headY - Math.sin(0.56) * bm.len;
+            const bAlpha = (1 - bm.progress) * 0.95;
 
-        // Two Antler-like Magnificent Horns
-        ctx.strokeStyle = colors.accent;
-        ctx.lineWidth = 4.2;
-        ctx.shadowColor = colors.accent;
-        ctx.shadowBlur = 18;
+            const bGrad = ctx.createLinearGradient(tailX, tailY, headX, headY);
+            bGrad.addColorStop(0, 'transparent');
+            bGrad.addColorStop(0.65, colors.mainRgba(bAlpha * 0.5));
+            bGrad.addColorStop(1, '#ffffff');
 
-        // Top Horn with fork prongs
+            ctx.strokeStyle = bGrad;
+            ctx.lineWidth = 2.2;
+            ctx.beginPath();
+            ctx.moveTo(tailX, tailY);
+            ctx.lineTo(headX, headY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            if (blurMult > 0) {
+              ctx.shadowColor = colors.main;
+              ctx.shadowBlur = 14 * blurMult;
+            }
+            ctx.beginPath();
+            ctx.arc(headX, headY, 2.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+        }
+
+        // 5. CITY SKYLINE SILHOUETTE: at bottom with tiny windows twinkling in blue and warm white
+        const bList = jtNight.buildings;
+        ctx.fillStyle = '#04030d';
+        for (let b = 0; b < bList.length; b++) {
+          const bd = bList[b];
+          const bx = bd.x * width;
+          const bw = bd.w * width + 2;
+          const bh = bd.h * height;
+          const by = height - bh;
+          ctx.fillRect(bx, by, bw, bh);
+
+          for (let w = 0; w < bd.windows.length; w++) {
+            const win = bd.windows[w];
+            const wx = bx + win.col * bw;
+            const wy = by + win.row * bh;
+            const winTwinkle = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 2.2 + win.twinkleOffset));
+            ctx.fillStyle = win.color;
+            ctx.globalAlpha = winTwinkle;
+            ctx.fillRect(wx, wy, 2, 3);
+          }
+          ctx.fillStyle = '#04030d';
+          ctx.globalAlpha = 1.0;
+        }
+
+        // Power pole and wires on left side
+        const poleX = width * 0.08;
+        const poleTopY = height * 0.68;
+        const poleBottomY = height;
+        ctx.strokeStyle = '#060512';
+        ctx.lineWidth = 3.5;
         ctx.beginPath();
-        ctx.moveTo(-10, -16);
-        ctx.quadraticCurveTo(-30, -42, -58, -38);
-        ctx.moveTo(-28, -30);
-        ctx.lineTo(-42, -52);
-        ctx.moveTo(-44, -36);
-        ctx.lineTo(-54, -48);
+        ctx.moveTo(poleX, poleBottomY);
+        ctx.lineTo(poleX, poleTopY);
         ctx.stroke();
 
-        // Bottom Horn with fork prongs
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.moveTo(-10, 16);
-        ctx.quadraticCurveTo(-30, 42, -58, 38);
-        ctx.moveTo(-28, 30);
-        ctx.lineTo(-42, 52);
-        ctx.moveTo(-44, 36);
-        ctx.lineTo(-54, 48);
+        ctx.moveTo(poleX - 16, poleTopY + 10);
+        ctx.lineTo(poleX + 16, poleTopY + 10);
+        ctx.moveTo(poleX - 12, poleTopY + 28);
+        ctx.lineTo(poleX + 12, poleTopY + 28);
         ctx.stroke();
 
-        // Flowing Dragon Whiskers waving through air
-        ctx.strokeStyle = colors.mainRgba(0.9);
-        ctx.lineWidth = 2.4;
-        const whiskerWave = Math.sin(t * 14) * 9;
+        ctx.fillStyle = '#1e1b4b';
+        ctx.fillRect(poleX - 17, poleTopY + 7, 3, 4);
+        ctx.fillRect(poleX + 14, poleTopY + 7, 3, 4);
+        ctx.fillRect(poleX - 13, poleTopY + 25, 3, 4);
+        ctx.fillRect(poleX + 10, poleTopY + 25, 3, 4);
+
+        ctx.strokeStyle = 'rgba(12, 10, 30, 0.75)';
+        ctx.lineWidth = 1;
+        const wireSag = Math.sin(t * 1.5) * 1.2;
         ctx.beginPath();
-        ctx.moveTo(26, -10);
-        ctx.quadraticCurveTo(52, -26 + whiskerWave, 78, -14 + whiskerWave * 1.5);
-        ctx.moveTo(26, 10);
-        ctx.quadraticCurveTo(52, 26 - whiskerWave, 78, 14 - whiskerWave * 1.5);
+        ctx.moveTo(0, poleTopY + 4);
+        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 12 + wireSag, poleX - 16, poleTopY + 10);
+        ctx.quadraticCurveTo(width * 0.22, poleTopY + 36 + wireSag, width * 0.42, poleTopY + 72);
         ctx.stroke();
 
-        // Two Piercing Glowing Eyes (Large, expressive)
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur = 20;
         ctx.beginPath();
-        ctx.arc(16, -14, 5.0, 0, Math.PI * 2);
-        ctx.arc(16, 14, 5.0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(0, poleTopY + 14);
+        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 22 + wireSag, poleX + 16, poleTopY + 10);
+        ctx.quadraticCurveTo(width * 0.26, poleTopY + 42 + wireSag, width * 0.48, poleTopY + 80);
+        ctx.stroke();
 
-        // Slit pupils in gold/main color
-        ctx.fillStyle = colors.main;
         ctx.beginPath();
-        ctx.ellipse(16.5, -14, 1.8, 4.0, 0, 0, Math.PI * 2);
-        ctx.ellipse(16.5, 14, 1.8, 4.0, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(0, poleTopY + 30);
+        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 38 + wireSag, poleX + 12, poleTopY + 28);
+        ctx.quadraticCurveTo(width * 0.28, poleTopY + 54 + wireSag, width * 0.52, poleTopY + 92);
+        ctx.stroke();
 
-        ctx.restore();
+        // 6. BUBBLES: 70-90 hollow glowing rings drifting upward with gentle sideways sway
+        // Treble makes them brighter and drift slightly faster
+        const jtBubbles = jtNight.bubbles;
+        for (let i = 0; i < jtBubbles.length; i++) {
+          const b = jtBubbles[i];
+          b.y -= b.speed * (1 + sHigh * 1.5);
+          if (b.y < -20) {
+            b.y = height + 20;
+            b.x = Math.random() * width;
+          }
+          const sway = Math.sin(t * b.swaySpeed + b.swayPhase) * b.swayAmp;
+          const bx = b.x + sway;
+          const bAlpha = Math.min(1.0, b.baseAlpha * (0.75 + sHigh * 0.6));
 
-        // Draw Layer 9: Embers & Fire Breath Particles
-        for (let i = dragon.embers.length - 1; i >= 0; i--) {
-          const emb = dragon.embers[i];
-          emb.x += emb.vx;
-          emb.y += emb.vy;
-          emb.life += 1;
-          emb.alpha -= 0.018;
+          ctx.strokeStyle = colors.accentRgba(bAlpha);
+          ctx.lineWidth = b.strokeWidth;
+          if (blurMult > 0 && b.radius > 6) {
+            ctx.shadowColor = colors.main;
+            ctx.shadowBlur = 6 * blurMult;
+          }
+          ctx.beginPath();
+          ctx.arc(bx, b.y, b.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
 
-          if (emb.alpha <= 0 || emb.life >= emb.maxLife) {
-            dragon.embers.splice(i, 1);
+        // On the beat, spawn 3 to 6 new rings near the center badge that grow outward and fade
+        if (isBeat) {
+          const spawnNum = Math.floor(Math.random() * 4 + 3);
+          for (let sr = 0; sr < spawnNum; sr++) {
+            jtNight.spawnRings.push({
+              x: cx,
+              y: height * 0.40,
+              radius: width * 0.19 * (0.8 + Math.random() * 0.3),
+              maxRadius: width * 0.19 * (1.4 + Math.random() * 0.8),
+              alpha: 0.85,
+              growthSpeed: 1.4 + Math.random() * 1.6,
+            });
+          }
+        }
+
+        for (let sr = jtNight.spawnRings.length - 1; sr >= 0; sr--) {
+          const ring = jtNight.spawnRings[sr];
+          ring.radius += ring.growthSpeed;
+          const prog = ring.radius / ring.maxRadius;
+          ring.alpha = Math.max(0, (1 - prog) * 0.85);
+          if (ring.radius >= ring.maxRadius || ring.alpha <= 0.01) {
+            jtNight.spawnRings.splice(sr, 1);
             continue;
           }
-
-          ctx.fillStyle = emb.color;
-          ctx.shadowColor = emb.color;
-          ctx.shadowBlur = 10;
-          ctx.globalAlpha = Math.max(0, emb.alpha);
+          ctx.strokeStyle = colors.accentRgba(ring.alpha);
+          ctx.lineWidth = 1.4;
+          if (blurMult > 0) {
+            ctx.shadowColor = colors.main;
+            ctx.shadowBlur = 8 * blurMult;
+          }
           ctx.beginPath();
-          ctx.arc(emb.x, emb.y, emb.size, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
         }
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
-        ctx.restore();
-      }
 
-      // =======================================================================
-      // 18. HYPERSPACE WARP 🚀
-      // Stars in center stretch outward into long light streaks (flying at high
-      // speed through space), soft glow tunnel in center.
-      // Bass = speed & streak stretch. Beat = bright flash + fast speed boost that eases down.
-      // Mids = slight swirl / rotation. Treble = bright sparkles.
-      // Fallback: electric blue, white, magenta.
-      // =======================================================================
-      if (resolvedScene === 'hyperspace_warp') {
-        // Deep space background
-        ctx.fillStyle = '#010206';
-        ctx.fillRect(0, 0, width, height);
+        // 7. BADGE & REACTIVE RING:
+        // Centered horizontally at roughly 40% height, diameter ~38% width
+        const badgeY = height * 0.40;
+        const badgeRadius = Math.max(50, Math.min(width * 0.19, height * 0.22));
+        const badgeScale = 1.0 + 0.06 * sBass;
 
-        const warp = hyperspaceWarpRef.current;
-
-        // Beat Detection: 2.5x streak stretch, center glow expansion, bright center flash
+        // Reactive Ring: 96 points soundwave outline
         if (isBeat) {
-          warp.beatPulse = 1.0;
-          warp.flashAlpha = 1.0;
-        } else {
-          // Settle back quickly (~260-280 ms)
-          warp.beatPulse = Math.max(0, warp.beatPulse - (0.016 / 0.28));
-          warp.flashAlpha = Math.max(0, warp.flashAlpha - (0.016 / 0.20));
+          const spikeCount = Math.floor(Math.random() * 14 + 10);
+          for (let k = 0; k < spikeCount; k++) {
+            const idx = Math.floor(Math.random() * 96);
+            jtNight.spikes[idx] = Math.random() * 26 + 14;
+          }
         }
-
-        // Bass controls the speed (+ beat surge)
-        const baseSpeed = 8 + sBass * 28 + (warp.beatPulse * 16);
-        // Mids add swirl rotation
-        warp.rotationAngle += 0.003 + sMid * 0.012;
+        for (let k = 0; k < 96; k++) {
+          jtNight.spikes[k] *= 0.85;
+        }
+        jtNight.ringRotation += 0.003 + sMid * 0.005;
 
         ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(warp.rotationAngle);
+        ctx.translate(cx, badgeY);
+        ctx.scale(badgeScale, badgeScale);
 
-        // Center Glow Tunnel (expands on beat, settles back quickly)
-        const glowExpand = 1.0 + 0.85 * warp.beatPulse;
-        const tunnelRadius = (45 + sBass * 55) * glowExpand;
-        const tunnelGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, tunnelRadius);
-        tunnelGrad.addColorStop(0, colors.secondaryRgba(Math.min(1.0, (0.55 + sBass * 0.4) * (1.0 + 0.45 * warp.beatPulse))));
-        tunnelGrad.addColorStop(0.4, colors.mainRgba(Math.min(1.0, (0.35 + sBass * 0.3) * (1.0 + 0.35 * warp.beatPulse))));
-        tunnelGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = tunnelGrad;
+        // Thin smooth inner circle stays steady inside reactive ring
+        ctx.strokeStyle = 'rgba(199, 210, 254, 0.45)';
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(0, 0, tunnelRadius, 0, Math.PI * 2);
+        ctx.arc(0, 0, badgeRadius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Reactive soundwave ring (96 points driven by frequency bins)
+        ctx.beginPath();
+        const ringBright = Math.min(1.0, 0.65 + sBass * 0.45);
+        ctx.strokeStyle = colors.accentRgba(ringBright);
+        ctx.lineWidth = 1.8;
+        if (blurMult > 0) {
+          ctx.shadowColor = colors.main;
+          ctx.shadowBlur = (10 + sBass * 8) * blurMult;
+        }
+        for (let p = 0; p < 96; p++) {
+          const angle = (p / 96) * Math.PI * 2 + jtNight.ringRotation;
+          const binIdx = Math.min(freq ? freq.length - 1 : 0, Math.floor(Math.pow(p / 96, 1.3) * (freq?.length || 128)));
+          const freqVal = freq && freq[binIdx] ? freq[binIdx] / 255 : 0;
+          const waveDist = badgeRadius + 8 + freqVal * 18 * reactionMult + jtNight.spikes[p];
+          const px = Math.cos(angle) * waveDist;
+          const py = Math.sin(angle) * waveDist;
+          if (p === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Black circular badge fill
+        ctx.fillStyle = '#05030e';
+        ctx.beginPath();
+        ctx.arc(0, 0, badgeRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw Stretched Star Streaks (stretches ~2.5x on beat)
-        const beatStretchMult = 1.0 + 1.5 * warp.beatPulse;
-        const baseStretch = 1.4 + sBass * 2.2;
-        const streakStretch = baseStretch * beatStretchMult;
-
-        for (let i = 0; i < warp.stars.length; i++) {
-          const st = warp.stars[i];
-          st.prevZ = st.z;
-          st.z -= baseSpeed;
-
-          // Recycle star when passed viewer
-          if (st.z <= 0) {
-            st.z = 1000;
-            st.prevZ = 1000;
-            st.x = (Math.random() - 0.5) * width * 2;
-            st.y = (Math.random() - 0.5) * height * 2;
-          }
-
-          const k = 320 / st.z;
-          const px = st.x * k;
-          const py = st.y * k;
-
-          const prevK = 320 / Math.min(1000, st.z + baseSpeed * streakStretch);
-          const pPrevX = st.x * prevK;
-          const pPrevY = st.y * prevK;
-
-          // Out-of-bounds recycling
-          if (Math.abs(px) > width * 1.2 || Math.abs(py) > height * 1.2) {
-            st.z = 1000;
-            st.prevZ = 1000;
-            continue;
-          }
-
-          // Depth-based brightness
-          const starAlpha = Math.min(1, Math.max(0.1, (1 - st.z / 1000) * 1.2));
-          const starWidth = Math.max(1, (1 - st.z / 1000) * 3.5 * (1 + warp.beatPulse * 0.4));
-
-          ctx.lineWidth = starWidth;
-          if (st.colorType === 'main') {
-            ctx.strokeStyle = colors.mainRgba(starAlpha);
-          } else if (st.colorType === 'sec') {
-            ctx.strokeStyle = colors.accentRgba(starAlpha);
-          } else {
-            ctx.strokeStyle = `rgba(255, 255, 255, ${starAlpha})`;
-          }
-
-          ctx.beginPath();
-          ctx.moveTo(pPrevX, pPrevY);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-
-          // Treble adds brilliant sparkles at streak heads
-          if (sHigh > 0.20 && (i % 2 === 0 || sHigh > 0.45)) {
-            const sparkleR = (1 - st.z / 1000) * (3.0 + sHigh * 5.0);
-            const sparkleAlpha = Math.min(1.0, starAlpha * (0.8 + sHigh * 0.5));
-            ctx.fillStyle = `rgba(255, 255, 255, ${sparkleAlpha})`;
-            ctx.beginPath();
-            ctx.arc(px, py, sparkleR, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Diamond twinkle spike on bright treble hits
-            if (sHigh > 0.35 && i % 3 === 0) {
-              ctx.strokeStyle = `rgba(255, 255, 255, ${sparkleAlpha * 0.75})`;
-              ctx.lineWidth = 1;
-              ctx.beginPath();
-              ctx.moveTo(px - sparkleR * 2.2, py);
-              ctx.lineTo(px + sparkleR * 2.2, py);
-              ctx.moveTo(px, py - sparkleR * 2.2);
-              ctx.lineTo(px, py + sparkleR * 2.2);
-              ctx.stroke();
-            }
-          }
+        // Glowing white-periwinkle ring around badge edge
+        ctx.strokeStyle = '#e0e7ff';
+        ctx.lineWidth = 2.5;
+        if (blurMult > 0) {
+          ctx.shadowColor = colors.main;
+          ctx.shadowBlur = 14 * blurMult;
         }
+        ctx.beginPath();
+        ctx.arc(0, 0, badgeRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
 
-        // Short bright radiant flash at the center on beat
-        if (warp.flashAlpha > 0.02) {
-          const flashRadius = (35 + sBass * 35) * (1.0 + 0.5 * warp.beatPulse);
-          const flashGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, flashRadius);
-          flashGrad.addColorStop(0, `rgba(255, 255, 255, ${warp.flashAlpha * 0.95})`);
-          flashGrad.addColorStop(0.35, colors.mainRgba(warp.flashAlpha * 0.85));
-          flashGrad.addColorStop(0.7, colors.accentRgba(warp.flashAlpha * 0.4));
-          flashGrad.addColorStop(1, 'transparent');
+        // Small crown at the top of the ring
+        const crownW = badgeRadius * 0.42;
+        const crownH = badgeRadius * 0.22;
+        const crownTopY = -badgeRadius - crownH * 0.85;
+        const crownBaseY = -badgeRadius - 1;
 
-          ctx.fillStyle = flashGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, flashRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Intense core white flash
-          ctx.fillStyle = `rgba(255, 255, 255, ${warp.flashAlpha})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, 14 + sBass * 10, 0, Math.PI * 2);
-          ctx.fill();
+        ctx.save();
+        const crownGrad = ctx.createLinearGradient(0, crownTopY, 0, crownBaseY);
+        crownGrad.addColorStop(0, '#ffffff');
+        crownGrad.addColorStop(0.5, '#e0e7ff');
+        crownGrad.addColorStop(1, colors.main);
+        ctx.fillStyle = crownGrad;
+        if (blurMult > 0) {
+          ctx.shadowColor = colors.accent;
+          ctx.shadowBlur = 8 * blurMult;
         }
+        ctx.beginPath();
+        ctx.moveTo(-crownW / 2, crownBaseY);
+        ctx.lineTo(-crownW / 2, crownTopY + crownH * 0.35);
+        ctx.lineTo(-crownW * 0.22, crownTopY + crownH * 0.7);
+        ctx.lineTo(0, crownTopY);
+        ctx.lineTo(crownW * 0.22, crownTopY + crownH * 0.7);
+        ctx.lineTo(crownW / 2, crownTopY + crownH * 0.35);
+        ctx.lineTo(crownW / 2, crownBaseY);
+        ctx.closePath();
+        ctx.fill();
 
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-crownW / 2, crownTopY + crownH * 0.35, 1.6, 0, Math.PI * 2);
+        ctx.arc(0, crownTopY, 2.0, 0, Math.PI * 2);
+        ctx.arc(crownW / 2, crownTopY + crownH * 0.35, 1.6, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
-      }
 
-      // =======================================================================
-      // 18. NIGHT WALK 🚶
-      // Cinematic 16:9 wide band across middle of screen with soft edge fading,
-      // dark surrounding background, reactive soft glow in cover color,
-      // slow floating dust particles, light mist, beat pulse (brightness +25%,
-      // scale +3%, glow flash), bass glow strength, treble sparkles,
-      // idle animation when paused, cover tint overlay.
-      // =======================================================================
-      if (resolvedScene === 'night_walk') {
-        const nw = nightWalkRef.current;
-        const rxMult = reactionMult;
+        // In the center, letters "JT" in a bold, italic, modern display font with metallic gradient and glow
+        const shimmerCycle = (t * 0.3) % 1;
+        const shimmerBandX = -badgeRadius * 1.8 + shimmerCycle * (badgeRadius * 3.6);
 
-        // Dynamic beat detection for Night Walk
-        if (isBeat) {
-          nw.beatPulse = 1.0;
-        } else {
-          nw.beatPulse = Math.max(0, nw.beatPulse - 0.055); // ease back within ~300ms
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, badgeRadius - 2, 0, Math.PI * 2);
+        ctx.clip();
+
+        const jtFontSize = Math.round(badgeRadius * 0.76);
+        ctx.font = `italic 900 ${jtFontSize}px "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const jtGrad = ctx.createLinearGradient(0, -badgeRadius * 0.38, 0, badgeRadius * 0.2);
+        jtGrad.addColorStop(0, '#ffffff');
+        jtGrad.addColorStop(0.55, '#e0e7ff');
+        jtGrad.addColorStop(1, colors.accent);
+
+        if (blurMult > 0) {
+          ctx.shadowColor = colors.main;
+          ctx.shadowBlur = 10 * blurMult;
         }
+        ctx.fillStyle = jtGrad;
+        ctx.fillText('JT', 0, -badgeRadius * 0.06);
+        ctx.shadowBlur = 0;
 
-        // Apply music reaction to video DOM element
-        const beatScale = 1.0 + (0.03 * nw.beatPulse * rxMult);
-        const beatBrightness = 1.0 + (0.25 * nw.beatPulse * rxMult);
-        
-        if (videoRef.current) {
-          videoRef.current.style.transform = `scale(${beatScale.toFixed(4)})`;
-          videoRef.current.style.filter = `brightness(${beatBrightness.toFixed(3)}) contrast(1.06)`;
+        // Underneath "JT", a small "JTEC" label
+        const jtecFontSize = Math.round(badgeRadius * 0.17);
+        ctx.font = `800 ${jtecFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.fillStyle = colors.accentRgba(0.85);
+        ctx.fillText('JTEC', 0, badgeRadius * 0.42);
+
+        // Light shimmer sweeps diagonally across letters every few seconds
+        ctx.save();
+        ctx.translate(shimmerBandX, 0);
+        ctx.rotate(-0.4);
+        const shimGrad = ctx.createLinearGradient(-25, 0, 25, 0);
+        shimGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        shimGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.42)');
+        shimGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = shimGrad;
+        ctx.fillRect(-25, -badgeRadius * 1.5, 50, badgeRadius * 3);
+        ctx.restore();
+
+        ctx.restore(); // end clip
+
+        // 8. TIMER: Under the badge, elapsed time of the song (m:ss) in small italic serif font, white with soft glow
+        const curSeconds = currentTimeRef.current || 0;
+        const timerM = Math.floor(curSeconds / 60);
+        const timerS = Math.floor(curSeconds % 60);
+        const timerText = `${timerM}:${timerS.toString().padStart(2, '0')}`;
+
+        const timerFontSize = Math.max(13, Math.round(width * 0.038));
+        ctx.font = `italic 500 ${timerFontSize}px "Georgia", "Times New Roman", serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+
+        if (blurMult > 0) {
+          ctx.shadowColor = colors.accent;
+          ctx.shadowBlur = 8 * blurMult;
         }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(timerText, 0, badgeRadius + 26);
+        ctx.shadowBlur = 0;
 
-        // Bass controls behind glow strength + beat flash behind video
-        const bassGlow = sBass * 0.55 * rxMult;
-        const beatGlow = nw.beatPulse * 0.40 * rxMult;
-        const idleGlow = !isActiveRef.current ? (0.18 + Math.sin(t * 1.5) * 0.04) : 0.22;
-        const totalGlow = Math.min(1.0, idleGlow + bassGlow + beatGlow);
-
-        if (nightWalkGlowRef.current) {
-          nightWalkGlowRef.current.style.background = `radial-gradient(ellipse 90% 70% at 50% 50%, rgba(${mr}, ${mg}, ${mb}, ${(totalGlow * 0.75).toFixed(3)}) 0%, rgba(${sr}, ${sg}, ${sb}, ${(totalGlow * 0.35).toFixed(3)}) 45%, transparent 75%)`;
-        }
-
-        if (nightWalkTintRef.current) {
-          nightWalkTintRef.current.style.backgroundColor = `rgb(${mr}, ${mg}, ${mb})`;
-        }
-
-        // Canvas Elements: Dark background on top/bottom edges + Mist + Floating Dust Particles + Treble Sparkles
-        const bgGrad = ctx.createRadialGradient(width / 2, height / 2, height * 0.25, width / 2, height / 2, Math.max(width, height) * 0.75);
-        bgGrad.addColorStop(0, 'rgba(3, 5, 10, 0.0)');
-        bgGrad.addColorStop(0.55, 'rgba(3, 5, 10, 0.65)');
-        bgGrad.addColorStop(1, 'rgba(2, 4, 8, 0.95)');
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, width, height);
-
-        // Soft glow in cover color drawn on canvas around video
-        const canvasGlow = ctx.createRadialGradient(width / 2, height / 2, 20, width / 2, height / 2, Math.min(width, height) * 0.65);
-        canvasGlow.addColorStop(0, colors.mainRgba(totalGlow * 0.30));
-        canvasGlow.addColorStop(0.5, colors.secondaryRgba(totalGlow * 0.12));
-        canvasGlow.addColorStop(1, 'transparent');
-        ctx.fillStyle = canvasGlow;
-        ctx.fillRect(0, 0, width, height);
-
-        // 1. Slow floating dust particles & light mist initialization
-        if (nw.particles.length === 0) {
-          for (let i = 0; i < 48; i++) {
-            nw.particles.push({
-              x: Math.random() * width,
-              y: Math.random() * height,
-              size: Math.random() * 2.2 + 0.8,
-              vx: (Math.random() - 0.5) * 0.25,
-              vy: -Math.random() * 0.45 - 0.15,
-              alpha: Math.random() * 0.45 + 0.2,
-              phase: Math.random() * Math.PI * 2,
-              type: 'dust',
-            });
-          }
-          // Light mist puffs
-          for (let i = 0; i < 10; i++) {
-            nw.particles.push({
-              x: Math.random() * width,
-              y: height * 0.25 + Math.random() * (height * 0.5),
-              size: Math.random() * 80 + 60,
-              vx: Math.random() * 0.35 + 0.15,
-              vy: (Math.random() - 0.5) * 0.1,
-              alpha: Math.random() * 0.05 + 0.03,
-              phase: Math.random() * Math.PI * 2,
-              type: 'mist',
-            });
-          }
-        }
-
-        // Draw Light Mist
-        for (let i = 0; i < nw.particles.length; i++) {
-          const p = nw.particles[i];
-          if (p.type === 'mist') {
-            p.x += p.vx;
-            p.y += p.vy + Math.sin(t * 0.8 + p.phase) * 0.15;
-            if (p.x - p.size > width) p.x = -p.size;
-
-            const mistGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-            mistGrad.addColorStop(0, colors.mainRgba(p.alpha * (1 + sMid * 0.5)));
-            mistGrad.addColorStop(0.6, colors.secondaryRgba(p.alpha * 0.4));
-            mistGrad.addColorStop(1, 'transparent');
-            ctx.fillStyle = mistGrad;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-
-        // Draw Floating Dust Particles
-        for (let i = 0; i < nw.particles.length; i++) {
-          const p = nw.particles[i];
-          if (p.type === 'dust') {
-            p.y += p.vy;
-            p.x += p.vx + Math.sin(t * 1.4 + p.phase) * 0.2;
-            if (p.y < -10) {
-              p.y = height + 10;
-              p.x = Math.random() * width;
-            }
-            if (p.x < 0) p.x = width;
-            if (p.x > width) p.x = 0;
-
-            const pulseA = p.alpha * (0.65 + 0.35 * Math.sin(t * 2 + p.phase));
-            ctx.fillStyle = `rgba(235, 245, 255, ${pulseA.toFixed(3)})`;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-
-        // 2. Treble Sparkles (twinkling star/glint particles driven by sHigh)
-        const sparkleCount = Math.floor(6 + sHigh * 18 * rxMult);
-        for (let i = 0; i < sparkleCount; i++) {
-          const sx = ((Math.sin(i * 127.1 + t * 0.5) * 43758.5453) % 1 + 1) % 1 * width;
-          const sy = ((Math.sin(i * 311.7 + t * 0.4) * 23421.631) % 1 + 1) % 1 * height;
-          const twinkle = Math.sin(t * 8 + i * 1.7) * 0.5 + 0.5;
-          const sAlpha = Math.min(1.0, (0.25 + sHigh * 0.75) * twinkle);
-          const sRadius = (2.0 + sHigh * 3.5) * (1.0 + 0.3 * Math.sin(t * 10 + i));
-
-          if (sAlpha > 0.08) {
-            ctx.save();
-            ctx.translate(sx, sy);
-            ctx.fillStyle = `rgba(255, 255, 255, ${sAlpha.toFixed(3)})`;
-            ctx.beginPath();
-            ctx.moveTo(0, -sRadius * 1.8);
-            ctx.lineTo(sRadius * 0.35, 0);
-            ctx.lineTo(0, sRadius * 1.8);
-            ctx.lineTo(-sRadius * 0.35, 0);
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.fillStyle = colors.mainRgba(sAlpha * 0.8);
-            ctx.beginPath();
-            ctx.moveTo(-sRadius * 1.8, 0);
-            ctx.lineTo(0, sRadius * 0.35);
-            ctx.lineTo(sRadius * 1.8, 0);
-            ctx.lineTo(0, -sRadius * 0.35);
-            ctx.closePath();
-            ctx.fill();
-            ctx.restore();
-          }
-        }
+        ctx.restore(); // end badge transform
+        ctx.restore(); // end scene zoom
       }
 
       ctx.restore();
@@ -4120,69 +1608,6 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
 
   return (
     <div className={`relative overflow-hidden pointer-events-none ${className}`}>
-      {/* Night Walk Video Layer */}
-      <div
-        ref={nightWalkContainerRef}
-        className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden"
-        style={{
-          display: scene === 'night_walk' ? 'flex' : 'none',
-        }}
-      >
-        {/* Soft glow in cover color behind video */}
-        <div
-          ref={nightWalkGlowRef}
-          className="absolute inset-0 pointer-events-none transition-opacity duration-300"
-          style={{
-            background: 'radial-gradient(ellipse 90% 70% at 50% 50%, rgba(56, 189, 248, 0.25) 0%, transparent 75%)',
-          }}
-        />
-
-        {/* 16:9 Wide band across middle of screen, scaled to full screen width */}
-        <div
-          className="relative w-full aspect-video flex items-center justify-center overflow-hidden"
-          style={{
-            maskImage: 'linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%)',
-          }}
-        >
-          <video
-            ref={videoRef}
-            src="/walking_cinematic_wide.mp4"
-            muted
-            playsInline
-            loop
-            controls={false}
-            disablePictureInPicture
-            disableRemotePlayback
-            aria-hidden="true"
-            tabIndex={-1}
-            className="w-full h-full object-cover pointer-events-none will-change-transform"
-            style={{
-              transformOrigin: 'center center',
-            }}
-            onError={(e) => {
-              const target = e.currentTarget;
-              if (!target.dataset.triedFallback) {
-                target.dataset.triedFallback = 'true';
-                target.src = '/walking_cinematic_portrait_tight.mp4';
-              }
-            }}
-          />
-
-          {/* Cover Color Tint Overlay */}
-          <div
-            ref={nightWalkTintRef}
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              backgroundColor: 'rgba(56, 189, 248, 0.25)',
-              mixBlendMode: 'overlay',
-              opacity: 0.75,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Main Canvas Layer */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
     </div>
   );

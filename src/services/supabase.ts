@@ -1,4 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Preferences } from '@capacitor/preferences';
+import { Capacitor } from '@capacitor/core';
 import { CloudSong, Song } from '../types/music';
 import { downloadAndConvertCover } from './imageUtils';
 import { generateProceduralArtwork } from './id3Parser';
@@ -77,6 +79,66 @@ const LS_PREFIX = 'jtec_supabase_';
 // Client singleton cache keyed by url+anonKey to avoid multiple GoTrueClient warnings
 const clientCache = new Map<string, SupabaseClient>();
 
+// Storage adapter for admin Supabase client
+// Backed by @capacitor/preferences on Android so session survives app restarts & updates
+// Backed by localStorage on Web
+const createAdminAuthStorageAdapter = () => {
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+
+  if (isNative) {
+    return {
+      getItem: async (key: string): Promise<string | null> => {
+        try {
+          const { value } = await Preferences.get({ key });
+          return value ?? null;
+        } catch (err) {
+          console.warn('[AdminAuthStorage] Preferences.get error:', err);
+          return null;
+        }
+      },
+      setItem: async (key: string, value: string): Promise<void> => {
+        try {
+          await Preferences.set({ key, value });
+        } catch (err) {
+          console.warn('[AdminAuthStorage] Preferences.set error:', err);
+        }
+      },
+      removeItem: async (key: string): Promise<void> => {
+        try {
+          await Preferences.remove({ key });
+        } catch (err) {
+          console.warn('[AdminAuthStorage] Preferences.remove error:', err);
+        }
+      },
+    };
+  }
+
+  // Web fallback: localStorage
+  return {
+    getItem: (key: string): string | null => {
+      try {
+        return window.localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (key: string, value: string): void => {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch (err) {
+        console.warn('[AdminAuthStorage] localStorage.setItem error:', err);
+      }
+    },
+    removeItem: (key: string): void => {
+      try {
+        window.localStorage.removeItem(key);
+      } catch (err) {
+        console.warn('[AdminAuthStorage] localStorage.removeItem error:', err);
+      }
+    },
+  };
+};
+
 // Admin client singleton with auth persistence for JTEC Main admin session
 let jtecAdminClient: SupabaseClient | null = null;
 
@@ -87,7 +149,8 @@ export function getJtecAdminClient(): SupabaseClient | null {
     try {
       jtecAdminClient = createClient(config.url, config.anonKey, {
         auth: {
-          storageKey: 'jtec_admin_session',
+          storageKey: 'jtec-admin-auth',
+          storage: createAdminAuthStorageAdapter(),
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: false,
@@ -99,6 +162,74 @@ export function getJtecAdminClient(): SupabaseClient | null {
     }
   }
   return jtecAdminClient;
+}
+
+export async function getAdminLastOpened(): Promise<number | null> {
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  try {
+    if (isNative) {
+      const { value } = await Preferences.get({ key: 'jtec-admin-last-opened' });
+      return value ? parseInt(value, 10) : null;
+    }
+    const val = localStorage.getItem('jtec-admin-last-opened');
+    return val ? parseInt(val, 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setAdminLastOpened(ts: number = Date.now()): Promise<void> {
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  try {
+    if (isNative) {
+      await Preferences.set({ key: 'jtec-admin-last-opened', value: String(ts) });
+    } else {
+      localStorage.setItem('jtec-admin-last-opened', String(ts));
+    }
+  } catch {}
+}
+
+export async function getAdminStaySignedIn(): Promise<boolean> {
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  try {
+    if (isNative) {
+      const { value } = await Preferences.get({ key: 'jtec-admin-stay-signed-in' });
+      return value === null ? true : value === 'true';
+    }
+    const val = localStorage.getItem('jtec-admin-stay-signed-in');
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export async function setAdminStaySignedIn(enabled: boolean): Promise<void> {
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  try {
+    if (isNative) {
+      await Preferences.set({ key: 'jtec-admin-stay-signed-in', value: String(enabled) });
+    } else {
+      localStorage.setItem('jtec-admin-stay-signed-in', String(enabled));
+    }
+  } catch {}
+}
+
+export async function clearAdminAuthTokens(): Promise<void> {
+  try {
+    if (jtecAdminClient) {
+      await jtecAdminClient.auth.signOut();
+    }
+  } catch {}
+  const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  try {
+    if (isNative) {
+      await Preferences.remove({ key: 'jtec-admin-auth' });
+      await Preferences.remove({ key: 'jtec-admin-last-opened' });
+    } else {
+      localStorage.removeItem('jtec-admin-auth');
+      localStorage.removeItem('jtec-admin-last-opened');
+    }
+  } catch {}
 }
 
 export type ConnectionErrorType =

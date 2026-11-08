@@ -146,7 +146,7 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({ onBack }) => {
               <strong className="text-slate-200">Equalizer:</strong> Fine-tune Bass, Mid, and Treble frequencies.
             </li>
             <li>
-              <strong className="text-slate-200">Cinematic Visualizers:</strong> Select from diverse visual modes including <span className="text-cyan-300">Anime Ninja</span>, <span className="text-purple-300">Chakra Visual World</span>, <span className="text-pink-300">Neon Cyber Waves</span>, <span className="text-emerald-300">Smoke Vanish</span>, and <span className="text-blue-300">Frequency Bars</span>.
+              <strong className="text-slate-200">Cinematic Visualizers:</strong> Select from diverse visual modes including <span className="text-indigo-400">JT Night</span>, <span className="text-cyan-300">Dark Spectrum</span>, <span className="text-purple-300">Cyber City</span>, <span className="text-amber-400">Fire Energy</span>, <span className="text-sky-300">Rainy Night</span>, and <span className="text-teal-300">Deep Ocean</span>.
             </li>
             <li>
               <strong className="text-slate-200">Performance Mode:</strong> Choose between Ultra (60fps fluid visualizer animations) or Battery Saver (efficient lower frame rate) in Settings.

@@ -1,17 +1,22 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   X, RefreshCw, Shield, ShieldCheck, Lock, 
   Users, Smartphone, Globe, AlertCircle, CheckCircle2, 
   Clock, Sparkles, AlertTriangle, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
   Ban, Unlock, HelpCircle, ChevronRight, Radio, Bot, Sliders,
-  SkipForward, UserMinus, UserPlus, Activity
+  SkipForward, UserMinus, UserPlus, Activity, LogOut
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
   SupabaseService, 
   CLOUD_CATEGORIES, 
-  SourceDiagnosticResult 
+  SourceDiagnosticResult,
+  getAdminLastOpened,
+  setAdminLastOpened,
+  getAdminStaySignedIn,
+  setAdminStaySignedIn,
+  clearAdminAuthTokens
 } from '../services/supabase';
 import { Device, DeviceInfo } from '@capacitor/device';
 import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpdate';
@@ -73,6 +78,10 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [password, setPassword] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [staySignedIn, setStaySignedIn] = useState(true);
+  const staySignedInRef = useRef(staySignedIn);
+  staySignedInRef.current = staySignedIn;
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
   // App version & build information
   const [appVersionInfo, setAppVersionInfo] = useState<{ version: string; build: number }>({
@@ -327,20 +336,126 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     loadPhoneReports();
   }, [loadLatestReleaseData, loadPhoneReports]);
 
-  // Handle Close & Sign out
-  const handleClose = useCallback(async () => {
-    try {
-      if (adminClient) {
-        await adminClient.auth.signOut();
-      }
-    } catch {
-      // ignore
+  // Admin session check & silent token refresh (Requirement 3 & 5)
+  const verifySession = useCallback(async () => {
+    if (!adminClient) {
+      setIsCheckingSession(false);
+      return;
     }
-    setSession(null);
+
+    setIsCheckingSession(true);
+
+    try {
+      // 1. Load stay-signed-in preference (default true)
+      const savedStay = await getAdminStaySignedIn();
+      setStaySignedIn(savedStay);
+      staySignedInRef.current = savedStay;
+
+      // 2. Check 30-day inactivity expiration (Requirement 5)
+      const lastOpened = await getAdminLastOpened();
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      if (lastOpened && Date.now() - lastOpened > THIRTY_DAYS_MS) {
+        console.info('[DeveloperPage] Admin session expired after 30 days of inactivity.');
+        await clearAdminAuthTokens();
+        setSession(null);
+        setIsCheckingSession(false);
+        return;
+      }
+
+      // 3. Call getSession() first (Requirement 3)
+      const { data: sessionData, error: sessionErr } = await adminClient.auth.getSession();
+      if (sessionErr || !sessionData?.session) {
+        setSession(null);
+        setIsCheckingSession(false);
+        return;
+      }
+
+      let activeSession = sessionData.session;
+
+      // 4. If access token has expired (or expiring in <=60s), refresh silently
+      const expiresAtMs = activeSession.expires_at ? activeSession.expires_at * 1000 : 0;
+      if (expiresAtMs > 0 && expiresAtMs <= Date.now() + 60000) {
+        try {
+          const { data: refreshData, error: refreshErr } = await adminClient.auth.refreshSession();
+          if (refreshErr || !refreshData.session) {
+            console.warn('[DeveloperPage] Silent token refresh failed:', refreshErr);
+            await clearAdminAuthTokens();
+            setSession(null);
+            setIsCheckingSession(false);
+            return;
+          }
+          activeSession = refreshData.session;
+        } catch (err) {
+          console.warn('[DeveloperPage] Silent token refresh exception:', err);
+          await clearAdminAuthTokens();
+          setSession(null);
+          setIsCheckingSession(false);
+          return;
+        }
+      }
+
+      // 5. Verify admin permission on app_config
+      const { error: testReadError } = await adminClient
+        .from('app_config')
+        .select('id')
+        .limit(1);
+
+      if (testReadError && testReadError.code === '42501') {
+        console.warn('[DeveloperPage] Not authorized for admin tables (42501)');
+        await clearAdminAuthTokens();
+        setSession(null);
+        setAccessDenied(true);
+        setIsCheckingSession(false);
+        return;
+      }
+
+      // 6. Valid admin session! Update last opened timestamp and activate session
+      await setAdminLastOpened(Date.now());
+      setSession(activeSession);
+      if (activeSession.user?.email) {
+        setEmail(activeSession.user.email);
+      }
+    } catch (err) {
+      console.warn('[DeveloperPage] Session verification error:', err);
+      setSession(null);
+    } finally {
+      setIsCheckingSession(false);
+    }
+  }, [adminClient]);
+
+  useEffect(() => {
+    if (isOpen) {
+      verifySession();
+    }
+  }, [isOpen, verifySession]);
+
+  // Handle Close: does NOT sign admin out if staySignedIn is active (Requirement 1 & 4)
+  const handleClose = useCallback(async () => {
+    if (!staySignedInRef.current) {
+      try {
+        await clearAdminAuthTokens();
+      } catch {}
+      setSession(null);
+    } else if (session) {
+      try {
+        await setAdminLastOpened(Date.now());
+      } catch {}
+    }
     setPassword('');
     setAccessDenied(false);
     onClose();
-  }, [adminClient, onClose]);
+  }, [session, onClose]);
+
+  // Handle explicit Sign out (Requirement 5)
+  const handleSignOut = useCallback(async () => {
+    try {
+      await clearAdminAuthTokens();
+    } catch {}
+    setSession(null);
+    setPassword('');
+    setAccessDenied(false);
+    setActiveTab('usage');
+  }, []);
 
   // Register hardware / system back button handler while developer page is open
   useEffect(() => {
@@ -373,6 +488,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         password,
       });
 
+      // Clear password from memory immediately - NEVER store password anywhere!
       setPassword('');
 
       if (error || !data.session) {
@@ -387,9 +503,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         .limit(1);
 
       if (testReadError && testReadError.code === '42501') {
-        await adminClient.auth.signOut();
+        await clearAdminAuthTokens();
         setAccessDenied(true);
         return;
+      }
+
+      // Save stay-signed-in preference
+      await setAdminStaySignedIn(staySignedIn);
+      if (staySignedIn) {
+        await setAdminLastOpened(Date.now());
       }
 
       setSession(data.session);
@@ -984,18 +1106,41 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleClose}
-          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
-          aria-label="Close Developer Page"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          {session && (
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/80 border border-red-500/30 text-red-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+              title="Sign out and clear session"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleClose}
+            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
+            aria-label="Close Developer Page"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Main Content Area */}
-      {!session ? (
+      {isCheckingSession ? (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <RefreshCw className="w-7 h-7 text-cyan-400 animate-spin" />
+            <span className="text-xs text-slate-400 font-medium tracking-wide">
+              Checking developer credentials...
+            </span>
+          </div>
+        </div>
+      ) : !session ? (
         /* =========================================================================
             STATE 1: ADMIN SIGN-IN SCREEN
            ========================================================================= */
@@ -1045,6 +1190,29 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 />
               </div>
 
+              {/* Stay signed in on this phone switch (Requirement 4) */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-white/5">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-white block">Stay signed in on this phone</span>
+                  <span className="text-[11px] text-slate-400 block">Survives app restarts & updates</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={staySignedIn}
+                  onClick={() => setStaySignedIn((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    staySignedIn ? 'bg-cyan-500' : 'bg-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      staySignedIn ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               <button
                 type="submit"
                 disabled={isSigningIn}
@@ -1065,7 +1233,9 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             </form>
 
             <div className="pt-2 text-center text-[11px] text-slate-500">
-              Session signs out automatically when closed. Never stores password.
+              {staySignedIn
+                ? 'Session tokens securely saved on this device. Password is never stored.'
+                : 'Session will clear when the page closes. Password is never stored.'}
             </div>
           </div>
         </div>

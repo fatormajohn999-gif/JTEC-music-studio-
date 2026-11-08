@@ -72,8 +72,26 @@ export const DEFAULT_AUDIO_EFFECTS: PersistentAudioEffects = {
   isEnabled: false,
 };
 
+const VALID_VISUALIZER_MODES: VisualizerMode[] = [
+  'auto',
+  'jt_night',
+  'dark_spectrum',
+  'cyber_city',
+  'fire_energy',
+  'rainy_night',
+  'deep_ocean',
+  'off'
+];
+
+export function sanitizeVisualizerMode(mode: unknown): VisualizerMode {
+  if (typeof mode === 'string' && VALID_VISUALIZER_MODES.includes(mode as VisualizerMode)) {
+    return mode as VisualizerMode;
+  }
+  return 'dark_spectrum';
+}
+
 export const DEFAULT_VISUALIZER_SETTINGS: PersistentVisualizerSettings = {
-  visualizerMode: 'auto',
+  visualizerMode: 'jt_night',
   reactionStrength: 'medium',
   performanceMode: 'balanced',
   neonGlow: true,
@@ -205,7 +223,11 @@ export const PersistentSettingsService = {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        return { ...DEFAULT_VISUALIZER_SETTINGS, ...parsed };
+        return {
+          ...DEFAULT_VISUALIZER_SETTINGS,
+          ...parsed,
+          visualizerMode: sanitizeVisualizerMode(parsed.visualizerMode),
+        };
       } catch {}
     }
 
@@ -215,7 +237,10 @@ export const PersistentSettingsService = {
       if (sessionRaw) {
         const sess = JSON.parse(sessionRaw);
         if (sess.visualizerTheme) {
-          return { ...DEFAULT_VISUALIZER_SETTINGS, visualizerMode: sess.visualizerTheme };
+          return {
+            ...DEFAULT_VISUALIZER_SETTINGS,
+            visualizerMode: sanitizeVisualizerMode(sess.visualizerTheme),
+          };
         }
       }
     } catch {}
@@ -228,7 +253,11 @@ export const PersistentSettingsService = {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        return { ...DEFAULT_VISUALIZER_SETTINGS, ...parsed };
+        return {
+          ...DEFAULT_VISUALIZER_SETTINGS,
+          ...parsed,
+          visualizerMode: sanitizeVisualizerMode(parsed.visualizerMode),
+        };
       } catch {}
     }
     return this.getVisualizerSettingsSync();

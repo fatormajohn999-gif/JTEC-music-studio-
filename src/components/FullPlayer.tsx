@@ -40,24 +40,12 @@ interface FullPlayerProps {
 
 const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
   { id: 'auto', label: 'Auto Vibe', icon: '✨' },
+  { id: 'jt_night', label: 'JT Night', icon: '🌙' },
   { id: 'dark_spectrum', label: 'Dark Spectrum', icon: '📊' },
   { id: 'cyber_city', label: 'Cyber City', icon: '🏙️' },
-  { id: 'galaxy', label: 'Galaxy', icon: '🌌' },
   { id: 'fire_energy', label: 'Fire Energy', icon: '🔥' },
   { id: 'rainy_night', label: 'Rainy Night', icon: '🌧️' },
-  { id: 'anime_ninja', label: 'Anime Ninja', icon: '🥷' },
-  { id: 'samurai', label: 'Samurai', icon: '⚔️' },
   { id: 'deep_ocean', label: 'Deep Ocean', icon: '🌊' },
-  { id: 'music_tunnel', label: 'Music Tunnel', icon: '🌀' },
-  { id: 'minimal_pro', label: 'Minimal Pro', icon: '⚡' },
-  { id: 'shadow_strike', label: 'Shadow Strike', icon: '🗡️' },
-  { id: 'shuriken_storm', label: 'Shuriken Storm', icon: '⭐' },
-  { id: 'smoke_vanish', label: 'Smoke Vanish', icon: '💨' },
-  { id: 'aurora_skies', label: 'Aurora Skies', icon: '🌌' },
-  { id: 'thunder_storm', label: 'Thunder Storm', icon: '⚡' },
-  { id: 'dragon_spirit', label: 'Dragon Spirit', icon: '🐉' },
-  { id: 'hyperspace_warp', label: 'Hyperspace Warp', icon: '🚀' },
-  { id: 'night_walk', label: 'Night Walk', icon: '🚶' },
 ];
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
@@ -87,7 +75,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onOpenSongOptions,
   isPartyGuest = false,
 }) => {
-  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('dark_spectrum');
+  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('jt_night');
   const [showSceneSelector, setShowSceneSelector] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekTime, setSeekTime] = useState<number | null>(null);
@@ -166,6 +154,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             isActive={isPlaying}
             className="w-full h-full"
             onAutoSceneDetermined={(scene) => setDetectedAutoScene(scene)}
+            currentTime={currentTime}
           />
         )}
       </div>

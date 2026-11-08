@@ -371,7 +371,7 @@ export const StorageService = {
   async getSettings(): Promise<AppSettings> {
     const defaultSettings: AppSettings = {
       performanceMode: 'balanced',
-      visualizerMode: 'auto',
+      visualizerMode: 'jt_night',
       reactionStrength: 'medium',
       autoplayNext: true,
       rememberLastSong: true,
@@ -385,7 +385,14 @@ export const StorageService = {
         const tx = db.transaction('kv_store', 'readonly');
         const store = tx.objectStore('kv_store');
         const req = store.get('app_settings');
-        req.onsuccess = () => resolve({ ...defaultSettings, ...(req.result || {}) });
+        req.onsuccess = () => {
+          const res = { ...defaultSettings, ...(req.result || {}) };
+          const validModes = ['auto', 'jt_night', 'dark_spectrum', 'cyber_city', 'fire_energy', 'rainy_night', 'deep_ocean', 'off'];
+          if (!validModes.includes(res.visualizerMode)) {
+            res.visualizerMode = 'dark_spectrum';
+          }
+          resolve(res);
+        };
         req.onerror = () => resolve(defaultSettings);
       });
     } catch {
@@ -436,7 +443,13 @@ export const StorageService = {
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => resolve(null);
       });
-      if (sessionFromDb) return sessionFromDb;
+      if (sessionFromDb) {
+        const validModes = ['auto', 'jt_night', 'dark_spectrum', 'cyber_city', 'fire_energy', 'rainy_night', 'deep_ocean', 'off'];
+        if (sessionFromDb.visualizerTheme && !validModes.includes(sessionFromDb.visualizerTheme)) {
+          sessionFromDb.visualizerTheme = 'dark_spectrum';
+        }
+        return sessionFromDb;
+      }
     } catch {
       // fallback to localStorage
     }
@@ -444,7 +457,12 @@ export const StorageService = {
     try {
       const raw = localStorage.getItem('jtec_playback_session');
       if (raw) {
-        return JSON.parse(raw) as PlaybackSessionState;
+        const parsed = JSON.parse(raw) as PlaybackSessionState;
+        const validModes = ['auto', 'jt_night', 'dark_spectrum', 'cyber_city', 'fire_energy', 'rainy_night', 'deep_ocean', 'off'];
+        if (parsed.visualizerTheme && !validModes.includes(parsed.visualizerTheme)) {
+          parsed.visualizerTheme = 'dark_spectrum';
+        }
+        return parsed;
       }
     } catch {
       // ignore

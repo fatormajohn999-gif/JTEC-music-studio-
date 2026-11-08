@@ -512,7 +512,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 <span className="text-xs font-bold text-white uppercase tracking-wider">
                   Audio Visualizer Themes
                 </span>
-                <span className="text-[10px] text-cyan-300 font-mono">18 Scenes</span>
+                <span className="text-[10px] text-cyan-300 font-mono">6 Scenes</span>
               </div>
               <p className="text-[11px] text-slate-400">
                 Render real-time frequency data synced to Web Audio API analyser:
@@ -520,24 +520,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
                 {[
+                  { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
+                  { id: 'jt_night' as VisualizerMode, label: '🌙 JT Night' },
                   { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
-                  { id: 'shadow_strike' as VisualizerMode, label: '🗡️ Shadow Strike' },
-                  { id: 'shuriken_storm' as VisualizerMode, label: '⭐ Shuriken Storm' },
-                  { id: 'smoke_vanish' as VisualizerMode, label: '💨 Smoke Vanish' },
-                  { id: 'anime_ninja' as VisualizerMode, label: '🥷 Anime Ninja' },
-                  { id: 'samurai' as VisualizerMode, label: '⚔️ Samurai' },
                   { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
-                  { id: 'galaxy' as VisualizerMode, label: '🌌 Galaxy' },
                   { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
                   { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
                   { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
-                  { id: 'music_tunnel' as VisualizerMode, label: '🌀 Music Tunnel' },
-                  { id: 'minimal_pro' as VisualizerMode, label: '⚡ Minimal Pro' },
-                  { id: 'aurora_skies' as VisualizerMode, label: '🌌 Aurora Skies' },
-                  { id: 'thunder_storm' as VisualizerMode, label: '⚡ Thunder Storm' },
-                  { id: 'dragon_spirit' as VisualizerMode, label: '🐉 Dragon Spirit' },
-                  { id: 'hyperspace_warp' as VisualizerMode, label: '🚀 Hyperspace Warp' },
-                  { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
                 ].map((v) => {
                   const isSelected = settings.visualizerMode === v.id;
                   return (
