@@ -530,6 +530,10 @@ export default function App() {
     onSyncCurrentSong: (song) => {
       setCurrentSong(song);
       currentSongRef.current = song;
+      MediaSessionManager.publishNowPlaying(song, {
+        duration: song.duration || 0,
+        playbackRate: 1.0,
+      });
       if (song.coverUrl) {
         extractPaletteFromImage(song.coverUrl).then((pal) => setCurrentPalette(pal));
       }
@@ -932,14 +936,12 @@ export default function App() {
         if (targetSong) {
           setCurrentSong(targetSong);
           setCurrentTime(restoredPosition);
-          MediaSessionManager.updateMetadata(targetSong);
-          MediaSessionManager.updatePositionState(
-            restoredPosition,
-            targetSong.duration || 0,
-            pEffects.playbackRate || 1.0,
-            true
-          );
-          MediaSessionManager.updatePlaybackState(false);
+          MediaSessionManager.publishNowPlaying(targetSong, {
+            playing: false,
+            position: restoredPosition,
+            duration: targetSong.duration || 0,
+            playbackRate: pEffects.playbackRate || 1.0,
+          });
 
           // Prepare audio engine at exact second, PAUSED (Do NOT auto-play unless launched from widget Play)
           let blob = await StorageService.getSongBlob(targetSong.id);
@@ -992,7 +994,7 @@ export default function App() {
             }
           }
         } else {
-          MediaSessionManager.updateMetadata(null);
+          MediaSessionManager.publishNowPlaying(null, { playing: false });
           MediaSessionManager.updatePlaybackState('none');
           await WidgetBridge.getLaunchAction();
         }
@@ -1013,6 +1015,7 @@ export default function App() {
                 if (matched.palette) {
                   setCurrentPalette({ ...matched.palette, hasCover: true });
                 }
+                MediaSessionManager.publishNowPlaying(matched);
                 return matched;
               }
               return curr;
@@ -1203,7 +1206,11 @@ export default function App() {
 
       NotificationPermissionManager.checkAndRequestOnFirstPlay();
       setCurrentSong(song);
-      MediaSessionManager.updateMetadata(song);
+      MediaSessionManager.publishNowPlaying(song, {
+        position: startPosition || 0,
+        duration: song.duration || 0,
+        playbackRate: effectsRef.current.playbackRate || 1.0,
+      });
 
       // Cover-based color extraction: check cache first, or extract once and save to IndexedDB
       if (song.artworkUrl) {
@@ -1463,6 +1470,14 @@ export default function App() {
 
     if (currentTimeRef.current > 3) {
       audioEngine.seek(0);
+      setCurrentTime(0);
+      currentTimeRef.current = 0;
+      MediaSessionManager.updatePositionState(
+        0,
+        duration || currentSongRef.current?.duration || 0,
+        effectsRef.current.playbackRate,
+        true
+      );
       return;
     }
 
@@ -1532,21 +1547,42 @@ export default function App() {
       setTimeout(() => setGlobalError(null), 3000);
       return;
     }
+    const targetSeconds = Math.max(0, duration > 0 ? Math.min(duration, seconds) : seconds);
     if (isPartyHost) {
-      PartyService.hostSeek(seconds);
+      PartyService.hostSeek(targetSeconds);
     }
-    audioEngine.seek(seconds);
-    setCurrentTime(seconds);
-    currentTimeRef.current = seconds;
-    MediaSessionManager.updatePositionState(seconds, duration, effects.playbackRate, true);
+    audioEngine.seek(targetSeconds);
+    setCurrentTime(targetSeconds);
+    currentTimeRef.current = targetSeconds;
+    MediaSessionManager.updatePositionState(targetSeconds, duration, effects.playbackRate, true);
     persistSessionNow();
   };
 
   // Register Media Session callbacks
   useEffect(() => {
     MediaSessionManager.registerActionHandlers({
-      onPlay: () => handleTogglePlay(),
-      onPause: () => audioEngine.pause(),
+      onPlay: () => {
+        if (isPartyGuest) return;
+        if (isPartyHost) {
+          if (!audioEngine.isPlaying) {
+            PartyService.hostPlay();
+          }
+          return;
+        }
+        if (!audioEngine.isPlaying) {
+          handleTogglePlay();
+        }
+      },
+      onPause: () => {
+        if (isPartyGuest) return;
+        if (isPartyHost) {
+          if (audioEngine.isPlaying) {
+            PartyService.hostPause();
+          }
+          return;
+        }
+        audioEngine.pause();
+      },
       onPrevious: () => handlePreviousTrack(),
       onNext: () => handleNextTrack(),
       onSeek: (seconds) => {
@@ -1556,7 +1592,9 @@ export default function App() {
         handleSeek(Math.max(0, currentTimeRef.current - offset));
       },
       onSeekForward: (offset = 10) => {
-        handleSeek(Math.min(duration || 0, currentTimeRef.current + offset));
+        const maxDur = duration || audioEngine.duration || 0;
+        const target = maxDur > 0 ? Math.min(maxDur, currentTimeRef.current + offset) : currentTimeRef.current + offset;
+        handleSeek(target);
       },
       onStop: () => {
         audioEngine.pause();
@@ -1571,7 +1609,7 @@ export default function App() {
         }
       },
     });
-  }, [currentSong, queue, songs, playlists, isShuffle, repeatMode, currentTime, duration, effects.playbackRate]);
+  }, [currentSong, queue, songs, playlists, isShuffle, repeatMode, currentTime, duration, effects.playbackRate, isPartyGuest, isPartyHost]);
 
   // Sync extra widget metadata (accent color, favorite state, queue bounds)
   useEffect(() => {
@@ -1595,6 +1633,7 @@ export default function App() {
     effectsRef.current = newEffects;
     audioEngine.applyEffects(newEffects);
     PersistentSettingsService.saveAudioEffects(newEffects);
+    MediaSessionManager.updatePlaybackRate(newEffects.playbackRate);
   };
 
   // Favorite toggle
@@ -1639,7 +1678,9 @@ export default function App() {
     );
 
     if (currentSong?.id === song.id) {
-      setCurrentSong((prev) => prev ? { ...prev, artworkUrl: artworkUrl || undefined, palette: newPalette } : null);
+      const updatedCurrent: Song = { ...currentSong, artworkUrl: artworkUrl || undefined, palette: newPalette };
+      setCurrentSong(updatedCurrent);
+      MediaSessionManager.publishNowPlaying(updatedCurrent);
       if (newPalette) {
         setCurrentPalette({ ...newPalette, hasCover: true });
       } else {
@@ -1909,6 +1950,8 @@ export default function App() {
     if (currentSong?.id === songId) {
       audioEngine.pause();
       setCurrentSong(null);
+      MediaSessionManager.publishNowPlaying(null);
+      MediaSessionManager.updatePlaybackState('none');
     }
     const stats = await StorageService.getStorageStats();
     setStorageStats(stats);
@@ -1926,6 +1969,8 @@ export default function App() {
     if (currentSong && idSet.has(currentSong.id)) {
       audioEngine.pause();
       setCurrentSong(null);
+      MediaSessionManager.publishNowPlaying(null);
+      MediaSessionManager.updatePlaybackState('none');
     }
     const stats = await StorageService.getStorageStats();
     setStorageStats(stats);
@@ -1947,6 +1992,8 @@ export default function App() {
           if (currentSong?.id === match.id) {
             audioEngine.pause();
             setCurrentSong(null);
+            MediaSessionManager.publishNowPlaying(null);
+            MediaSessionManager.updatePlaybackState('none');
           }
         }
       }
