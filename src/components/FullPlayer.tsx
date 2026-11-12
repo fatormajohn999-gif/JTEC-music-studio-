@@ -155,6 +155,7 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
             className="w-full h-full"
             onAutoSceneDetermined={(scene) => setDetectedAutoScene(scene)}
             currentTime={currentTime}
+            isUiOverlayOpen={showSceneSelector}
           />
         )}
       </div>

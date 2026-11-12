@@ -33,6 +33,22 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <receiver
+            android:name="com.jtecmusic.app.widget.JtecMusicWidgetProvider"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/jtec_music_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name="com.jtecmusic.app.widget.JtecWidgetActionReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->

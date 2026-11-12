@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { CinematicScene, PerformanceMode, ArtworkPalette, ReactionStrength } from '../types/music';
 import { audioEngine } from '../services/audioEngine';
+import { VisualizerDiagnostics } from '../services/visualizerDiagnostics';
 
 interface CinematicVisualizerProps {
   scene: CinematicScene;
@@ -11,6 +12,7 @@ interface CinematicVisualizerProps {
   reactionStrength?: ReactionStrength;
   onAutoSceneDetermined?: (detectedScene: CinematicScene) => void;
   currentTime?: number;
+  isUiOverlayOpen?: boolean;
 }
 
 // Particle structures for specialized environments
@@ -80,6 +82,13 @@ interface JTNightStar {
   twinklePhase: number;
   twinkleSpeed: number;
   baseAlpha: number;
+}
+
+interface JTNightStaticStar {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
   isPeriwinkle: boolean;
 }
 
@@ -87,7 +96,6 @@ interface JTNightBubble {
   x: number;
   y: number;
   radius: number;
-  strokeWidth: number;
   speed: number;
   swayPhase: number;
   swaySpeed: number;
@@ -96,20 +104,17 @@ interface JTNightBubble {
   baseAlpha: number;
 }
 
-interface JTNightSpawnRing {
-  x: number;
-  y: number;
-  radius: number;
-  maxRadius: number;
-  alpha: number;
-  growthSpeed: number;
-}
-
 interface JTNightBuilding {
   x: number;
   w: number;
   h: number;
-  windows: { col: number; row: number; color: string; twinkleOffset: number }[];
+  windows: { col: number; row: number; color: string }[];
+}
+
+interface JTNightShard {
+  angle: number;
+  lengthRatio: number;
+  progress: number;
 }
 
 interface JTNightMeteor {
@@ -124,6 +129,263 @@ interface JTNightMeteor {
   speed: number;
   progress: number;
   alpha: number;
+}
+
+interface JTNightOffscreenCache {
+  width: number;
+  height: number;
+  colorKey: string;
+  qualityStep: 'low' | 'balanced' | 'high';
+  bgCanvas: HTMLCanvasElement;
+  bubbleSprite: HTMLCanvasElement;
+  dotSprite: HTMLCanvasElement;
+  streakSprite: HTMLCanvasElement;
+}
+
+function createBubbleSprite(colorHex: string): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  const grad = ctx.createRadialGradient(16, 16, 8, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  grad.addColorStop(0.65, colorHex);
+  grad.addColorStop(0.85, 'rgba(255, 255, 255, 0.9)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(16, 16, 15, 0, Math.PI * 2);
+  ctx.fill();
+  return canvas;
+}
+
+function createDotSprite(centerColor: string, glowColor: string): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 16;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  const grad = ctx.createRadialGradient(8, 8, 1, 8, 8, 8);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.35, centerColor);
+  grad.addColorStop(0.75, glowColor);
+  grad.addColorStop(1, 'transparent');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(8, 8, 8, 0, Math.PI * 2);
+  ctx.fill();
+  return canvas;
+}
+
+function createStreakSprite(headColor: string, tailColor: string): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  const grad = ctx.createLinearGradient(0, 8, 64, 8);
+  grad.addColorStop(0, 'transparent');
+  grad.addColorStop(0.65, tailColor);
+  grad.addColorStop(0.95, headColor);
+  grad.addColorStop(1, '#ffffff');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, 8);
+  ctx.lineTo(64, 5);
+  ctx.lineTo(64, 11);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(62, 8, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  return canvas;
+}
+
+function renderJTNightBackground(
+  width: number,
+  height: number,
+  colors: { main: string; secondary: string; accent: string; mainRgba: (a: number) => string; secondaryRgba: (a: number) => string; accentRgba: (a: number) => string },
+  staticStars: JTNightStaticStar[],
+  buildings: JTNightBuilding[],
+  qualityStep: 'low' | 'balanced' | 'high'
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.floor(width));
+  canvas.height = Math.max(1, Math.floor(height));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  // 1. Sky vertical gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
+  skyGrad.addColorStop(0, '#04021a');
+  skyGrad.addColorStop(0.48, '#0b0a3d');
+  skyGrad.addColorStop(0.82, '#121244');
+  skyGrad.addColorStop(1, '#05030e');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, width, height);
+
+  // 2. Soft vertical horizon glow (smooth linear gradient without hard edges)
+  const hGlowY = height * 0.70;
+  const hGlowH = height * 0.24;
+  const hGrad = ctx.createLinearGradient(0, hGlowY, 0, hGlowY + hGlowH);
+  hGrad.addColorStop(0, 'transparent');
+  hGrad.addColorStop(0.5, colors.secondaryRgba(0.24));
+  hGrad.addColorStop(0.85, colors.mainRgba(0.14));
+  hGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = hGrad;
+  ctx.fillRect(0, hGlowY, width, hGlowH);
+
+  // 3. Static faint star field baked in
+  for (let i = 0; i < staticStars.length; i++) {
+    const s = staticStars[i];
+    ctx.fillStyle = s.isPeriwinkle ? colors.accentRgba(s.alpha * 0.55) : `rgba(255, 255, 255, ${(s.alpha * 0.55).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(s.x * width, s.y * height, s.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 4. Soft cloud bands (lower third) - omitted if quality is low
+  if (qualityStep !== 'low') {
+    for (let cl = 0; cl < 3; cl++) {
+      const clY = height * (0.64 + cl * 0.05);
+      const clW = width * 0.55;
+      const clH = 26;
+      const clX = (cl * 0.35 * width) % width;
+      const cGrad = ctx.createRadialGradient(clX + clW / 2, clY, 8, clX + clW / 2, clY, clW / 2);
+      cGrad.addColorStop(0, colors.secondaryRgba(0.12));
+      cGrad.addColorStop(0.7, colors.secondaryRgba(0.03));
+      cGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = cGrad;
+      ctx.beginPath();
+      ctx.ellipse(clX + clW / 2, clY, clW / 2, clH, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 5. City skyline silhouette along bottom (darker so playback controls stay readable)
+  ctx.fillStyle = '#03020a';
+  for (let b = 0; b < buildings.length; b++) {
+    const bd = buildings[b];
+    const bx = bd.x * width;
+    const bw = bd.w * width + 2;
+    const bh = bd.h * height;
+    const by = height - bh;
+    ctx.fillRect(bx, by, bw, bh);
+
+    for (let w = 0; w < bd.windows.length; w++) {
+      const win = bd.windows[w];
+      ctx.fillStyle = win.color;
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(bx + win.col * bw, by + win.row * bh, 2, 3);
+    }
+    ctx.fillStyle = '#03020a';
+    ctx.globalAlpha = 1.0;
+  }
+
+  // 6. Power pole & sagging wires on left
+  const poleX = width * 0.08;
+  const poleTopY = height * 0.68;
+  const poleBottomY = height;
+  ctx.strokeStyle = '#05040e';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(poleX, poleBottomY);
+  ctx.lineTo(poleX, poleTopY);
+  ctx.stroke();
+
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(poleX - 16, poleTopY + 10);
+  ctx.lineTo(poleX + 16, poleTopY + 10);
+  ctx.moveTo(poleX - 12, poleTopY + 28);
+  ctx.lineTo(poleX + 12, poleTopY + 28);
+  ctx.stroke();
+
+  ctx.fillStyle = '#1e1b4b';
+  ctx.fillRect(poleX - 17, poleTopY + 7, 3, 4);
+  ctx.fillRect(poleX + 14, poleTopY + 7, 3, 4);
+  ctx.fillRect(poleX - 13, poleTopY + 25, 3, 4);
+  ctx.fillRect(poleX + 10, poleTopY + 25, 3, 4);
+
+  // Wires
+  ctx.strokeStyle = 'rgba(10, 8, 26, 0.85)';
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.moveTo(0, poleTopY + 4);
+  ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 12, poleX - 16, poleTopY + 10);
+  ctx.quadraticCurveTo(width * 0.22, poleTopY + 36, width * 0.42, poleTopY + 72);
+
+  ctx.moveTo(0, poleTopY + 14);
+  ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 22, poleX + 16, poleTopY + 10);
+  ctx.quadraticCurveTo(width * 0.26, poleTopY + 42, width * 0.48, poleTopY + 80);
+
+  ctx.moveTo(0, poleTopY + 30);
+  ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 38, poleX + 12, poleTopY + 28);
+  ctx.quadraticCurveTo(width * 0.28, poleTopY + 54, width * 0.52, poleTopY + 92);
+  ctx.stroke();
+
+  return canvas;
+}
+
+function getJTNightCache(
+  cache: JTNightOffscreenCache | null,
+  width: number,
+  height: number,
+  colorKey: string,
+  qualityStep: 'low' | 'balanced' | 'high',
+  colors: { main: string; secondary: string; accent: string; mainRgba: (a: number) => string; secondaryRgba: (a: number) => string; accentRgba: (a: number) => string },
+  staticStars: JTNightStaticStar[],
+  buildings: JTNightBuilding[]
+): JTNightOffscreenCache {
+  const floorW = Math.max(1, Math.floor(width));
+  const floorH = Math.max(1, Math.floor(height));
+  if (
+    cache &&
+    cache.width === floorW &&
+    cache.height === floorH &&
+    cache.colorKey === colorKey &&
+    cache.qualityStep === qualityStep
+  ) {
+    return cache;
+  }
+
+  // Free previous canvas memory immediately
+  if (cache) {
+    cache.bgCanvas.width = 0;
+    cache.bgCanvas.height = 0;
+    cache.bubbleSprite.width = 0;
+    cache.bubbleSprite.height = 0;
+    cache.dotSprite.width = 0;
+    cache.dotSprite.height = 0;
+    cache.streakSprite.width = 0;
+    cache.streakSprite.height = 0;
+  }
+
+  const bgCanvas = renderJTNightBackground(floorW, floorH, colors, staticStars, buildings, qualityStep);
+  const bubbleSprite = createBubbleSprite(colors.accent);
+  const dotSprite = createDotSprite('#ffffff', colors.accent);
+  const streakSprite = createStreakSprite(colors.main, colors.accent);
+
+  return {
+    width: floorW,
+    height: floorH,
+    colorKey,
+    qualityStep,
+    bgCanvas,
+    bubbleSprite,
+    dotSprite,
+    streakSprite,
+  };
 }
 
 interface RGB {
@@ -194,6 +456,7 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   reactionStrength = 'medium',
   onAutoSceneDetermined,
   currentTime = 0,
+  isUiOverlayOpen = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -209,6 +472,17 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   performanceModeRef.current = performanceMode;
   const reactionStrengthRef = useRef(reactionStrength);
   reactionStrengthRef.current = reactionStrength;
+  const isUiOverlayOpenRef = useRef(isUiOverlayOpen);
+  isUiOverlayOpenRef.current = isUiOverlayOpen;
+
+  // Auto-quality and frame-budget monitoring
+  const autoQualityStepRef = useRef<'low' | 'balanced' | 'high'>(
+    performanceMode === 'battery' ? 'low' : performanceMode === 'high' ? 'high' : 'balanced'
+  );
+  const frameTimesRef = useRef<number[]>([]);
+  const under14DurationRef = useRef<number>(0);
+  const lastDiagBroadcastRef = useRef<number>(0);
+  const lastDrawDurationRef = useRef<number>(1.5);
 
   // Smooth color transitions (1.5s fade without sudden jump)
   const currentColorsRef = useRef<{ main: RGB; secondary: RGB; accent: RGB }>({
@@ -252,25 +526,31 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
   const currentTimeRef = useRef<number>(currentTime ?? 0);
   currentTimeRef.current = currentTime ?? 0;
 
-  // JT Night dedicated persistent state
+  // JT Night dedicated persistent state (with offscreen caching, smooth 96-pt ring, and capped shards)
   const jtNightRef = useRef<{
     stars: JTNightStar[];
+    staticStars: JTNightStaticStar[];
     bubbles: JTNightBubble[];
-    spawnRings: JTNightSpawnRing[];
     buildings: JTNightBuilding[];
+    shards: JTNightShard[];
     beatMeteor: JTNightMeteor | null;
     lastBeatMeteorTime: number;
     ringRotation: number;
-    spikes: number[];
+    ringPoints: Float32Array;
+    badgeScale: number;
+    cache: JTNightOffscreenCache | null;
   }>({
     stars: [],
+    staticStars: [],
     bubbles: [],
-    spawnRings: [],
     buildings: [],
+    shards: [],
     beatMeteor: null,
     lastBeatMeteorTime: 0,
     ringRotation: 0,
-    spikes: new Array(96).fill(0),
+    ringPoints: new Float32Array(96),
+    badgeScale: 1.0,
+    cache: null,
   });
 
   const isActiveRef = useRef(isActive);
@@ -286,15 +566,20 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       return;
     }
 
-    const ctx = canvas.getContext('2d');
+    const ctx = (canvas.getContext('2d', { alpha: false, desynchronized: true }) || canvas.getContext('2d')) as CanvasRenderingContext2D | null;
     if (!ctx) return;
 
     // Responsive scaling with full screen, rotation and devicePixelRatio support
+    // Cap DPR to 1.5 on mobile devices (2.0 only in High Quality mode) to keep GPU fill-rate light
     const updateDimensions = () => {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      const dpr = performanceMode === 'battery' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+      const isHighQuality = autoQualityStepRef.current === 'high' && performanceModeRef.current === 'high';
+      const maxDpr = isHighQuality ? 2.0 : 1.5;
+      const dpr = performanceModeRef.current === 'battery' || autoQualityStepRef.current === 'low'
+        ? 1.0
+        : Math.min(window.devicePixelRatio || 1, maxDpr);
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -363,51 +648,62 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       pulsePhase: Math.random() * Math.PI * 2,
     }));
 
-    // Initialize JT Night particles (scaled by Engine & Battery profile: Battery 40%, Balanced 70%, High 100%)
-    const jtStarCount = performanceMode === 'battery' ? 100 : performanceMode === 'balanced' ? 175 : 250;
-    const jtStars: JTNightStar[] = Array.from({ length: jtStarCount }, () => ({
+    // Initialize JT Night particles:
+    // Balanced: 48 bubbles, 120 twinkling stars (140 static stars in background)
+    // Battery/Low: 24 bubbles, 60 twinkling stars (80 static stars in background)
+    // High: 70 bubbles, 160 twinkling stars (180 static stars in background)
+    const isBattery = performanceMode === 'battery';
+    const isHigh = performanceMode === 'high';
+    const jtStaticStarCount = isBattery ? 80 : isHigh ? 180 : 140;
+    const jtStaticStars: JTNightStaticStar[] = Array.from({ length: jtStaticStarCount }, () => ({
       x: Math.random(),
-      y: Math.random() * 0.85,
-      radius: Math.random() * 1.1 + 0.5, // 0.5 to 1.6 px
-      twinklePhase: Math.random() * Math.PI * 2,
-      twinkleSpeed: Math.random() * 2.5 + 1.2,
-      baseAlpha: Math.random() * 0.5 + 0.45,
-      isPeriwinkle: Math.random() > 0.4,
+      y: Math.random() * 0.72,
+      radius: Math.random() * 0.9 + 0.4,
+      alpha: Math.random() * 0.6 + 0.2,
+      isPeriwinkle: Math.random() > 0.45,
     }));
 
-    const jtBubbleCount = performanceMode === 'battery' ? 32 : performanceMode === 'balanced' ? 56 : 80;
+    const jtStarCount = isBattery ? 60 : isHigh ? 160 : 120;
+    const jtStars: JTNightStar[] = Array.from({ length: jtStarCount }, () => ({
+      x: Math.random(),
+      y: Math.random() * 0.75,
+      radius: Math.random() * 1.0 + 0.5,
+      twinklePhase: Math.random() * Math.PI * 2,
+      twinkleSpeed: Math.random() * 2.2 + 1.0,
+      baseAlpha: Math.random() * 0.5 + 0.4,
+    }));
+
+    const jtBubbleCount = isBattery ? 24 : isHigh ? 70 : 48;
     const jtBubbles: JTNightBubble[] = Array.from({ length: jtBubbleCount }, () => ({
       x: Math.random() * 800,
       y: Math.random() * 800,
-      radius: Math.random() * 12 + 2, // 2 to 14 px
-      strokeWidth: Math.random() > 0.5 ? 2 : 1, // 1 to 2 px stroke
-      speed: Math.random() * 0.9 + 0.4,
+      radius: Math.random() * 10 + 3,
+      speed: Math.random() * 0.8 + 0.35,
       swayPhase: Math.random() * Math.PI * 2,
-      swaySpeed: Math.random() * 1.2 + 0.6,
-      swayAmp: Math.random() * 1.6 + 0.6,
-      alpha: Math.random() * 0.45 + 0.35,
-      baseAlpha: Math.random() * 0.45 + 0.35,
+      swaySpeed: Math.random() * 1.0 + 0.5,
+      swayAmp: Math.random() * 1.4 + 0.5,
+      alpha: Math.random() * 0.4 + 0.3,
+      baseAlpha: Math.random() * 0.4 + 0.3,
     }));
 
-    // Generate city skyline silhouette buildings along bottom
-    const buildingCount = 14;
+    // City skyline buildings along bottom
+    const buildingCount = 12;
     let curBx = 0;
     const jtBuildings: JTNightBuilding[] = [];
     for (let b = 0; b < buildingCount; b++) {
-      const bWidth = Math.random() * 0.05 + 0.05;
-      const bHeight = Math.random() * 0.13 + 0.07;
-      const windows: { col: number; row: number; color: string; twinkleOffset: number }[] = [];
+      const bWidth = Math.random() * 0.055 + 0.05;
+      const bHeight = Math.random() * 0.12 + 0.06;
+      const windows: { col: number; row: number; color: string }[] = [];
       const windowCols = Math.floor(Math.random() * 3 + 2);
-      const windowRows = Math.floor(Math.random() * 6 + 3);
+      const windowRows = Math.floor(Math.random() * 5 + 3);
       for (let r = 0; r < windowRows; r++) {
         for (let c = 0; c < windowCols; c++) {
-          if (Math.random() > 0.38) {
+          if (Math.random() > 0.42) {
             const winColors = ['#fef08a', '#93c5fd', '#c7d2fe', '#ffffff'];
             windows.push({
               col: c / windowCols,
               row: r / windowRows,
               color: winColors[Math.floor(Math.random() * winColors.length)],
-              twinkleOffset: Math.random() * Math.PI * 2,
             });
           }
         }
@@ -423,13 +719,16 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
 
     jtNightRef.current = {
       stars: jtStars,
+      staticStars: jtStaticStars,
       bubbles: jtBubbles,
-      spawnRings: [],
       buildings: jtBuildings,
+      shards: [],
       beatMeteor: null,
       lastBeatMeteorTime: 0,
       ringRotation: 0,
-      spikes: new Array(96).fill(0),
+      ringPoints: new Float32Array(96),
+      badgeScale: 1.0,
+      cache: null,
     };
 
     let isDocumentVisible = true;
@@ -439,20 +738,72 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // =========================================================================
-    // MAIN 60FPS ANIMATION LOOP
+    // MAIN ANIMATION LOOP (driven by dt, with UI throttling & Auto-Quality)
     // =========================================================================
     const render = (currentTime: number) => {
       animFrameRef.current = requestAnimationFrame(render);
 
       if (!isDocumentVisible) return;
 
-      const delta = currentTime - lastFrameTimeRef.current;
+      const now = currentTime;
+      const rawDelta = lastFrameTimeRef.current > 0 ? now - lastFrameTimeRef.current : 16.6;
+
+      // Throttle to 15fps (~66ms) when UI sheets/menus/dialogs are open so the UI runs silk-smooth
+      if (isUiOverlayOpenRef.current && rawDelta < 66) {
+        return;
+      }
+
       const targetDelta = performanceModeRef.current === 'battery' ? 1000 / 30 : 1000 / 60;
-      if (delta < targetDelta - 2) return;
-      lastFrameTimeRef.current = currentTime;
+      if (!isUiOverlayOpenRef.current && rawDelta < targetDelta - 2) return;
+      lastFrameTimeRef.current = now;
+
+      // Frame time delta in seconds and scaled 60fps steps
+      const dt = Math.max(0.001, Math.min(0.08, rawDelta / 1000));
+      const dtStep = dt / 0.016666;
+
+      // Rolling 60-frame history for Auto-Quality step
+      const frameTimes = frameTimesRef.current;
+      frameTimes.push(rawDelta);
+      if (frameTimes.length > 60) frameTimes.shift();
+
+      let avgFrameTime = 16.6;
+      if (frameTimes.length >= 10) {
+        let sum = 0;
+        for (let i = 0; i < frameTimes.length; i++) sum += frameTimes[i];
+        avgFrameTime = sum / frameTimes.length;
+      }
+
+      // Auto-quality adjustment
+      if (avgFrameTime > 22 && autoQualityStepRef.current !== 'low') {
+        if (autoQualityStepRef.current === 'high') {
+          autoQualityStepRef.current = 'balanced';
+        } else {
+          autoQualityStepRef.current = 'low';
+        }
+        under14DurationRef.current = 0;
+      } else if (avgFrameTime < 14 && autoQualityStepRef.current !== 'high' && performanceModeRef.current !== 'battery') {
+        under14DurationRef.current += dt;
+        if (under14DurationRef.current >= 5.0) {
+          if (autoQualityStepRef.current === 'low') {
+            autoQualityStepRef.current = 'balanced';
+          } else if (performanceModeRef.current === 'high') {
+            autoQualityStepRef.current = 'high';
+          }
+          under14DurationRef.current = 0;
+        }
+      } else {
+        under14DurationRef.current = 0;
+      }
+
+      const drawStartTime = performance.now();
 
       const currentPerf = performanceModeRef.current;
-      const dpr = currentPerf === 'battery' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+      const isHighQuality = autoQualityStepRef.current === 'high' && currentPerf === 'high';
+      const maxDpr = isHighQuality ? 2.0 : 1.5;
+      const dpr = currentPerf === 'battery' || autoQualityStepRef.current === 'low'
+        ? 1.0
+        : Math.min(window.devicePixelRatio || 1, maxDpr);
+
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
       const cx = width / 2;
@@ -467,11 +818,11 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       const freq = bands?.rawFrequency;
       const timeDomain = bands?.rawTimeDomain;
 
-      // Physics smoothing
-      smoothedBassRef.current += (rawBass - smoothedBassRef.current) * 0.18;
-      smoothedMidRef.current += (rawMid - smoothedMidRef.current) * 0.15;
-      smoothedHighRef.current += (rawHigh - smoothedHighRef.current) * 0.22;
-      smoothedVolRef.current += (rawVol - smoothedVolRef.current) * 0.14;
+      // Physics smoothing scaled by dtStep
+      smoothedBassRef.current += (rawBass - smoothedBassRef.current) * Math.min(1.0, 0.18 * dtStep);
+      smoothedMidRef.current += (rawMid - smoothedMidRef.current) * Math.min(1.0, 0.15 * dtStep);
+      smoothedHighRef.current += (rawHigh - smoothedHighRef.current) * Math.min(1.0, 0.22 * dtStep);
+      smoothedVolRef.current += (rawVol - smoothedVolRef.current) * Math.min(1.0, 0.14 * dtStep);
 
       // Reaction strength multiplier (Low: 0.6x, Medium: 1.0x, High: 1.5x)
       const currentReaction = reactionStrengthRef.current || 'medium';
@@ -482,7 +833,7 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       const sHigh = Math.min(1.0, smoothedHighRef.current * reactionMult);
       const sVol = Math.min(1.0, smoothedVolRef.current * reactionMult);
 
-      animTimeRef.current += 0.016;
+      animTimeRef.current += dt;
       const t = animTimeRef.current;
 
       // Dynamic Beat Detection Transient
@@ -1126,380 +1477,256 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       // =======================================================================
       else if (resolvedScene === 'jt_night') {
         const jtNight = jtNightRef.current;
-        const blurMult = currentPerf === 'battery' ? 0 : currentPerf === 'balanced' ? 0.6 : 1.0;
+        const colorKey = `${colors.main}-${colors.secondary}-${colors.accent}`;
+        const cache = getJTNightCache(
+          jtNight.cache,
+          width,
+          height,
+          colorKey,
+          autoQualityStepRef.current,
+          colors,
+          jtNight.staticStars,
+          jtNight.buildings
+        );
+        jtNight.cache = cache;
 
-        // Apply slow zoom in/out with the bass (1.00x to 1.03x)
-        const sceneZoom = 1.0 + 0.03 * sBass;
+        // 1. Pre-rendered Background with subtle bass zoom (1.00x - 1.02x)
+        const sceneZoom = 1.0 + 0.02 * sBass;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.scale(sceneZoom, sceneZoom);
         ctx.translate(-cx, -cy);
+        ctx.drawImage(cache.bgCanvas, 0, 0, width, height);
 
-        // 1. SKY: Deep indigo to midnight vertical gradient (#04021a -> #0b0a3d -> #2a2fc9 horizon glow)
-        const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
-        skyGrad.addColorStop(0, '#04021a');
-        skyGrad.addColorStop(0.48, '#0b0a3d');
-        skyGrad.addColorStop(0.82, '#141452');
-        skyGrad.addColorStop(1, colors.secondaryRgba(0.55 + sBass * 0.45));
-        ctx.fillStyle = skyGrad;
-        ctx.fillRect(0, 0, width, height);
-
-        // Horizon glow pulsing with the bass
-        const horizonGlowY = height * 0.88;
-        const hGlow = ctx.createRadialGradient(cx, horizonGlowY, 15, cx, horizonGlowY, width * 0.75);
-        hGlow.addColorStop(0, colors.secondaryRgba(0.4 + sBass * 0.5));
-        hGlow.addColorStop(0.65, colors.mainRgba(0.18 + sBass * 0.25));
-        hGlow.addColorStop(1, 'transparent');
-        ctx.fillStyle = hGlow;
-        ctx.fillRect(0, horizonGlowY - 140, width, 200);
-
-        // 2. STARS: ~250 tiny stars (radius 0.5 to 1.6 px, white to soft periwinkle)
-        // Treble makes stars sparkle brighter
-        const jtStars = jtNight.stars;
-        for (let i = 0; i < jtStars.length; i++) {
-          const s = jtStars[i];
-          const sx = s.x * width;
-          const sy = s.y * height;
+        // 2. Twinkling Stars (drawn via pre-rendered dotSprite, zero shadowBlur)
+        for (let i = 0; i < jtNight.stars.length; i++) {
+          const s = jtNight.stars[i];
           const twinkle = 0.4 + 0.6 * Math.sin(s.twinklePhase + t * s.twinkleSpeed);
-          const sAlpha = Math.min(1.0, s.baseAlpha * twinkle * (1.0 + sHigh * 1.5));
+          const sAlpha = Math.min(1.0, s.baseAlpha * twinkle * (1.0 + sHigh * 1.2));
+          ctx.globalAlpha = sAlpha;
+          const sSize = s.radius * 2;
+          ctx.drawImage(cache.dotSprite, s.x * width - s.radius, s.y * height - s.radius, sSize, sSize);
+        }
+        ctx.globalAlpha = 1.0;
 
-          ctx.fillStyle = s.isPeriwinkle ? colors.accentRgba(sAlpha) : `rgba(255, 255, 255, ${sAlpha.toFixed(3)})`;
-          ctx.beginPath();
-          ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
-          ctx.fill();
+        // 3. Ambient Shooting Star (streakSprite)
+        const ambCycle = (t * 0.16) % 1;
+        if (ambCycle > 0.05 && ambCycle < 0.45) {
+          const ambProg = (ambCycle - 0.05) / 0.40;
+          const ambAlpha = Math.sin(ambProg * Math.PI) * 0.85;
+          const msX = width * 0.06 + ambProg * (width * 0.28);
+          const msY = height * 0.06 + ambProg * (height * 0.16);
+          ctx.save();
+          ctx.translate(msX, msY);
+          ctx.rotate(0.54);
+          ctx.globalAlpha = ambAlpha;
+          ctx.drawImage(cache.streakSprite, -50, -6, 50, 12);
+          ctx.restore();
         }
 
-        // 3. CLOUDS: Soft wispy cloud bands across the lower third (blurred low-opacity ellipses with blue glow)
-        for (let cl = 0; cl < 4; cl++) {
-          const clCenter = ((cl * 0.26 * width + Math.sin(t * 0.2 + cl * 1.8) * 45) % (width + 260)) - 130;
-          const clY = height * (0.64 + cl * 0.045);
-          const clW = width * 0.46;
-          const clH = 22;
-
-          const cGrad = ctx.createRadialGradient(clCenter + clW / 2, clY, 8, clCenter + clW / 2, clY, clW / 2);
-          cGrad.addColorStop(0, colors.secondaryRgba(0.15 + sBass * 0.1));
-          cGrad.addColorStop(0.7, colors.secondaryRgba(0.04));
-          cGrad.addColorStop(1, 'transparent');
-
-          ctx.fillStyle = cGrad;
-          ctx.beginPath();
-          ctx.ellipse(clCenter + clW / 2, clY, clW / 2, clH, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // 4. SHOOTING STAR: Ambient streak in upper-left sky (fades and brightens slowly)
-        const ambCycle = (t * 0.22) % 1;
-        if (ambCycle > 0.06 && ambCycle < 0.48) {
-          const ambProg = (ambCycle - 0.06) / 0.42;
-          const ambAlpha = Math.sin(ambProg * Math.PI) * 0.9;
-          const msX1 = width * 0.05 + ambProg * (width * 0.26);
-          const msY1 = height * 0.07 + ambProg * (height * 0.15);
-          const streakLen = 46;
-          const msX2 = msX1 - streakLen * 0.86;
-          const msY2 = msY1 - streakLen * 0.51;
-
-          const msGrad = ctx.createLinearGradient(msX2, msY2, msX1, msY1);
-          msGrad.addColorStop(0, 'transparent');
-          msGrad.addColorStop(0.65, colors.accentRgba(ambAlpha * 0.45));
-          msGrad.addColorStop(1, `rgba(255, 255, 255, ${ambAlpha.toFixed(3)})`);
-
-          ctx.strokeStyle = msGrad;
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          ctx.moveTo(msX2, msY2);
-          ctx.lineTo(msX1, msY1);
-          ctx.stroke();
-
-          // Glowing head
-          ctx.fillStyle = '#ffffff';
-          if (blurMult > 0) {
-            ctx.shadowColor = colors.accent;
-            ctx.shadowBlur = 8 * blurMult;
-          }
-          ctx.beginPath();
-          ctx.arc(msX1, msY1, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.shadowBlur = 0;
-        }
-
-        // Beat Meteor: On strong beats, trigger short extra meteor crossing quickly (at most one every 4s)
+        // 4. Beat Meteor (triggered on heavy bass drop, at most once per 4s)
         const nowMs = performance.now();
-        if (isBeat && sBass > 0.58 && nowMs - jtNight.lastBeatMeteorTime > 4000) {
+        if (isBeat && sBass > 0.65 && nowMs - jtNight.lastBeatMeteorTime > 4000) {
           jtNight.lastBeatMeteorTime = nowMs;
           const startX = width * (0.05 + Math.random() * 0.35);
           const startY = height * (0.04 + Math.random() * 0.16);
-          const angle = 0.56;
-          const travel = width * 0.46;
           jtNight.beatMeteor = {
             active: true,
             startX,
             startY,
             curX: startX,
             curY: startY,
-            endX: startX + Math.cos(angle) * travel,
-            endY: startY + Math.sin(angle) * travel,
-            len: 80,
-            speed: 1200,
+            endX: startX,
+            endY: startY,
+            len: 70,
+            speed: 1,
             progress: 0,
             alpha: 1.0,
           };
         }
-
         if (jtNight.beatMeteor && jtNight.beatMeteor.active) {
           const bm = jtNight.beatMeteor;
-          bm.progress += 0.042;
+          bm.progress += 0.045 * dtStep;
           if (bm.progress >= 1.0) {
             bm.active = false;
           } else {
-            const headX = bm.startX + (bm.endX - bm.startX) * bm.progress;
-            const headY = bm.startY + (bm.endY - bm.startY) * bm.progress;
-            const tailX = headX - Math.cos(0.56) * bm.len;
-            const tailY = headY - Math.sin(0.56) * bm.len;
-            const bAlpha = (1 - bm.progress) * 0.95;
-
-            const bGrad = ctx.createLinearGradient(tailX, tailY, headX, headY);
-            bGrad.addColorStop(0, 'transparent');
-            bGrad.addColorStop(0.65, colors.mainRgba(bAlpha * 0.5));
-            bGrad.addColorStop(1, '#ffffff');
-
-            ctx.strokeStyle = bGrad;
-            ctx.lineWidth = 2.2;
-            ctx.beginPath();
-            ctx.moveTo(tailX, tailY);
-            ctx.lineTo(headX, headY);
-            ctx.stroke();
-
-            ctx.fillStyle = '#ffffff';
-            if (blurMult > 0) {
-              ctx.shadowColor = colors.main;
-              ctx.shadowBlur = 14 * blurMult;
-            }
-            ctx.beginPath();
-            ctx.arc(headX, headY, 2.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            const travel = width * 0.42;
+            const headX = bm.startX + Math.cos(0.56) * travel * bm.progress;
+            const headY = bm.startY + Math.sin(0.56) * travel * bm.progress;
+            ctx.save();
+            ctx.translate(headX, headY);
+            ctx.rotate(0.56);
+            ctx.globalAlpha = (1 - bm.progress) * 0.9;
+            ctx.drawImage(cache.streakSprite, -bm.len, -7, bm.len, 14);
+            ctx.restore();
           }
         }
 
-        // 5. CITY SKYLINE SILHOUETTE: at bottom with tiny windows twinkling in blue and warm white
-        const bList = jtNight.buildings;
-        ctx.fillStyle = '#04030d';
-        for (let b = 0; b < bList.length; b++) {
-          const bd = bList[b];
-          const bx = bd.x * width;
-          const bw = bd.w * width + 2;
-          const bh = bd.h * height;
-          const by = height - bh;
-          ctx.fillRect(bx, by, bw, bh);
-
-          for (let w = 0; w < bd.windows.length; w++) {
-            const win = bd.windows[w];
-            const wx = bx + win.col * bw;
-            const wy = by + win.row * bh;
-            const winTwinkle = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 2.2 + win.twinkleOffset));
-            ctx.fillStyle = win.color;
-            ctx.globalAlpha = winTwinkle;
-            ctx.fillRect(wx, wy, 2, 3);
-          }
-          ctx.fillStyle = '#04030d';
-          ctx.globalAlpha = 1.0;
-        }
-
-        // Power pole and wires on left side
-        const poleX = width * 0.08;
-        const poleTopY = height * 0.68;
-        const poleBottomY = height;
-        ctx.strokeStyle = '#060512';
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(poleX, poleBottomY);
-        ctx.lineTo(poleX, poleTopY);
-        ctx.stroke();
-
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(poleX - 16, poleTopY + 10);
-        ctx.lineTo(poleX + 16, poleTopY + 10);
-        ctx.moveTo(poleX - 12, poleTopY + 28);
-        ctx.lineTo(poleX + 12, poleTopY + 28);
-        ctx.stroke();
-
-        ctx.fillStyle = '#1e1b4b';
-        ctx.fillRect(poleX - 17, poleTopY + 7, 3, 4);
-        ctx.fillRect(poleX + 14, poleTopY + 7, 3, 4);
-        ctx.fillRect(poleX - 13, poleTopY + 25, 3, 4);
-        ctx.fillRect(poleX + 10, poleTopY + 25, 3, 4);
-
-        ctx.strokeStyle = 'rgba(12, 10, 30, 0.75)';
-        ctx.lineWidth = 1;
-        const wireSag = Math.sin(t * 1.5) * 1.2;
-        ctx.beginPath();
-        ctx.moveTo(0, poleTopY + 4);
-        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 12 + wireSag, poleX - 16, poleTopY + 10);
-        ctx.quadraticCurveTo(width * 0.22, poleTopY + 36 + wireSag, width * 0.42, poleTopY + 72);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(0, poleTopY + 14);
-        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 22 + wireSag, poleX + 16, poleTopY + 10);
-        ctx.quadraticCurveTo(width * 0.26, poleTopY + 42 + wireSag, width * 0.48, poleTopY + 80);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(0, poleTopY + 30);
-        ctx.quadraticCurveTo(poleX * 0.5, poleTopY + 38 + wireSag, poleX + 12, poleTopY + 28);
-        ctx.quadraticCurveTo(width * 0.28, poleTopY + 54 + wireSag, width * 0.52, poleTopY + 92);
-        ctx.stroke();
-
-        // 6. BUBBLES: 70-90 hollow glowing rings drifting upward with gentle sideways sway
-        // Treble makes them brighter and drift slightly faster
-        const jtBubbles = jtNight.bubbles;
-        for (let i = 0; i < jtBubbles.length; i++) {
-          const b = jtBubbles[i];
-          b.y -= b.speed * (1 + sHigh * 1.5);
+        // 5. Bubbles (drawn via pre-rendered bubbleSprite, zero shadowBlur)
+        for (let i = 0; i < jtNight.bubbles.length; i++) {
+          const b = jtNight.bubbles[i];
+          b.y -= b.speed * (1 + sHigh * 1.2) * dtStep;
           if (b.y < -20) {
             b.y = height + 20;
             b.x = Math.random() * width;
           }
           const sway = Math.sin(t * b.swaySpeed + b.swayPhase) * b.swayAmp;
           const bx = b.x + sway;
-          const bAlpha = Math.min(1.0, b.baseAlpha * (0.75 + sHigh * 0.6));
-
-          ctx.strokeStyle = colors.accentRgba(bAlpha);
-          ctx.lineWidth = b.strokeWidth;
-          if (blurMult > 0 && b.radius > 6) {
-            ctx.shadowColor = colors.main;
-            ctx.shadowBlur = 6 * blurMult;
-          }
-          ctx.beginPath();
-          ctx.arc(bx, b.y, b.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.shadowBlur = 0;
+          const bAlpha = Math.min(1.0, b.baseAlpha * (0.7 + sHigh * 0.5));
+          ctx.globalAlpha = bAlpha;
+          const bDiam = b.radius * 2;
+          ctx.drawImage(cache.bubbleSprite, bx - b.radius, b.y - b.radius, bDiam, bDiam);
         }
+        ctx.globalAlpha = 1.0;
 
-        // On the beat, spawn 3 to 6 new rings near the center badge that grow outward and fade
-        if (isBeat) {
-          const spawnNum = Math.floor(Math.random() * 4 + 3);
-          for (let sr = 0; sr < spawnNum; sr++) {
-            jtNight.spawnRings.push({
-              x: cx,
-              y: height * 0.40,
-              radius: width * 0.19 * (0.8 + Math.random() * 0.3),
-              maxRadius: width * 0.19 * (1.4 + Math.random() * 0.8),
-              alpha: 0.85,
-              growthSpeed: 1.4 + Math.random() * 1.6,
-            });
-          }
-        }
-
-        for (let sr = jtNight.spawnRings.length - 1; sr >= 0; sr--) {
-          const ring = jtNight.spawnRings[sr];
-          ring.radius += ring.growthSpeed;
-          const prog = ring.radius / ring.maxRadius;
-          ring.alpha = Math.max(0, (1 - prog) * 0.85);
-          if (ring.radius >= ring.maxRadius || ring.alpha <= 0.01) {
-            jtNight.spawnRings.splice(sr, 1);
-            continue;
-          }
-          ctx.strokeStyle = colors.accentRgba(ring.alpha);
-          ctx.lineWidth = 1.4;
-          if (blurMult > 0) {
-            ctx.shadowColor = colors.main;
-            ctx.shadowBlur = 8 * blurMult;
-          }
-          ctx.beginPath();
-          ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-        }
-
-        // 7. BADGE & REACTIVE RING:
-        // Centered horizontally at roughly 40% height, diameter ~38% width
+        // 6. Center Badge & Smooth 96-Point Reactive Ring
         const badgeY = height * 0.40;
         const badgeRadius = Math.max(50, Math.min(width * 0.19, height * 0.22));
-        const badgeScale = 1.0 + 0.06 * sBass;
 
-        // Reactive Ring: 96 points soundwave outline
-        if (isBeat) {
-          const spikeCount = Math.floor(Math.random() * 14 + 10);
-          for (let k = 0; k < spikeCount; k++) {
-            const idx = Math.floor(Math.random() * 96);
-            jtNight.spikes[idx] = Math.random() * 26 + 14;
+        // Badge scale pulse on bass: fast attack, slow release, scale 1.00 to 1.05
+        const targetBadgeScale = 1.0 + 0.05 * sBass;
+        if (targetBadgeScale > jtNight.badgeScale) {
+          jtNight.badgeScale += (targetBadgeScale - jtNight.badgeScale) * Math.min(1.0, 0.45 * dtStep);
+        } else {
+          jtNight.badgeScale += (targetBadgeScale - jtNight.badgeScale) * Math.min(1.0, 0.09 * dtStep);
+        }
+
+        // 48 frequency bins, spatial smoothing [1, 2, 3, 2, 1], mirrored to 96 points
+        const maxOffset = badgeRadius * 0.12;
+        const raw48 = new Float32Array(48);
+        const freqLen = freq ? freq.length : 0;
+        for (let k = 0; k < 48; k++) {
+          if (freq && freqLen > 0) {
+            const binIdx = Math.min(freqLen - 1, Math.floor(Math.pow(k / 48, 1.25) * Math.min(freqLen, 128)));
+            raw48[k] = (freq[binIdx] / 255) * reactionMult;
+          } else {
+            raw48[k] = 0;
           }
         }
-        for (let k = 0; k < 96; k++) {
-          jtNight.spikes[k] *= 0.85;
+
+        // Spatial kernel smoothing
+        const smoothed48 = new Float32Array(48);
+        for (let k = 0; k < 48; k++) {
+          let wSum = 0;
+          let valSum = 0;
+          for (let offset = -2; offset <= 2; offset++) {
+            const w = offset === 0 ? 3 : Math.abs(offset) === 1 ? 2 : 1;
+            const idx = Math.max(0, Math.min(47, k + offset));
+            valSum += raw48[idx] * w;
+            wSum += w;
+          }
+          smoothed48[k] = valSum / wSum;
         }
-        jtNight.ringRotation += 0.003 + sMid * 0.005;
+
+        // Temporal smoothing per point (attack ~0.35, release ~0.08)
+        const ringPoints = jtNight.ringPoints;
+        for (let p = 0; p < 96; p++) {
+          const bin = p < 48 ? p : 95 - p;
+          const targetOffset = Math.min(maxOffset, smoothed48[bin] * maxOffset);
+          const curOffset = ringPoints[p];
+          if (targetOffset > curOffset) {
+            ringPoints[p] += (targetOffset - curOffset) * Math.min(1.0, 0.35 * dtStep);
+          } else {
+            ringPoints[p] += (targetOffset - curOffset) * Math.min(1.0, 0.08 * dtStep);
+          }
+        }
+        jtNight.ringRotation += (0.002 + sMid * 0.003) * dtStep;
 
         ctx.save();
         ctx.translate(cx, badgeY);
-        ctx.scale(badgeScale, badgeScale);
+        ctx.scale(jtNight.badgeScale, jtNight.badgeScale);
 
-        // Thin smooth inner circle stays steady inside reactive ring
-        ctx.strokeStyle = 'rgba(199, 210, 254, 0.45)';
+        // Thin smooth inner circle stays steady
+        ctx.strokeStyle = 'rgba(199, 210, 254, 0.40)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.arc(0, 0, badgeRadius + 3, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Reactive soundwave ring (96 points driven by frequency bins)
-        ctx.beginPath();
-        const ringBright = Math.min(1.0, 0.65 + sBass * 0.45);
-        ctx.strokeStyle = colors.accentRgba(ringBright);
-        ctx.lineWidth = 1.8;
-        if (blurMult > 0) {
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = (10 + sBass * 8) * blurMult;
-        }
+        // 96-point smooth quadratic midpoint curve (continuous wave, no jagged segments)
+        const points: { x: number; y: number }[] = [];
+        const ringRot = jtNight.ringRotation;
         for (let p = 0; p < 96; p++) {
-          const angle = (p / 96) * Math.PI * 2 + jtNight.ringRotation;
-          const binIdx = Math.min(freq ? freq.length - 1 : 0, Math.floor(Math.pow(p / 96, 1.3) * (freq?.length || 128)));
-          const freqVal = freq && freq[binIdx] ? freq[binIdx] / 255 : 0;
-          const waveDist = badgeRadius + 8 + freqVal * 18 * reactionMult + jtNight.spikes[p];
-          const px = Math.cos(angle) * waveDist;
-          const py = Math.sin(angle) * waveDist;
-          if (p === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+          const ang = (p / 96) * Math.PI * 2 + ringRot;
+          const r = badgeRadius + 4 + ringPoints[p];
+          points.push({ x: Math.cos(ang) * r, y: Math.sin(ang) * r });
+        }
+
+        ctx.strokeStyle = colors.accent;
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        const firstMidX = (points[0].x + points[95].x) / 2;
+        const firstMidY = (points[0].y + points[95].y) / 2;
+        ctx.moveTo(firstMidX, firstMidY);
+        for (let p = 0; p < 96; p++) {
+          const nextP = (p + 1) % 96;
+          const midX = (points[p].x + points[nextP].x) / 2;
+          const midY = (points[p].y + points[nextP].y) / 2;
+          ctx.quadraticCurveTo(points[p].x, points[p].y, midX, midY);
         }
         ctx.closePath();
         ctx.stroke();
-        ctx.shadowBlur = 0;
+
+        // Subtle beat shards (at most 6 thin triangular shards on strong beats, ~250ms fade)
+        if (isBeat && sBass > 0.65 && jtNight.shards.length === 0) {
+          const shardCount = Math.min(6, Math.floor(Math.random() * 3 + 4));
+          for (let s = 0; s < shardCount; s++) {
+            jtNight.shards.push({
+              angle: (s / shardCount) * Math.PI * 2 + Math.random() * 0.4,
+              lengthRatio: 0.10,
+              progress: 0,
+            });
+          }
+        }
+        for (let s = jtNight.shards.length - 1; s >= 0; s--) {
+          const sh = jtNight.shards[s];
+          sh.progress += 0.065 * dtStep;
+          if (sh.progress >= 1.0) {
+            jtNight.shards.splice(s, 1);
+            continue;
+          }
+          const shAlpha = (1 - sh.progress) * 0.75;
+          const shDist = badgeRadius + 4 + sh.progress * (badgeRadius * 0.12);
+          const shLen = badgeRadius * sh.lengthRatio * (1 - sh.progress * 0.3);
+          const cosA = Math.cos(sh.angle);
+          const sinA = Math.sin(sh.angle);
+          const tipX = cosA * (shDist + shLen);
+          const tipY = sinA * (shDist + shLen);
+          const baseLeftX = Math.cos(sh.angle - 0.04) * shDist;
+          const baseLeftY = Math.sin(sh.angle - 0.04) * shDist;
+          const baseRightX = Math.cos(sh.angle + 0.04) * shDist;
+          const baseRightY = Math.sin(sh.angle + 0.04) * shDist;
+
+          ctx.fillStyle = colors.accentRgba(shAlpha);
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(baseLeftX, baseLeftY);
+          ctx.lineTo(baseRightX, baseRightY);
+          ctx.closePath();
+          ctx.fill();
+        }
 
         // Black circular badge fill
-        ctx.fillStyle = '#05030e';
+        ctx.fillStyle = '#03020a';
         ctx.beginPath();
         ctx.arc(0, 0, badgeRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Glowing white-periwinkle ring around badge edge
+        // White-periwinkle rim
         ctx.strokeStyle = '#e0e7ff';
-        ctx.lineWidth = 2.5;
-        if (blurMult > 0) {
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 14 * blurMult;
-        }
+        ctx.lineWidth = 2.0;
         ctx.beginPath();
         ctx.arc(0, 0, badgeRadius, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.shadowBlur = 0;
 
-        // Small crown at the top of the ring
-        const crownW = badgeRadius * 0.42;
-        const crownH = badgeRadius * 0.22;
-        const crownTopY = -badgeRadius - crownH * 0.85;
-        const crownBaseY = -badgeRadius - 1;
+        // Crown drawn INSIDE the badge, ABOVE "JT" letters (not on the ring)
+        const crownW = badgeRadius * 0.36;
+        const crownH = badgeRadius * 0.18;
+        const crownBaseY = -badgeRadius * 0.50;
+        const crownTopY = crownBaseY - crownH;
 
         ctx.save();
-        const crownGrad = ctx.createLinearGradient(0, crownTopY, 0, crownBaseY);
-        crownGrad.addColorStop(0, '#ffffff');
-        crownGrad.addColorStop(0.5, '#e0e7ff');
-        crownGrad.addColorStop(1, colors.main);
-        ctx.fillStyle = crownGrad;
-        if (blurMult > 0) {
-          ctx.shadowColor = colors.accent;
-          ctx.shadowBlur = 8 * blurMult;
-        }
+        ctx.fillStyle = '#e0e7ff';
         ctx.beginPath();
         ctx.moveTo(-crownW / 2, crownBaseY);
         ctx.lineTo(-crownW / 2, crownTopY + crownH * 0.35);
@@ -1511,62 +1738,46 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         ctx.closePath();
         ctx.fill();
 
+        // Crown dots
         ctx.fillStyle = '#ffffff';
         ctx.beginPath();
-        ctx.arc(-crownW / 2, crownTopY + crownH * 0.35, 1.6, 0, Math.PI * 2);
-        ctx.arc(0, crownTopY, 2.0, 0, Math.PI * 2);
-        ctx.arc(crownW / 2, crownTopY + crownH * 0.35, 1.6, 0, Math.PI * 2);
+        ctx.arc(-crownW / 2, crownTopY + crownH * 0.35, 1.4, 0, Math.PI * 2);
+        ctx.arc(0, crownTopY, 1.8, 0, Math.PI * 2);
+        ctx.arc(crownW / 2, crownTopY + crownH * 0.35, 1.4, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
 
-        // In the center, letters "JT" in a bold, italic, modern display font with metallic gradient and glow
-        const shimmerCycle = (t * 0.3) % 1;
-        const shimmerBandX = -badgeRadius * 1.8 + shimmerCycle * (badgeRadius * 3.6);
-
+        // Monogram "JT" and "JTEC" inside badge
         ctx.save();
         ctx.beginPath();
         ctx.arc(0, 0, badgeRadius - 2, 0, Math.PI * 2);
         ctx.clip();
 
-        const jtFontSize = Math.round(badgeRadius * 0.76);
+        const jtFontSize = Math.round(badgeRadius * 0.72);
         ctx.font = `italic 900 ${jtFontSize}px "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText('JT', 0, badgeRadius * 0.02);
 
-        const jtGrad = ctx.createLinearGradient(0, -badgeRadius * 0.38, 0, badgeRadius * 0.2);
-        jtGrad.addColorStop(0, '#ffffff');
-        jtGrad.addColorStop(0.55, '#e0e7ff');
-        jtGrad.addColorStop(1, colors.accent);
-
-        if (blurMult > 0) {
-          ctx.shadowColor = colors.main;
-          ctx.shadowBlur = 10 * blurMult;
-        }
-        ctx.fillStyle = jtGrad;
-        ctx.fillText('JT', 0, -badgeRadius * 0.06);
-        ctx.shadowBlur = 0;
-
-        // Underneath "JT", a small "JTEC" label
-        const jtecFontSize = Math.round(badgeRadius * 0.17);
+        const jtecFontSize = Math.round(badgeRadius * 0.16);
         ctx.font = `800 ${jtecFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
         ctx.fillStyle = colors.accentRgba(0.85);
-        ctx.fillText('JTEC', 0, badgeRadius * 0.42);
+        ctx.fillText('JTEC', 0, badgeRadius * 0.46);
 
-        // Light shimmer sweeps diagonally across letters every few seconds
+        // Light shimmer diagonal sweep
+        const shimmerCycle = (t * 0.25) % 1;
+        const shimmerBandX = -badgeRadius * 1.6 + shimmerCycle * (badgeRadius * 3.2);
         ctx.save();
         ctx.translate(shimmerBandX, 0);
         ctx.rotate(-0.4);
-        const shimGrad = ctx.createLinearGradient(-25, 0, 25, 0);
-        shimGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
-        shimGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.42)');
-        shimGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.fillStyle = shimGrad;
-        ctx.fillRect(-25, -badgeRadius * 1.5, 50, badgeRadius * 3);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+        ctx.fillRect(-15, -badgeRadius * 1.5, 30, badgeRadius * 3);
         ctx.restore();
 
         ctx.restore(); // end clip
 
-        // 8. TIMER: Under the badge, elapsed time of the song (m:ss) in small italic serif font, white with soft glow
+        // 7. Song Timer: Positioned BELOW the ring with at least 16px of clear space
         const curSeconds = currentTimeRef.current || 0;
         const timerM = Math.floor(curSeconds / 60);
         const timerS = Math.floor(curSeconds % 60);
@@ -1576,20 +1787,35 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
         ctx.font = `italic 500 ${timerFontSize}px "Georgia", "Times New Roman", serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-
-        if (blurMult > 0) {
-          ctx.shadowColor = colors.accent;
-          ctx.shadowBlur = 8 * blurMult;
-        }
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(timerText, 0, badgeRadius + 26);
-        ctx.shadowBlur = 0;
+        // badgeRadius * 1.25 + 24 ensures at least 16px clear space beneath the 12% wave offset
+        ctx.fillText(timerText, 0, badgeRadius * 1.25 + 24);
 
         ctx.restore(); // end badge transform
         ctx.restore(); // end scene zoom
       }
 
       ctx.restore();
+
+      // Track draw time and broadcast telemetry once per second
+      const lastDrawDuration = performance.now() - drawStartTime;
+      lastDrawDurationRef.current = lastDrawDuration;
+
+      if (now - lastDiagBroadcastRef.current >= 1000) {
+        lastDiagBroadcastRef.current = now;
+        const fps = Math.min(120, Math.round(1000 / Math.max(1, avgFrameTime)));
+        const activeStars = resolvedScene === 'jt_night' ? jtNightRef.current.stars.length : 0;
+        const activeBubbles = resolvedScene === 'jt_night' ? jtNightRef.current.bubbles.length : 0;
+        VisualizerDiagnostics.updateStats({
+          theme: resolvedScene,
+          avgFrameTimeMs: parseFloat(avgFrameTime.toFixed(1)),
+          drawTimeMs: parseFloat(lastDrawDuration.toFixed(1)),
+          fps,
+          qualityStep: autoQualityStepRef.current,
+          bubblesCount: activeBubbles,
+          starsCount: activeStars,
+        });
+      }
     };
 
     animFrameRef.current = requestAnimationFrame(render);
@@ -1603,6 +1829,19 @@ export const CinematicVisualizer: React.FC<CinematicVisualizerProps> = ({
       window.removeEventListener('resize', updateDimensions);
       window.removeEventListener('orientationchange', updateDimensions);
       resizeObserver.disconnect();
+
+      // Free GPU textures on unmount or scene change
+      if (jtNightRef.current.cache) {
+        jtNightRef.current.cache.bgCanvas.width = 0;
+        jtNightRef.current.cache.bgCanvas.height = 0;
+        jtNightRef.current.cache.bubbleSprite.width = 0;
+        jtNightRef.current.cache.bubbleSprite.height = 0;
+        jtNightRef.current.cache.dotSprite.width = 0;
+        jtNightRef.current.cache.dotSprite.height = 0;
+        jtNightRef.current.cache.streakSprite.width = 0;
+        jtNightRef.current.cache.streakSprite.height = 0;
+        jtNightRef.current.cache = null;
+      }
     };
   }, [scene, performanceMode, isActive]);
 

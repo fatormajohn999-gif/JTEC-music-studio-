@@ -3,11 +3,14 @@ import {
   Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
   Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
   BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Play, Info, User, Download, Radio
+  ChevronDown, ChevronRight, Play, Info, User, Download, Radio,
+  LayoutGrid, SkipBack, SkipForward, Heart, Music2
 } from 'lucide-react';
 import { PartyScreen, PartyErrorBoundary } from '../party';
 import { getPartyBackend } from '../party/backend';
 import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
+import { WidgetBridge } from '../services/widgetBridge';
+import { MediaSessionManager } from '../services/mediaSession';
 import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState, Song } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
@@ -153,6 +156,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   }, []);
   
   const [showManageDownloads, setShowManageDownloads] = useState(false);
+  const [widgetPinFeedback, setWidgetPinFeedback] = useState<'idle' | 'requested' | 'unsupported'>('idle');
+  const [isRequestingWidgetPin, setIsRequestingWidgetPin] = useState(false);
   const downloadedSongs = (songs || []).filter((s) => s.hasStoredBlob);
 
   // Wi-Fi only download setting (default off)
@@ -225,6 +230,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setNotificationStatus(status);
     if (status === 'denied') {
       setShowHowToModal(true);
+    }
+  };
+
+  const handleRequestPinWidget = async () => {
+    if (isRequestingWidgetPin) return;
+    setIsRequestingWidgetPin(true);
+    try {
+      const supported = await WidgetBridge.requestPinWidget();
+      if (supported) {
+        setWidgetPinFeedback('requested');
+        setTimeout(() => {
+          MediaSessionManager.forceWidgetSync({ resetArtworkCache: true });
+        }, 1200);
+      } else {
+        setWidgetPinFeedback('unsupported');
+      }
+    } catch {
+      setWidgetPinFeedback('unsupported');
+    } finally {
+      setIsRequestingWidgetPin(false);
     }
   };
 
@@ -371,6 +396,81 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition-transform" />
         </div>
       </button>
+
+      {/* Home screen widget card */}
+      <div className="rounded-3xl bg-slate-900/60 border border-white/10 p-4 sm:p-5 space-y-4 shadow-lg shadow-black/20">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
+            <LayoutGrid className="w-4 h-4 sm:w-5 sm:h-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">
+              Home screen widget
+            </h3>
+            <p className="text-xs text-slate-400">
+              Control your music from your home screen.
+            </p>
+          </div>
+        </div>
+
+        {/* Mini inline visual preview */}
+        <div className="rounded-2xl bg-gradient-to-br from-[#0b132b] via-[#091024] to-[#1a1033] border border-cyan-500/25 p-3.5 shadow-inner relative overflow-hidden">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500/30 to-purple-600/35 border border-cyan-400/30 flex items-center justify-center shrink-0">
+              <Music2 className="w-5 h-5 text-cyan-300" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-white truncate">JTEC MUSIC</span>
+                <Heart className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              </div>
+              <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                Now Playing • Quick controls
+              </p>
+              <div className="mt-2 h-1 w-full rounded-full bg-white/10 overflow-hidden">
+                <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-cyan-400 to-purple-400" />
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
+                <SkipBack className="w-3.5 h-3.5" />
+              </div>
+              <div className="w-8 h-8 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center shadow-md shadow-cyan-500/30">
+                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+              </div>
+              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
+                <SkipForward className="w-3.5 h-3.5" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRequestPinWidget}
+          disabled={isRequestingWidgetPin}
+          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] shadow-lg shadow-cyan-500/15 disabled:opacity-60"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          <span>{isRequestingWidgetPin ? 'Opening prompt...' : 'Add widget to home screen'}</span>
+        </button>
+
+        {widgetPinFeedback === 'requested' && (
+          <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-[11px] text-cyan-200 leading-relaxed">
+            Follow your phone&apos;s prompt to place the JTEC MUSIC widget on your home screen.
+          </div>
+        )}
+
+        {widgetPinFeedback === 'unsupported' && (
+          <div className="p-3 rounded-xl bg-slate-950/70 border border-white/10 text-[11px] text-slate-300 leading-relaxed">
+            Long-press your home screen, tap Widgets, find JTEC MUSIC and drag it onto the screen.
+          </div>
+        )}
+
+        <p className="text-[11px] text-slate-400 leading-relaxed">
+          If the app is closed completely, tap Play on the widget to open the app and continue.
+        </p>
+      </div>
 
       {/* =========================================================================
           GROUP 1: PLAYBACK (Open by default)

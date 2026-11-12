@@ -7,6 +7,7 @@ import { StorageService } from './services/storage';
 import { SupabaseService } from './services/supabase';
 import { audioEngine } from './services/audioEngine';
 import { MediaSessionManager } from './services/mediaSession';
+import { WidgetBridge } from './services/widgetBridge';
 import { NotificationPermissionManager } from './services/notificationPermission';
 import { extractPaletteFromImage } from './services/colorExtractor';
 import { PersistentSettingsService } from './services/persistentSettings';
@@ -238,6 +239,7 @@ export default function App() {
           handleAppForeground();
           runNativeUpdateCheck(false);
           runMinVersionCheck(true);
+          MediaSessionManager.forceWidgetSync();
         } else {
           handleAppBackground();
         }
@@ -931,10 +933,15 @@ export default function App() {
           setCurrentSong(targetSong);
           setCurrentTime(restoredPosition);
           MediaSessionManager.updateMetadata(targetSong);
-          MediaSessionManager.updatePositionState(restoredPosition, targetSong.duration || 0);
+          MediaSessionManager.updatePositionState(
+            restoredPosition,
+            targetSong.duration || 0,
+            pEffects.playbackRate || 1.0,
+            true
+          );
           MediaSessionManager.updatePlaybackState(false);
 
-          // Prepare audio engine at exact second, PAUSED (Do NOT auto-play)
+          // Prepare audio engine at exact second, PAUSED (Do NOT auto-play unless launched from widget Play)
           let blob = await StorageService.getSongBlob(targetSong.id);
           if (!blob && targetSong.cloudId) {
             blob = await StorageService.getSongBlob(`cloud_${targetSong.cloudId}`);
@@ -970,6 +977,24 @@ export default function App() {
               hasCover: false,
             });
           }
+
+          const launchAction = await WidgetBridge.getLaunchAction();
+          if (launchAction === 'playPause') {
+            try {
+              audioEngine.applyEffects(pEffects);
+              if (audioEngine.hasSource()) {
+                await audioEngine.play();
+              } else {
+                await playSong(targetSong, storedSongs, restoredPosition);
+              }
+            } catch {
+              // ignore autoplay restrictions
+            }
+          }
+        } else {
+          MediaSessionManager.updateMetadata(null);
+          MediaSessionManager.updatePlaybackState('none');
+          await WidgetBridge.getLaunchAction();
         }
 
         StorageService.requestPersistentStorage();
@@ -1540,8 +1565,29 @@ export default function App() {
         currentTimeRef.current = 0;
         MediaSessionManager.updatePlaybackState('none');
       },
+      onToggleFavorite: () => {
+        if (currentSongRef.current) {
+          handleToggleFavorite(currentSongRef.current);
+        }
+      },
     });
-  }, [currentSong, queue, songs, isShuffle, repeatMode, currentTime, duration, effects.playbackRate]);
+  }, [currentSong, queue, songs, playlists, isShuffle, repeatMode, currentTime, duration, effects.playbackRate]);
+
+  // Sync extra widget metadata (accent color, favorite state, queue bounds)
+  useEffect(() => {
+    const q = queue.length > 0 ? queue : songs;
+    const curIdx = currentSong ? q.findIndex((s) => s.id === currentSong.id) : -1;
+    const hasMultiple = q.length > 1;
+    const hasPrev = Boolean(currentSong && (hasMultiple || curIdx > 0));
+    const hasNext = Boolean(currentSong && (hasMultiple || (curIdx >= 0 && curIdx + 1 < q.length)));
+
+    MediaSessionManager.updateWidgetContext({
+      accentColor: currentPalette?.main || '#22D3EE',
+      isFavorite: Boolean(currentSong?.isFavorite),
+      hasPrev,
+      hasNext,
+    });
+  }, [currentSong, currentPalette?.main, queue, songs]);
 
   // Effects handler
   const handleEffectsChange = (newEffects: AudioEffectsConfig) => {
@@ -1733,6 +1779,7 @@ export default function App() {
     if (currentSong?.id === song.id) {
       audioEngine.pause();
       setCurrentSong(null);
+      MediaSessionManager.updateMetadata(null);
     }
     const stats = await StorageService.getStorageStats();
     setStorageStats(stats);
@@ -1746,6 +1793,8 @@ export default function App() {
     setPlaylists([]);
     setQueue([]);
     setCurrentSong(null);
+    MediaSessionManager.updateMetadata(null);
+    MediaSessionManager.updatePlaybackState('none');
     setRecentlyPlayedIds([]);
     setStorageStats({
       songCount: 0,

@@ -23,6 +23,7 @@ import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpd
 import { registerBackHandler } from '../services/navigation';
 import { BUILD_DATE } from '../version';
 import { RequiredUpdateOverlay } from './RequiredUpdateOverlay';
+import { VisualizerDiagnostics, VisualizerPerformanceStats } from '../services/visualizerDiagnostics';
 import { 
   parseConfigNotes, 
   getMinVersionDiagnosticInfo, 
@@ -272,6 +273,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [minVersionDiag, setMinVersionDiag] = useState(() => getMinVersionDiagnosticInfo());
   const [updateDiag, setUpdateDiag] = useState(() => NativeUpdateService.getUpdateDiagnosticInfo());
   const [isCheckingNow, setIsCheckingNow] = useState(false);
+  const [visualizerStats, setVisualizerStats] = useState<VisualizerPerformanceStats>(() => VisualizerDiagnostics.getStats());
+
+  useEffect(() => {
+    if (isOpen) {
+      return VisualizerDiagnostics.subscribe((stats) => {
+        setVisualizerStats(stats);
+      });
+    }
+  }, [isOpen]);
 
   // What this phone reports (Device.getInfo raw values & last ping info)
   const [rawDeviceInfo, setRawDeviceInfo] = useState<DeviceInfo | null>(null);
@@ -2110,6 +2120,68 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     <RefreshCw className={`w-3.5 h-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
                     <span>{isCheckingNow ? 'Checking...' : 'Check now'}</span>
                   </button>
+                </div>
+
+                {/* Requirement 5: Visualizer performance telemetry box */}
+                <div className="rounded-3xl border border-cyan-500/40 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+                        <Activity className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-wider">Visualizer Performance</h4>
+                        <p className="text-[11px] text-slate-400">Live frame time, draw latency, quality step & particle counts (updates 1/sec)</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      Live Telemetry
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Current Theme</span>
+                      <span className="font-mono text-xs font-bold text-cyan-300 block">
+                        {visualizerStats.theme === 'jt_night' ? '🌙 JT Night' : visualizerStats.theme}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Avg Frame Time</span>
+                      <span className="font-mono text-xs font-bold text-white block">
+                        {visualizerStats.avgFrameTimeMs.toFixed(1)} ms ({visualizerStats.fps} FPS)
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Draw Time</span>
+                      <span className="font-mono text-xs font-bold text-emerald-400 block">
+                        {visualizerStats.drawTimeMs.toFixed(2)} ms
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Quality Step</span>
+                      <span className="font-mono text-xs font-bold uppercase text-purple-300 block">
+                        {visualizerStats.qualityStep}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Bubbles Drawn</span>
+                      <span className="font-mono text-xs font-bold text-white block">
+                        {visualizerStats.bubblesCount}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Stars Drawn</span>
+                      <span className="font-mono text-xs font-bold text-white block">
+                        {visualizerStats.starsCount}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Requirement 1: What this phone reports */}
