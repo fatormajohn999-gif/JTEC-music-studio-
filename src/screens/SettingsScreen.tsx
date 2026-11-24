@@ -23,6 +23,7 @@ import { DeveloperPage } from '../components/DeveloperPage';
 import { ManageDownloadsModal } from '../components/ManageDownloadsModal';
 import { APP_VERSION, BUILD_DATE } from '../version';
 import { getCurrentAppVersion } from '../services/nativeUpdate';
+import { isNativeAndroid } from '../services/appConfig';
 import { SupabaseService } from '../services/supabase';
 import { StorageService } from '../services/storage';
 import { PersistentSettingsService } from '../services/persistentSettings';
@@ -1134,7 +1135,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   onClick={handleVersionTap}
                   className="cursor-default"
                 >
-                  Version <strong className="text-slate-300 font-medium">{appVersionInfo.version}</strong> (Build <strong className="text-slate-300 font-medium">{appVersionInfo.build}</strong>) • Built <strong className="text-slate-300 font-medium">{BUILD_DATE}</strong>
+                  {isNativeAndroid() ? (
+                    <>
+                      Version <strong className="text-slate-300 font-medium">{appVersionInfo.version}</strong> (Build <strong className="text-slate-300 font-medium">{appVersionInfo.build}</strong>) • Built <strong className="text-slate-300 font-medium">{BUILD_DATE}</strong>
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-slate-300 font-medium">Web version</strong> • Built <strong className="text-slate-300 font-medium">{BUILD_DATE}</strong>
+                    </>
+                  )}
                 </p>
               </div>
             </div>

@@ -18,6 +18,29 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000; // 5 minutes
 export const DEFAULT_FALLBACK_APK_URL =
   'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk';
 
+/**
+ * Minimum-version blocking and native APK updates apply ONLY to the native Android app.
+ */
+export function isNativeAndroid(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+}
+
+/**
+ * Clears any saved minimum-version config / blocked state from storage.
+ * Called on the web so a previously-blocked website session recovers immediately.
+ */
+export function clearSavedMinVersionState(): void {
+  lastMinVersionErrorMemory = null;
+  try {
+    localStorage.removeItem(LS_KEY_LAST_CONFIG_DATA);
+    localStorage.removeItem(LS_KEY_LAST_CONFIG_CHECK);
+    localStorage.removeItem(LS_KEY_LAST_CONFIG_READ_TIME);
+    localStorage.removeItem(LS_KEY_LAST_CONFIG_ERROR);
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export interface AppConfigRow {
   id?: number;
   min_build: number;
@@ -462,6 +485,11 @@ export function handleAppForeground(): void {
  * this app launch immediately before any network request completes.
  */
 export function getSavedMinVersionStatusSync(): MinVersionStatus | null {
+  if (!isNativeAndroid()) {
+    clearSavedMinVersionState();
+    return null;
+  }
+
   try {
     const cached = localStorage.getItem(LS_KEY_LAST_CONFIG_DATA);
     if (!cached) return null;
@@ -469,7 +497,6 @@ export function getSavedMinVersionStatusSync(): MinVersionStatus | null {
     const parsed = JSON.parse(cached) as AppConfigRow;
     const minBuild = Number(parsed.min_build) || 0;
     const currentBuild = getInstalledBuildSync();
-    const isWeb = !Capacitor.isNativePlatform();
 
     if (minBuild > 0 && currentBuild < minBuild) {
       return {
@@ -479,7 +506,7 @@ export function getSavedMinVersionStatusSync(): MinVersionStatus | null {
         notesBullets: parseConfigNotes(parsed.notes),
         apkUrl: parsed.apk_url?.trim() || DEFAULT_FALLBACK_APK_URL,
         currentBuild,
-        isWeb,
+        isWeb: false,
       };
     }
     return null;
@@ -501,8 +528,13 @@ export function getSavedMinVersionStatusSync(): MinVersionStatus | null {
  * - Records errors for the Developer Page.
  */
 export async function checkMinimumVersion(isForegroundCheck = false): Promise<MinVersionStatus | null> {
+  if (!isNativeAndroid()) {
+    clearSavedMinVersionState();
+    return null;
+  }
+
   try {
-    const isWeb = !Capacitor.isNativePlatform();
+    const isWeb = false;
     const now = Date.now();
     const lastCheckStr = localStorage.getItem(LS_KEY_LAST_CONFIG_CHECK);
     const lastCheck = lastCheckStr ? parseInt(lastCheckStr, 10) : 0;
@@ -595,6 +627,16 @@ export function getMinVersionDiagnosticInfo(): {
   lastError: string | null;
   isBlocked: boolean;
 } {
+  if (!isNativeAndroid()) {
+    clearSavedMinVersionState();
+    return {
+      minBuild: null,
+      lastReadTime: null,
+      lastError: null,
+      isBlocked: false,
+    };
+  }
+
   try {
     let minBuild: number | null = null;
     const cachedData = localStorage.getItem(LS_KEY_LAST_CONFIG_DATA);

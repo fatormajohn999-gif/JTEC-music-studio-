@@ -25,6 +25,7 @@ import { BUILD_DATE } from '../version';
 import { RequiredUpdateOverlay } from './RequiredUpdateOverlay';
 import { VisualizerDiagnostics, VisualizerPerformanceStats } from '../services/visualizerDiagnostics';
 import { 
+  isNativeAndroid,
   parseConfigNotes, 
   getMinVersionDiagnosticInfo, 
   checkMinimumVersion,
@@ -318,19 +319,27 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     return new Date(ts).toLocaleString();
   }, []);
 
-  // Fetch installed version & latest published release data
+  // Fetch installed version & latest published Android APK release data
   const loadLatestReleaseData = useCallback(async () => {
     try {
       const appInfo = await getCurrentAppVersion();
       setAppVersionInfo({ version: appInfo.version, build: appInfo.build });
 
-      const updateInfo = await NativeUpdateService.checkForUpdate(true);
-      if (updateInfo) {
-        if (updateInfo.latestBuild) {
-          setLatestBuild(updateInfo.latestBuild);
+      const releaseInfo = isNativeAndroid()
+        ? await NativeUpdateService.checkForUpdate(true)
+        : await NativeUpdateService.fetchLatestPublishedAndroidRelease();
+
+      if (releaseInfo) {
+        if (releaseInfo.latestBuild) {
+          setLatestBuild(releaseInfo.latestBuild);
         }
-        if (updateInfo.versionName) {
-          setLatestVersionName(updateInfo.versionName);
+        if (releaseInfo.versionName) {
+          setLatestVersionName(releaseInfo.versionName);
+        }
+      } else {
+        const diag = NativeUpdateService.getUpdateDiagnosticInfo();
+        if (diag.lastFoundBuild) {
+          setLatestBuild(diag.lastFoundBuild);
         }
       }
     } catch {
@@ -938,15 +947,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       const pLower = (item.platform || 'web').toLowerCase();
       if (pLower.includes('android')) {
         android += 1;
+        // Minimum-version blocking compares ONLY Android builds; web installs are excluded from Blocked/Allowed counts
+        const b = item.build;
+        if (currentMinBuild > 0 && (b === null || b < currentMinBuild)) {
+          blocked += 1;
+        } else {
+          allowed += 1;
+        }
       } else {
         web += 1;
-      }
-
-      const b = item.build;
-      if (currentMinBuild > 0 && (b === null || b < currentMinBuild)) {
-        blocked += 1;
-      } else {
-        allowed += 1;
       }
     });
 
@@ -1013,10 +1022,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
     if (statusFilter !== 'all') {
       list = list.filter((item) => {
+        const isAndroid = (item.platform || 'web').toLowerCase().includes('android');
         const b = item.build;
-        const isBlocked = currentMinBuild > 0 && (b === null || b < currentMinBuild);
-        if (statusFilter === 'blocked') return isBlocked;
-        if (statusFilter === 'allowed') return !isBlocked;
+        const isBlocked = isAndroid && currentMinBuild > 0 && (b === null || b < currentMinBuild);
+        if (statusFilter === 'blocked') return isAndroid && isBlocked;
+        if (statusFilter === 'allowed') return isAndroid && !isBlocked;
         if (statusFilter === 'online') {
           const lastSeenMs = item.last_seen ? new Date(item.last_seen).getTime() : 0;
           return lastSeenMs > 0 && now - lastSeenMs <= 10 * 60 * 1000;
@@ -1034,31 +1044,49 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     return list;
   }, [installs, deviceSearch, platformFilter, versionFilter, statusFilter, lastSeenSortDesc, currentMinBuild]);
 
-  // Grouped versions table (group installs by build)
+  // Grouped versions table (Android builds grouped by build; Web installs in their own always-allowed row)
   const versionsTable = useMemo(() => {
-    const map = new Map<number, { version: string; count: number }>();
+    const androidMap = new Map<number, { version: string; count: number }>();
+    let webCount = 0;
+
     installs.forEach((item) => {
+      const isAndroid = (item.platform || 'web').toLowerCase().includes('android');
+      if (!isAndroid) {
+        webCount += 1;
+        return;
+      }
       const b = item.build ?? 0;
       const v = item.app_version || `Build ${b}`;
-      const cur = map.get(b);
+      const cur = androidMap.get(b);
       if (cur) {
         cur.count += 1;
       } else {
-        map.set(b, { version: v, count: 1 });
+        androidMap.set(b, { version: v, count: 1 });
       }
     });
 
-    // Ensure latest published build is included in table
-    if (latestBuild > 0 && !map.has(latestBuild)) {
-      map.set(latestBuild, {
+    // Ensure latest published Android build is included in table
+    if (latestBuild > 0 && !androidMap.has(latestBuild)) {
+      androidMap.set(latestBuild, {
         version: latestVersionName || `v1.0.${latestBuild}`,
         count: 0,
       });
     }
 
+    type VersionRowStatus = 'Latest' | 'Blocked' | 'Allowed' | 'Web • always allowed';
+    interface VersionTableRow {
+      key: string;
+      isWeb: boolean;
+      build: number | null;
+      version: string;
+      count: number;
+      percentage: number;
+      status: VersionRowStatus;
+    }
+
     const total = installs.length;
-    const list = Array.from(map.entries()).map(([buildNum, data]) => {
-      let status: 'Latest' | 'Blocked' | 'Allowed' = 'Allowed';
+    const androidList: VersionTableRow[] = Array.from(androidMap.entries()).map(([buildNum, data]) => {
+      let status: VersionRowStatus = 'Allowed';
       if (buildNum >= latestBuild && latestBuild > 0) {
         status = 'Latest';
       } else if (currentMinBuild > 0 && buildNum < currentMinBuild) {
@@ -1068,6 +1096,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       }
 
       return {
+        key: `android-${buildNum}`,
+        isWeb: false,
         build: buildNum,
         version: data.version,
         count: data.count,
@@ -1076,19 +1106,32 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       };
     });
 
-    list.sort((a, b) => b.build - a.build);
-    return list;
+    androidList.sort((a, b) => (b.build ?? 0) - (a.build ?? 0));
+
+    if (webCount > 0) {
+      androidList.push({
+        key: 'web-always-allowed',
+        isWeb: true,
+        build: null,
+        version: 'Web version',
+        count: webCount,
+        percentage: total > 0 ? (webCount / total) * 100 : 0,
+        status: 'Web • always allowed',
+      });
+    }
+
+    return androidList;
   }, [installs, latestBuild, latestVersionName, currentMinBuild]);
 
-  // Read-only Minimum Version summary sentence (Requirement 3)
+  // Read-only Minimum Version summary sentence (Android builds only; Web is always allowed)
   const minVersionSummaryText = useMemo(() => {
     if (currentMinBuild > 1) {
-      return `Blocked: builds 100 to ${currentMinBuild - 1}. Allowed: ${currentMinBuild} and above. Latest: ${latestBuild}.`;
+      return `Android blocked: builds 100 to ${currentMinBuild - 1}. Android allowed: ${currentMinBuild} and above. Web: always allowed. Latest Android: ${latestBuild}.`;
     }
     if (currentMinBuild === 1) {
-      return `Blocked: build 100. Allowed: 101 and above. Latest: ${latestBuild}.`;
+      return `Android blocked: build 100. Android allowed: 101 and above. Web: always allowed. Latest Android: ${latestBuild}.`;
     }
-    return `Blocked: None. Allowed: All builds. Latest: ${latestBuild}.`;
+    return `Blocked: None. Allowed: All Android builds (Web: always allowed). Latest Android: ${latestBuild}.`;
   }, [currentMinBuild, latestBuild]);
 
   if (!isOpen) return null;
@@ -1111,7 +1154,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               )}
             </h2>
             <p className="text-[10px] text-slate-400 font-mono">
-              Build {appVersionInfo.build} • {BUILD_DATE}
+              {isNativeAndroid() ? `Build ${appVersionInfo.build}` : 'Web version'} • {BUILD_DATE}
             </p>
           </div>
         </div>
@@ -1497,14 +1540,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         {versionsTable.map((row) => {
                           const isLatest = row.status === 'Latest';
                           const isBlocked = row.status === 'Blocked';
+                          const isWebRow = row.isWeb;
 
                           return (
-                            <tr key={row.build} className="hover:bg-slate-950/40 transition">
+                            <tr key={row.key} className="hover:bg-slate-950/40 transition">
                               <td className="py-3 px-3 font-bold text-white">
                                 {row.version}
                               </td>
                               <td className="py-3 px-3 text-cyan-300">
-                                Build {row.build}
+                                {isWebRow ? 'Web' : `Build ${row.build}`}
                               </td>
                               <td className="py-3 px-3 text-slate-200">
                                 {row.count} {row.count === 1 ? 'device' : 'devices'}
@@ -1515,7 +1559,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                   <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden hidden sm:block">
                                     <div
                                       className={`h-full rounded-full ${
-                                        isLatest
+                                        isWebRow || isLatest
                                           ? 'bg-cyan-400'
                                           : isBlocked
                                           ? 'bg-rose-500'
@@ -1528,7 +1572,9 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                               </td>
                               <td className="py-3 px-3">
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                  isLatest
+                                  isWebRow
+                                    ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                                    : isLatest
                                     ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
                                     : isBlocked
                                     ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
@@ -1538,10 +1584,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                 </span>
                               </td>
                               <td className="py-3 px-3 text-right">
-                                {!isLatest ? (
+                                {isWebRow ? (
+                                  <span className="text-[10px] text-cyan-300/80 font-sans italic">Always allowed</span>
+                                ) : !isLatest && row.build !== null ? (
                                   <button
                                     type="button"
-                                    onClick={() => setBlockConfirmTarget({ build: row.build, version: row.version })}
+                                    onClick={() => setBlockConfirmTarget({ build: row.build!, version: row.version })}
                                     className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 hover:text-white text-[11px] font-semibold transition cursor-pointer active:scale-95"
                                   >
                                     Block this version and older
@@ -1662,7 +1710,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         const phoneName = resolveDeviceDisplayName(rawName, rawMfg, rawModel, row.platform);
                         const ownerLabel = row.owner_label || 'No label';
                         const osStr = row.os || (isAndroid ? 'Android' : 'Web');
-                        const isBlocked = currentMinBuild > 0 && (row.build === null || row.build < currentMinBuild);
+                        const isBlocked = isAndroid && currentMinBuild > 0 && (row.build === null || row.build < currentMinBuild);
                         const status = getDeviceStatus(row.last_seen);
                         const isEditingThisOwner = editingOwnerLabelId === row.install_id;
                         const isTimeExpanded = expandedTimeDeviceId === row.install_id;
@@ -1757,14 +1805,20 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                   <span>{status.label}</span>
                                 </button>
 
-                                {/* Blocked or Allowed badge */}
-                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${
-                                  isBlocked
-                                    ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                    : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                                }`}>
-                                  {isBlocked ? 'Blocked' : 'Allowed'}
-                                </span>
+                                {/* Blocked / Allowed badge (Android only) or Web always allowed */}
+                                {isAndroid ? (
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${
+                                    isBlocked
+                                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                                  }`}>
+                                    {isBlocked ? 'Blocked' : 'Allowed'}
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border tracking-wider bg-cyan-500/15 border-cyan-500/35 text-cyan-300">
+                                    Web • always allowed
+                                  </span>
+                                )}
 
                                 {/* Platform badge */}
                                 <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
@@ -1917,14 +1971,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     {versionsTable.map((row) => {
                       const isLatest = row.status === 'Latest';
                       const isBlocked = row.status === 'Blocked';
+                      const isWebRow = row.isWeb;
 
                       return (
-                        <div key={row.build} className="py-2.5 flex items-center justify-between flex-wrap gap-2">
+                        <div key={row.key} className="py-2.5 flex items-center justify-between flex-wrap gap-2">
                           <div className="flex items-center gap-2.5">
                             <span className="font-bold text-white">{row.version}</span>
-                            <span className="text-slate-400">(Build {row.build})</span>
+                            {!isWebRow && row.build !== null && (
+                              <span className="text-slate-400">(Build {row.build})</span>
+                            )}
                             <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
-                              isLatest
+                              isWebRow
+                                ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                                : isLatest
                                 ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
                                 : isBlocked
                                 ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
@@ -1937,10 +1996,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                             </span>
                           </div>
 
-                          {!isLatest ? (
+                          {isWebRow ? (
+                            <span className="text-[10px] text-cyan-300/80 font-sans italic">Always allowed</span>
+                          ) : !isLatest && row.build !== null ? (
                             <button
                               type="button"
-                              onClick={() => setBlockConfirmTarget({ build: row.build, version: row.version })}
+                              onClick={() => setBlockConfirmTarget({ build: row.build!, version: row.version })}
                               className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 hover:text-white text-[11px] font-semibold transition cursor-pointer active:scale-95"
                             >
                               Block this version and older
@@ -2104,10 +2165,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     onClick={async () => {
                       setIsCheckingNow(true);
                       try {
-                        await Promise.allSettled([
-                          NativeUpdateService.checkForUpdate(true),
-                          checkMinimumVersion(false),
-                        ]);
+                        if (isNativeAndroid()) {
+                          await Promise.allSettled([
+                            NativeUpdateService.checkForUpdate(true),
+                            checkMinimumVersion(false),
+                          ]);
+                        }
                         await loadLatestReleaseData();
                       } finally {
                         refreshDiagnostics();
@@ -2286,9 +2349,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       Installed Version & Build
                     </span>
                     <div className="text-xl font-black text-white font-mono">
-                      v{appVersionInfo.version} <span className="text-cyan-400 text-base">(Build {appVersionInfo.build})</span>
+                      {isNativeAndroid() ? (
+                        <>
+                          v{appVersionInfo.version} <span className="text-cyan-400 text-base">(Build {appVersionInfo.build})</span>
+                        </>
+                      ) : (
+                        <>
+                          Web version <span className="text-cyan-400 text-sm">({BUILD_DATE})</span>
+                        </>
+                      )}
                     </div>
-                    <span className="text-[10px] text-slate-500">Read natively via App.getInfo()</span>
+                    <span className="text-[10px] text-slate-500">
+                      {isNativeAndroid() ? 'Read natively via App.getInfo()' : 'Web app (always allowed)'}
+                    </span>
                   </div>
 
                   <div className="p-4 rounded-2xl bg-slate-900/80 border border-emerald-500/30 space-y-1">
@@ -2340,11 +2413,17 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         {currentMinBuild > 0 ? `Build ${currentMinBuild}` : 'No Min Build'}
                       </span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        minVersionDiag.isBlocked
+                        !isNativeAndroid()
+                          ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                          : minVersionDiag.isBlocked
                           ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
                           : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                       }`}>
-                        {minVersionDiag.isBlocked ? 'Blocked' : 'Allowed'}
+                        {!isNativeAndroid()
+                          ? 'Web • always allowed'
+                          : minVersionDiag.isBlocked
+                          ? 'Blocked'
+                          : 'Allowed'}
                       </span>
                     </div>
                     <span className="text-[10px] text-slate-500">

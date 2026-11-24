@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RefreshCw, Loader2, Check, AlertCircle } from 'lucide-react';
 import { NativeUpdateService, getCurrentAppVersion } from '../services/nativeUpdate';
+import { isNativeAndroid } from '../services/appConfig';
+import { checkForWebUpdate } from '../hooks/usePWAUpdate';
 
-type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'error';
+type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'update-ready' | 'reloading' | 'error';
 
 interface CheckForUpdatesButtonProps {
   label?: string;
@@ -17,21 +19,26 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
   const [currentTag, setCurrentTag] = useState<string>('v1.0.1');
   const [errorInfo, setErrorInfo] = useState<{ isOffline: boolean; reasonCode?: string } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAndroidNative = isNativeAndroid();
 
   useEffect(() => {
-    getCurrentAppVersion().then((info) => {
-      setCurrentTag(info.formattedTag);
-    });
+    if (isAndroidNative) {
+      getCurrentAppVersion().then((info) => {
+        setCurrentTag(info.formattedTag);
+      });
+    } else {
+      setCurrentTag('Web version');
+    }
 
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
     };
-  }, []);
+  }, [isAndroidNative]);
 
   const handleCheckForUpdates = async () => {
-    if (status === 'checking') return;
+    if (status === 'checking' || status === 'reloading') return;
 
     if (timerRef.current) {
       clearTimeout(timerRef.current);
@@ -41,6 +48,41 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
     setErrorInfo(null);
 
     try {
+      // On Web (browser, installed website app, iPhone), check the Service Worker instead of Android APK releases
+      if (!isAndroidNative) {
+        setCurrentTag('Web version');
+        const webResult = await checkForWebUpdate();
+        if (webResult === 'offline') {
+          setErrorInfo({ isOffline: true });
+          setStatus('error');
+          timerRef.current = setTimeout(() => {
+            setStatus('idle');
+            setErrorInfo(null);
+          }, 4000);
+        } else if (webResult === 'error') {
+          setErrorInfo({ isOffline: false });
+          setStatus('error');
+          timerRef.current = setTimeout(() => {
+            setStatus('idle');
+            setErrorInfo(null);
+          }, 4000);
+        } else if (webResult === 'reloading') {
+          setStatus('reloading');
+        } else if (webResult === 'update-ready') {
+          setStatus('update-ready');
+          timerRef.current = setTimeout(() => {
+            setStatus('idle');
+          }, 4000);
+        } else {
+          setStatus('up-to-date');
+          timerRef.current = setTimeout(() => {
+            setStatus('idle');
+          }, 3000);
+        }
+        return;
+      }
+
+      // Native Android APK update check
       const currentInfo = await getCurrentAppVersion();
       setCurrentTag(currentInfo.formattedTag);
 
@@ -74,7 +116,7 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
       const isOffline = !navigator.onLine;
       setErrorInfo({
         isOffline,
-        reasonCode: !isOffline ? 'Code: network' : undefined,
+        reasonCode: !isOffline && isAndroidNative ? 'Code: network' : undefined,
       });
       setStatus('error');
       timerRef.current = setTimeout(() => {
@@ -89,21 +131,23 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
       <button
         type="button"
         onClick={handleCheckForUpdates}
-        disabled={status === 'checking'}
+        disabled={status === 'checking' || status === 'reloading'}
         className={`group relative inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 select-none cursor-pointer ${
-          status === 'checking'
+          status === 'checking' || status === 'reloading'
             ? 'bg-slate-800/90 text-cyan-300 border border-cyan-500/40 cursor-wait'
             : status === 'up-to-date'
             ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/50'
+            : status === 'update-ready'
+            ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-500/50'
             : status === 'error'
             ? 'bg-rose-950/60 text-rose-300 border border-rose-500/50'
             : 'bg-slate-800/80 hover:bg-slate-700/80 active:scale-95 text-slate-200 border border-slate-700/80 hover:border-cyan-500/30 hover:text-white shadow-sm'
         }`}
       >
-        {status === 'checking' && (
+        {(status === 'checking' || status === 'reloading') && (
           <>
             <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />
-            <span>Checking...</span>
+            <span>{status === 'reloading' ? 'Updating...' : 'Checking...'}</span>
           </>
         )}
 
@@ -111,6 +155,13 @@ export const CheckForUpdatesButton: React.FC<CheckForUpdatesButtonProps> = ({
           <>
             <Check className="w-3.5 h-3.5 text-emerald-400" />
             <span>You&apos;re up to date ({currentTag})</span>
+          </>
+        )}
+
+        {status === 'update-ready' && (
+          <>
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>New version ready on Home</span>
           </>
         )}
 

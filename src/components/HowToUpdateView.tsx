@@ -4,8 +4,9 @@ import {
   AlertTriangle, CheckCircle2 
 } from 'lucide-react';
 import { getCurrentAppVersion } from '../services/nativeUpdate';
+import { isNativeAndroid } from '../services/appConfig';
 import { CheckForUpdatesButton } from './CheckForUpdatesButton';
-import { APP_VERSION } from '../version';
+import { APP_VERSION, BUILD_DATE } from '../version';
 
 interface HowToUpdateViewProps {
   onBack: () => void;
@@ -62,7 +63,11 @@ export const HowToUpdateView: React.FC<HowToUpdateViewProps> = ({ onBack }) => {
       <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-br from-[#0c1330]/90 via-[#0a0f24]/90 to-[#120a26]/90 border border-cyan-500/30 space-y-4 shadow-xl text-center">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold mx-auto">
           <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>You have version {versionInfo.version} (Build {versionInfo.build})</span>
+          <span>
+            {isNativeAndroid()
+              ? `You have version ${versionInfo.version} (Build ${versionInfo.build})`
+              : `Web version • Built ${BUILD_DATE}`}
+          </span>
         </div>
 
         <p className="text-xs sm:text-sm text-slate-300 max-w-md mx-auto leading-relaxed">

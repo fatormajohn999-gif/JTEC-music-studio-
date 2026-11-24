@@ -6,6 +6,10 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileOpener } from '@capawesome-team/capacitor-file-opener';
 import { APP_VERSION } from '../version';
 
+function isNativeAndroidPlatform(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+}
+
 export const LATEST_JSON_URL =
   'https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/latest.json';
 
@@ -364,6 +368,10 @@ export const NativeUpdateService = {
    * If the installed build is already >= cached build, clears the cache and returns null.
    */
   getCachedPendingUpdateSync(): NativeUpdateInfo | null {
+    if (!isNativeAndroidPlatform()) {
+      NativeUpdateService.clearWebUpdateBlockingState();
+      return null;
+    }
     try {
       const raw = localStorage.getItem(LS_KEY_CACHED_PENDING_UPDATE);
       if (!raw) return null;
@@ -387,6 +395,16 @@ export const NativeUpdateService = {
   clearCachedPendingUpdate(): void {
     try {
       localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
+    } catch {}
+  },
+
+  /**
+   * Clears any saved native-APK blocking or pending update state when running on the web.
+   */
+  clearWebUpdateBlockingState(): void {
+    try {
+      localStorage.removeItem(LS_KEY_CACHED_PENDING_UPDATE);
+      localStorage.removeItem(LS_KEY_DISMISSED_UNTIL);
     } catch {}
   },
 
@@ -423,15 +441,69 @@ export const NativeUpdateService = {
   },
 
   /**
-   * Checks for an Android APK release.
+   * Read-only lookup of the latest published Android APK release (latest.json -> GitHub release API).
+   * Used by the Developer Page on any platform without modifying user blocking state.
+   */
+  async fetchLatestPublishedAndroidRelease(): Promise<{
+    latestBuild: number;
+    versionName: string;
+    source?: 'latest.json' | 'github-api';
+  } | null> {
+    try {
+      const online = await isDeviceOnline();
+      if (!online) return null;
+
+      try {
+        const res = await fetchWithRetry(LATEST_JSON_URL, true);
+        const data = res.data;
+        if (data && (typeof data.build === 'number' || data.tag || data.versionName)) {
+          let buildNum = 0;
+          if (typeof data.build === 'number' && !isNaN(data.build) && data.build > 0) {
+            buildNum = data.build;
+          } else if (data.tag || data.versionName) {
+            buildNum = parseTagBuildNumber(data.tag || data.versionName)?.latestBuild || 0;
+          }
+          const verName = data.versionName || data.tag || `Build ${buildNum}`;
+          if (buildNum > 0) {
+            return { latestBuild: buildNum, versionName: verName, source: 'latest.json' };
+          }
+        }
+      } catch {
+        // fallback to GitHub API
+      }
+
+      try {
+        const res = await fetchWithRetry(GITHUB_LATEST_RELEASE_URL, false);
+        const releaseData = res.data;
+        const tagName: string = releaseData?.tag_name || '';
+        const parsed = parseTagBuildNumber(tagName);
+        const latestBuild = parsed?.latestBuild || 0;
+        const versionName = parsed?.versionName || tagName || 'latest';
+        if (latestBuild > 0) {
+          return { latestBuild, versionName, source: 'github-api' };
+        }
+      } catch {
+        // ignore
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Checks for an Android APK release (native Android only).
    * - Reads latest.json FIRST.
-   * - On Android, uses CapacitorHttp (native, no WebView fetch, handles redirects). On Web, uses fetch.
-   * - If latest.json cannot be read, falls back to GitHub API (also via CapacitorHttp on Android).
-   * - Saves last check time ONLY after a SUCCESSFUL check.
-   * - 3 minute limit for automatic checks. Failed checks can retry after 2 minutes. Manual checks always run.
-   * - Returns clear error reasons ("offline", "timeout", "rate-limited", "server" with status code).
+   * - On Android, uses CapacitorHttp (native, no WebView fetch, handles redirects).
+   * - If latest.json cannot be read, falls back to GitHub API.
+   * - Never runs APK blocking/update checks on web, iPhone, or browser.
    */
   async checkForUpdate(manual = false): Promise<NativeUpdateInfo | null> {
+    if (!isNativeAndroidPlatform()) {
+      NativeUpdateService.clearWebUpdateBlockingState();
+      return null;
+    }
+
     const appInfo = await getCurrentAppVersion();
     const currentBuild = appInfo.build;
     const currentVersionName = appInfo.version;
@@ -826,6 +898,10 @@ export const NativeUpdateService = {
     versionName: string;
     notesBullets: string[];
   } | null> {
+    if (!isNativeAndroidPlatform()) {
+      return null;
+    }
+
     try {
       const appInfo = await getCurrentAppVersion();
       const currentBuild = appInfo.build;

@@ -24,7 +24,6 @@ import { PlaylistModal } from './components/PlaylistModal';
 import { SongDetailsModal } from './components/SongDetailsModal';
 import { SongOptionsMenu } from './components/SongOptionsMenu';
 import { StartupScreen } from './components/StartupScreen';
-import { PWAUpdateBanner } from './components/PWAUpdateBanner';
 import { NativeUpdateBottomSheet } from './components/NativeUpdateBottomSheet';
 import { 
   NativeUpdateService, 
@@ -36,6 +35,8 @@ import {
   getInstalledBuildSync
 } from './services/nativeUpdate';
 import { 
+  isNativeAndroid,
+  clearSavedMinVersionState,
   sendAnonymousPing, 
   startStillHereHeartbeat,
   stopStillHereHeartbeat,
@@ -88,15 +89,12 @@ export default function App() {
   const [isSettingsView, setIsSettingsView] = useState(false);
   const [showStartup, setShowStartup] = useState(true);
 
-  // PWA Automatic Updates Controller
-  const {
-    updateAvailable,
-    isUpdating: isPWAUpdating,
-    updateApp: handleUpdateApp,
-  } = usePWAUpdate();
-
-  // Native Android Update Controller
+  // Native Android Update Controller (only runs on native Android)
   const [nativeUpdateInfo, setNativeUpdateInfo] = useState<NativeUpdateInfo | null>(() => {
+    if (!isNativeAndroid()) {
+      NativeUpdateService.clearWebUpdateBlockingState();
+      return null;
+    }
     return NativeUpdateService.getCachedPendingUpdateSync();
   });
   const [isDownloadingNativeUpdate, setIsDownloadingNativeUpdate] = useState(false);
@@ -112,9 +110,13 @@ export default function App() {
   // Settings update sheet state (for manual checks from Settings when not on Home)
   const [isSettingsUpdateSheetOpen, setIsSettingsUpdateSheetOpen] = useState(false);
 
-  // Minimum Version Block State (from app_config id = 1)
+  // Minimum Version Block State (from app_config id = 1) - native Android ONLY
   // At app launch, if installed build < saved min_build, show screen immediately before any network call
   const [minVersionStatus, setMinVersionStatus] = useState<MinVersionStatus | null>(() => {
+    if (!isNativeAndroid()) {
+      clearSavedMinVersionState();
+      return null;
+    }
     return getSavedMinVersionStatusSync();
   });
 
@@ -141,8 +143,11 @@ export default function App() {
     };
   }, []);
 
-  // Update check runner (spaced at least 3 minutes apart, 2 min on failure)
+  // Update check runner (native Android only; spaced at least 3 minutes apart, 2 min on failure)
   const runNativeUpdateCheck = useCallback(async (manual = false) => {
+    if (!isNativeAndroid()) {
+      return null;
+    }
     try {
       const result = await NativeUpdateService.checkForUpdate(manual);
       if (result && result.hasUpdate) {
@@ -158,17 +163,20 @@ export default function App() {
     return null;
   }, []);
 
-  // Minimum version check runner
+  // Minimum version check runner (native Android only)
   // - At app launch (isForegroundCheck = false): check without waiting period
   // - Returning to foreground (isForegroundCheck = true): check at most once every 5 minutes
   const runMinVersionCheck = useCallback(async (isForegroundCheck = false) => {
+    if (!isNativeAndroid()) {
+      clearSavedMinVersionState();
+      setMinVersionStatus(null);
+      return;
+    }
     try {
       const res = await checkMinimumVersion(isForegroundCheck);
       if (res && res.isBlocked) {
         setMinVersionStatus(res);
-        if (Capacitor.isNativePlatform()) {
-          runNativeUpdateCheck(false);
-        }
+        runNativeUpdateCheck(false);
       } else if (res && !res.isBlocked) {
         setMinVersionStatus(null);
       }
@@ -178,41 +186,53 @@ export default function App() {
   }, [runNativeUpdateCheck]);
 
   // Lifecycle update checks:
-  // 1. At app launch: run checks immediately and send anonymous ping
-  // 2. Check every 10 minutes while app is visible
+  // 1. At app launch: send anonymous ping (all platforms), and run native Android update/min-version checks (Android only)
+  // 2. Check every 10 minutes while app is visible (native Android only; web SW self-update runs in usePWAUpdate)
   // 3. When phone reconnects to internet (@capacitor/network networkStatusChange & window online)
   // 4. When app returns to foreground (Capacitor appStateChange / document visibility)
   useEffect(() => {
     let isMounted = true;
+    const isAndroidNative = isNativeAndroid();
+
+    // Ensure any stale blocked state from older versions is cleared on Web immediately
+    if (!isAndroidNative) {
+      clearSavedMinVersionState();
+      NativeUpdateService.clearWebUpdateBlockingState();
+    }
 
     // 1. App Launch: Anonymous ping (open count) and initial checks, plus still-here heartbeat
     // Requirement 3: Ensure ping sends name on every cold start
     sendAnonymousPing(true);
     startStillHereHeartbeat();
-    runMinVersionCheck(false);
-    runNativeUpdateCheck(false);
 
-    // Check if app was just updated to a newer build
-    NativeUpdateService.checkPostUpdate().then((post) => {
-      if (isMounted && post && post.showWhatsNew) {
-        setWhatsNewData({
-          isOpen: true,
-          versionName: post.versionName,
-          bullets: post.notesBullets,
-        });
-      }
-    });
+    if (isAndroidNative) {
+      runMinVersionCheck(false);
+      runNativeUpdateCheck(false);
 
-    // 2. Periodic check every 10 minutes while app is visible
-    const periodicTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        runNativeUpdateCheck(false);
-      }
-    }, 10 * 60 * 1000);
+      // Check if app was just updated to a newer build
+      NativeUpdateService.checkPostUpdate().then((post) => {
+        if (isMounted && post && post.showWhatsNew) {
+          setWhatsNewData({
+            isOpen: true,
+            versionName: post.versionName,
+            bullets: post.notesBullets,
+          });
+        }
+      });
+    }
+
+    // 2. Periodic check every 10 minutes while app is visible (native Android APK check)
+    const periodicTimer = isAndroidNative
+      ? setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+            runNativeUpdateCheck(false);
+          }
+        }, 10 * 60 * 1000)
+      : null;
 
     // 3. Network reconnect check
     let capNetworkHandle: any = null;
-    if (Capacitor.isNativePlatform()) {
+    if (isAndroidNative) {
       Network.addListener('networkStatusChange', (status) => {
         if (status.connected) {
           runNativeUpdateCheck(false);
@@ -224,8 +244,10 @@ export default function App() {
     }
 
     const handleWindowOnline = () => {
-      runNativeUpdateCheck(false);
-      runMinVersionCheck(false);
+      if (isAndroidNative) {
+        runNativeUpdateCheck(false);
+        runMinVersionCheck(false);
+      }
     };
     window.addEventListener('online', handleWindowOnline);
 
@@ -237,9 +259,11 @@ export default function App() {
       CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
         if (state.isActive) {
           handleAppForeground();
-          runNativeUpdateCheck(false);
-          runMinVersionCheck(true);
-          MediaSessionManager.forceWidgetSync();
+          if (isAndroidNative) {
+            runNativeUpdateCheck(false);
+            runMinVersionCheck(true);
+            MediaSessionManager.forceWidgetSync();
+          }
         } else {
           handleAppBackground();
         }
@@ -251,8 +275,10 @@ export default function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         handleAppForeground();
-        runNativeUpdateCheck(false);
-        runMinVersionCheck(true);
+        if (isAndroidNative) {
+          runNativeUpdateCheck(false);
+          runMinVersionCheck(true);
+        }
       } else if (document.visibilityState === 'hidden') {
         handleAppBackground();
       }
@@ -262,8 +288,10 @@ export default function App() {
     const handleWindowFocus = () => {
       if (document.visibilityState === 'visible') {
         handleAppForeground();
-        runNativeUpdateCheck(false);
-        runMinVersionCheck(true);
+        if (isAndroidNative) {
+          runNativeUpdateCheck(false);
+          runMinVersionCheck(true);
+        }
       }
     };
     window.addEventListener('focus', handleWindowFocus);
@@ -276,7 +304,7 @@ export default function App() {
     return () => {
       isMounted = false;
       stopStillHereHeartbeat();
-      clearInterval(periodicTimer);
+      if (periodicTimer) clearInterval(periodicTimer);
       window.removeEventListener('online', handleWindowOnline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
@@ -290,8 +318,10 @@ export default function App() {
     };
   }, [runNativeUpdateCheck, runMinVersionCheck]);
 
-  // Listen for manual update checks triggered from Settings
+  // Listen for manual update checks triggered from Settings (native Android only)
   useEffect(() => {
+    if (!isNativeAndroid()) return;
+
     const handleManualUpdateEvent = async (e: Event) => {
       const customEvent = e as CustomEvent<{ updateInfo?: NativeUpdateInfo; versionName?: string }>;
       const result = customEvent.detail?.updateInfo ?? (await runNativeUpdateCheck(true));
@@ -465,6 +495,13 @@ export default function App() {
   // Playback & Queue State
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // PWA Automatic Updates Controller (pass isPlaying so auto-apply waits while music plays)
+  const {
+    updateAvailable,
+    isUpdating: isPWAUpdating,
+    updateApp: handleUpdateApp,
+  } = usePWAUpdate({ isPlaying });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [queue, setQueue] = useState<Song[]>([]);
@@ -575,7 +612,7 @@ export default function App() {
   }, [currentTab]);
 
   const handleSelectTab = useCallback((targetTab: NavTab) => {
-    if (targetTab === 'home') {
+    if (targetTab === 'home' && isNativeAndroid()) {
       runNativeUpdateCheck(false);
     }
 
@@ -2133,7 +2170,7 @@ export default function App() {
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenCloud={() => handleSelectTab('cloud')}
-            nativeUpdateInfo={nativeUpdateInfo}
+            nativeUpdateInfo={isNativeAndroid() ? nativeUpdateInfo : null}
             isDownloadingUpdate={isDownloadingNativeUpdate}
             updateDownloadProgress={nativeDownloadProgress}
             isUpdateDownloaded={isNativeUpdateDownloaded}
@@ -2144,7 +2181,7 @@ export default function App() {
             onOpenBrowserDownload={() => {
               NativeUpdateService.openBrowserDownload();
             }}
-            isPWAUpdateAvailable={updateAvailable}
+            isPWAUpdateAvailable={!isNativeAndroid() && updateAvailable}
             isPWAUpdating={isPWAUpdating}
             onReloadPWA={handleUpdateApp}
           />
@@ -2352,36 +2389,33 @@ export default function App() {
         onRemoveCover={handleRemoveSongCover}
       />
 
-      {/* PWA AUTOMATIC UPDATE BANNER */}
-      {updateAvailable && (
-        <PWAUpdateBanner
-          onUpdate={handleUpdateApp}
-          isUpdating={isPWAUpdating}
-          hasMiniPlayer={Boolean(currentSong)}
-        />
-      )}
-
       {/* STARTUP / SPLASH SCREEN */}
       {showStartup && <StartupScreen onComplete={() => setShowStartup(false)} />}
 
-      {/* WHAT'S NEW MODAL (POST-UPDATE) */}
-      <WhatsNewModal
-        isOpen={whatsNewData.isOpen}
-        versionName={whatsNewData.versionName}
-        notesBullets={whatsNewData.bullets}
-        onAcknowledge={handleAcknowledgeWhatsNew}
-      />
+      {/* WHAT'S NEW MODAL (POST-UPDATE - NATIVE ANDROID ONLY) */}
+      {isNativeAndroid() && (
+        <WhatsNewModal
+          isOpen={whatsNewData.isOpen}
+          versionName={whatsNewData.versionName}
+          notesBullets={whatsNewData.bullets}
+          onAcknowledge={handleAcknowledgeWhatsNew}
+        />
+      )}
 
-      {/* CELLULAR DATA CONFIRMATION MODAL */}
-      <CellularDataConfirmModal
-        isOpen={showCellularConfirm}
-        formattedSize={nativeUpdateInfo?.formattedSize || ''}
-        onConfirm={handleConfirmCellularDownload}
-        onCancel={() => setShowCellularConfirm(false)}
-      />
+      {/* CELLULAR DATA CONFIRMATION MODAL (NATIVE ANDROID ONLY) */}
+      {isNativeAndroid() && (
+        <CellularDataConfirmModal
+          isOpen={showCellularConfirm}
+          formattedSize={nativeUpdateInfo?.formattedSize || ''}
+          onConfirm={handleConfirmCellularDownload}
+          onCancel={() => setShowCellularConfirm(false)}
+        />
+      )}
 
-      {/* FULL-SCREEN REQUIRED UPDATE OVERLAY */}
+      {/* FULL-SCREEN REQUIRED UPDATE OVERLAY (NATIVE ANDROID ONLY) */}
       {(() => {
+        if (!isNativeAndroid()) return null;
+
         // Safety rule: the required-update screen must never trap the user.
         // If the installed build is already equal to or higher than the latest known build, it must never appear.
         const currentInstalledBuild = getInstalledBuildSync();
@@ -2448,22 +2482,22 @@ export default function App() {
               NativeUpdateService.openBrowserDownload(resolvedApkUrl);
             }}
             customMessage={minVersionStatus?.message}
-            isWeb={minVersionStatus?.isWeb ?? !Capacitor.isNativePlatform()}
-            onReloadWeb={() => window.location.reload()}
           />
         );
       })()}
 
       {/* NATIVE ANDROID UPDATE BOTTOM SHEET (For manual check from Settings) */}
-      <NativeUpdateBottomSheet
-        isOpen={isSettingsUpdateSheetOpen}
-        versionName={nativeUpdateInfo?.versionName || ''}
-        onUpdateNow={() => {
-          setIsSettingsUpdateSheetOpen(false);
-          handleTriggerNativeUpdate();
-        }}
-        onLater={handleDismissSettingsUpdateSheet}
-      />
+      {isNativeAndroid() && (
+        <NativeUpdateBottomSheet
+          isOpen={isSettingsUpdateSheetOpen}
+          versionName={nativeUpdateInfo?.versionName || ''}
+          onUpdateNow={() => {
+            setIsSettingsUpdateSheetOpen(false);
+            handleTriggerNativeUpdate();
+          }}
+          onLater={handleDismissSettingsUpdateSheet}
+        />
+      )}
     </div>
   );
 }

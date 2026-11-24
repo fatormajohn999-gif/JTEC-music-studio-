@@ -6,6 +6,7 @@ import {
 import { Song, Playlist } from '../types/music';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { NativeUpdateInfo, NativeUpdateService } from '../services/nativeUpdate';
+import { isNativeAndroid } from '../services/appConfig';
 
 interface HomeScreenProps {
   songs: Song[];
@@ -65,13 +66,37 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const favoriteSongs = songs.filter((s) => s.isFavorite);
   const recentlyAdded = [...songs].sort((a, b) => b.dateAdded - a.dateAdded).slice(0, 6);
 
-  const hasNativeUpdate = Boolean(nativeUpdateInfo?.hasUpdate);
-  const hasUpdate = hasNativeUpdate || isPWAUpdateAvailable;
+  const hasNativeUpdate = isNativeAndroid() && Boolean(nativeUpdateInfo?.hasUpdate);
+  const showWebUpdateBanner = !isNativeAndroid() && Boolean(isPWAUpdateAvailable);
 
   return (
     <div className="space-y-7 pb-36 px-4 sm:px-6 pt-3 max-w-3xl mx-auto w-full min-w-0">
       {/* PWA Install Alert Banner */}
       <PWAInstallButton />
+
+      {/* Small non-blocking Web update banner shown when music is playing */}
+      {showWebUpdateBanner && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-slate-900/85 border border-cyan-500/35 shadow-lg shadow-cyan-950/50 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
+            </span>
+            <span className="text-xs font-semibold text-white truncate">
+              New version ready
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onReloadPWA}
+            disabled={isPWAUpdating}
+            className="shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-md shadow-cyan-500/20 active:scale-95 transition disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={`w-3 h-3 ${isPWAUpdating ? 'animate-spin' : ''}`} />
+            <span>{isPWAUpdating ? 'Reloading...' : 'Reload'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Hero Welcome / Update Card */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0c122c] via-[#090d20] to-[#140b28] border border-cyan-500/25 p-6 sm:p-8 shadow-2xl">
@@ -86,10 +111,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           />
         </picture>
 
-        {/* Dark Navy Overlay: Stronger (85-98%) when update is available for peak legibility */}
+        {/* Dark Navy Overlay: Stronger (85-98%) when native update is available for peak legibility */}
         <div
           className={`absolute inset-0 pointer-events-none ${
-            hasUpdate
+            hasNativeUpdate
               ? 'bg-gradient-to-b from-[#060918]/85 via-[#060918]/92 to-[#040612]/98'
               : 'bg-gradient-to-b from-[#070b19]/60 via-[#070b19]/70 to-[#050813]/90'
           }`}
@@ -221,62 +246,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
 
               {/* Secondary Navigation (Import & Cloud) */}
-              <div className="pt-3 border-t border-white/5 flex flex-wrap items-center gap-2.5">
-                {onOpenCloud && (
-                  <button
-                    onClick={onOpenCloud}
-                    className="px-4 py-2.5 rounded-xl bg-slate-900/80 border border-cyan-500/30 hover:border-cyan-400 text-cyan-300 font-semibold text-xs hover:bg-slate-900 transition flex items-center justify-center gap-2 shrink-0 active:scale-95 cursor-pointer"
-                  >
-                    <span>☁️ JTEC CLOUD</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={onOpenImport}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 hover:border-white/20 text-slate-200 font-semibold text-xs active:scale-95 transition flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-                >
-                  <Upload className="w-4 h-4 text-cyan-400" />
-                  <span>Import Music</span>
-                </button>
-              </div>
-            </div>
-          ) : isPWAUpdateAvailable ? (
-            /* WEB PWA UPDATE CARD */
-            <div className="space-y-4">
-              <div className="space-y-2 text-center sm:text-left">
-                <div className="inline-flex items-center px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold tracking-wide">
-                  <span>UPDATE READY • WEB APP</span>
-                </div>
-
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                  A new version is <span className="text-gradient-cyan-purple">ready</span>
-                </h2>
-
-                <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
-                  An updated version of JTEC MUSIC has been prepared in the background. Reload to activate the new engine and features.
-                </p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                <button
-                  onClick={onReloadPWA}
-                  disabled={isPWAUpdating}
-                  className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 hover:shadow-cyan-400/40 active:scale-95 transition flex items-center justify-center gap-2.5 shrink-0 cursor-pointer"
-                >
-                  {isPWAUpdating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      <span>Reloading...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-4 h-4" />
-                      <span>Reload to update</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
               <div className="pt-3 border-t border-white/5 flex flex-wrap items-center gap-2.5">
                 {onOpenCloud && (
                   <button

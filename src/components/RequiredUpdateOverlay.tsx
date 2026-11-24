@@ -1,6 +1,7 @@
 import React from 'react';
 import { Download, AlertTriangle, Loader2, CheckCircle2, ShieldAlert, RefreshCw } from 'lucide-react';
 import { NativeUpdateService, getInstalledBuildSync, resolveApkDownloadUrl } from '../services/nativeUpdate';
+import { isNativeAndroid } from '../services/appConfig';
 
 interface RequiredUpdateOverlayProps {
   versionName?: string;
@@ -42,11 +43,15 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
   onTryAgain,
   apkUrl,
   customMessage,
-  isWeb = false,
-  onReloadWeb,
   isPreview = false,
   onClosePreview,
 }) => {
+  // Minimum-version blocking applies ONLY to the native Android app.
+  // Allow explicit Developer Preview inside DeveloperPage regardless of platform.
+  if (!isPreview && !isNativeAndroid()) {
+    return null;
+  }
+
   // Safety rule: The required-update screen must never trap the user.
   // If the installed build is already equal to or higher than the target minBuild, it must never appear.
   const currentBuild = getInstalledBuildSync();
@@ -123,30 +128,7 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
           </div>
         )}
 
-        {/* Web vs Native Layout */}
-        {isWeb ? (
-          <div className="w-full space-y-3">
-            <button
-              type="button"
-              onClick={onReloadWeb || (() => window.location.reload())}
-              className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white shadow-cyan-500/25 hover:shadow-cyan-400/40"
-            >
-              <RefreshCw className="w-4 h-4" />
-              <span>Reload to update</span>
-            </button>
-
-            {/* Always show second button: Download from browser */}
-            <button
-              type="button"
-              onClick={handleBrowserDownload}
-              className="w-full py-3 px-5 rounded-2xl font-bold text-xs bg-slate-900/90 hover:bg-slate-800 text-cyan-300 hover:text-cyan-200 border border-cyan-500/30 active:scale-95 transition cursor-pointer flex items-center justify-center gap-2 shadow"
-            >
-              <Download className="w-4 h-4 text-cyan-400" />
-              <span>Download from browser</span>
-            </button>
-          </div>
-        ) : (
-          <div className="w-full space-y-3">
+        <div className="w-full space-y-3">
             {/* Progress bar during download */}
             {isDownloading && (
               <div className="w-full space-y-2 mb-1">
@@ -248,7 +230,6 @@ export const RequiredUpdateOverlay: React.FC<RequiredUpdateOverlayProps> = ({
               <span>Download from browser</span>
             </button>
           </div>
-        )}
       </div>
     </div>
   );
