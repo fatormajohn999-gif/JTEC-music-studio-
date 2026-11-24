@@ -33,6 +33,10 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Setup GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Build Static Applet
         env:
           # Category 1: NASHEED — Nasheed & Spiritual Audio (supports secrets & vars)
@@ -67,14 +71,45 @@ jobs:
           VITE_PARTY_SUPABASE_ANON_KEY: ${{ secrets.VITE_PARTY_SUPABASE_ANON_KEY }}
         run: npm run build
 
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Verify Build Output
+        run: |
+          if [ ! -d "./dist" ]; then
+            echo "::error::Build verification failed: './dist' directory was not created by 'npm run build'."
+            exit 1
+          fi
+          if [ -z "$(ls -A ./dist)" ]; then
+            echo "::error::Build verification failed: './dist' directory is empty. Cannot upload GitHub Pages artifact."
+            exit 1
+          fi
+          if [ ! -f "./dist/index.html" ] || [ ! -s "./dist/index.html" ]; then
+            echo "::error::Build verification failed: './dist/index.html' is missing or empty."
+            ls -la ./dist
+            exit 1
+          fi
+          echo "Verified non-empty ./dist directory and ./dist/index.html."
+          ls -la ./dist
 
       - name: Upload Artifact
+        id: upload
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist'
+          name: github-pages
+          path: ./dist
+          retention-days: 1
+
+      - name: Verify Uploaded Pages Artifact
+        if: ${{ success() && steps.upload.outcome == 'success' }}
+        run: |
+          if [ -z "${{ steps.upload.outputs.artifact_id }}" ]; then
+            echo "::error::Artifact upload verification failed: actions/upload-pages-artifact did not return an artifact_id for 'github-pages'."
+            exit 1
+          fi
+          echo "Verified uploaded artifact 'github-pages' (id: ${{ steps.upload.outputs.artifact_id }})."
+          sleep 3
 
       - name: Deploy to GitHub Pages
         id: deployment
+        if: ${{ success() && steps.upload.outcome == 'success' && steps.upload.outputs.artifact_id != '' }}
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
