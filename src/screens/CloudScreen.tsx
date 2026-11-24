@@ -25,6 +25,7 @@ import {
   restoreScroll, 
   registerBackHandler 
 } from '../services/navigation';
+import { AppLogger } from '../services/appLogger';
 
 export type CloudViewCategory = CloudCategoryKey | 'jamendo' | 'archive_nasheed';
 
@@ -228,6 +229,13 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
       setCategorySongs((prev) => ({ ...prev, [catKey]: tracks }));
     } catch (err: unknown) {
       console.warn(`JTEC Cloud category fetch warning for ${catKey}:`, err);
+      AppLogger.error(
+        'CloudScreen',
+        'category_load_failed',
+        `Could not load ${catKey} catalog`,
+        { error: err instanceof Error ? err.message : String(err) },
+        catKey
+      );
       setErrorMap((prev) => ({
         ...prev,
         [catKey]: "Can't reach JTEC Cloud right now. Check your internet and try again.",
@@ -277,6 +285,8 @@ export const CloudScreen: React.FC<CloudScreenProps> = ({
     setSearchQuery('');
     window.history.pushState({ category: catKey }, '');
     restoreScroll(main, 0);
+    const scope = catKey === 'jtec_main' || catKey === 'nasheed' || catKey === 'love_chill' ? catKey : 'app';
+    AppLogger.info('Navigation', 'open_cloud_catalog', `Opened cloud catalog: ${catKey}`, { catalog: catKey }, scope);
   };
 
   const handleBackToHome = () => {

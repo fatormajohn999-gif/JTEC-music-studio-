@@ -1,5 +1,6 @@
 import { AudioEffectsConfig, AudioBands } from '../types/music';
 import { PersistentSettingsService } from './persistentSettings';
+import { AppLogger } from './appLogger';
 
 class AudioEngine {
   private audioCtx: AudioContext | null = null;
@@ -183,6 +184,10 @@ class AudioEngine {
         message: mediaError?.message,
         src: currentSrc ? currentSrc.substring(0, 100) : 'none',
       });
+      AppLogger.error('AudioEngine', 'audio_element_error', mediaError?.message || 'Audio playback failed', {
+        code: mediaError?.code ?? 'unknown',
+        sourceType: currentSrc?.startsWith('blob:') ? 'local_blob' : currentSrc ? 'remote_url' : 'none',
+      });
       this.isPlaying = false;
       this.playStateCallbacks.forEach((cb) => cb(false));
       this.errorCallbacks.forEach((cb) =>
@@ -314,6 +319,9 @@ class AudioEngine {
       this.masterGain.connect(this.audioCtx.destination);
     } catch (e) {
       console.warn('Web Audio API setup warning:', e);
+      AppLogger.warning('AudioEngine', 'webaudio_setup_failed', 'Web Audio API setup failed', {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -452,6 +460,7 @@ class AudioEngine {
           return;
         }
         console.warn('Play prevented or failed', e);
+        AppLogger.warning('AudioEngine', 'audio_play_failed', e instanceof Error ? e.message : 'Audio play failed');
         this.isPlaying = false;
         throw e;
       }

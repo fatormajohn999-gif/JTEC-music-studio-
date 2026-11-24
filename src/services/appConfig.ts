@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { Device } from '@capacitor/device';
 import { SupabaseService } from './supabase';
 import { getCurrentAppVersion, getInstalledBuildSync } from './nativeUpdate';
+import { AppLogger } from './appLogger';
 
 const LS_KEY_INSTALL_ID = 'jtec_install_id';
 const LS_KEY_LAST_PING = 'jtec_last_install_ping';
@@ -374,6 +375,15 @@ export async function sendAnonymousPing(force = false): Promise<void> {
         localStorage.setItem(LS_KEY_LAST_PING_SUCCESS, fallbackSuccess ? 'true' : 'false');
         localStorage.setItem(LS_KEY_LAST_PING_ERROR, errStr || 'RPC ping error');
       } catch {}
+      if (!fallbackSuccess) {
+        AppLogger.warning(
+          'Telemetry',
+          'ping_install_failed',
+          `Install ping failed: ${errStr || 'RPC error'}`,
+          { platform },
+          'jtec_main'
+        );
+      }
     }
   } catch {
     // Ignore all errors silently, never block app
@@ -571,6 +581,13 @@ export async function checkMinimumVersion(isForegroundCheck = false): Promise<Mi
       try {
         localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
       } catch {}
+      AppLogger.error(
+        'AppConfig',
+        'min_version_query_error',
+        `app_config read failed: ${lastMinVersionErrorMemory}`,
+        { code: error.code },
+        'jtec_main'
+      );
       return null;
     }
 
@@ -579,6 +596,13 @@ export async function checkMinimumVersion(isForegroundCheck = false): Promise<Mi
       try {
         localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
       } catch {}
+      AppLogger.warning(
+        'AppConfig',
+        'min_version_missing_row',
+        lastMinVersionErrorMemory,
+        undefined,
+        'jtec_main'
+      );
       return null;
     }
 
@@ -612,6 +636,13 @@ export async function checkMinimumVersion(isForegroundCheck = false): Promise<Mi
     try {
       localStorage.setItem(LS_KEY_LAST_CONFIG_ERROR, lastMinVersionErrorMemory);
     } catch {}
+    AppLogger.error(
+      'AppConfig',
+      'min_version_exception',
+      `Minimum version check failed: ${lastMinVersionErrorMemory}`,
+      undefined,
+      'jtec_main'
+    );
     // If check fails, let the app work normally
     return null;
   }

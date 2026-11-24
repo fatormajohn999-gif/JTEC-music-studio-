@@ -2,6 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import { AppLogger } from './services/appLogger';
+
+AppLogger.installGlobalErrorHandlers();
+AppLogger.info('App', 'app_boot', 'JTEC MUSIC application booting');
 
 function renderApp() {
   ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -5,7 +5,8 @@ import {
   Clock, Sparkles, AlertTriangle, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
   Ban, Unlock, HelpCircle, ChevronRight, Radio, Bot, Sliders,
-  SkipForward, UserMinus, UserPlus, Activity, LogOut
+  SkipForward, UserMinus, UserPlus, Activity, LogOut,
+  HeartPulse, Database, FileText, Trash2, Filter
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
@@ -37,6 +38,8 @@ import {
 import { MockPartyBackend } from '../party/MockPartyBackend';
 import { getPartyBackend, getPartyBackendStatus } from '../party/backend';
 import { PartyService } from '../party/PartyService';
+import { AppLogger, LogSeverity, LogProjectScope } from '../services/appLogger';
+import { HealthMonitorService, HealthStatus, OverallHealthStatus, MonitoredProjectId } from '../services/healthMonitor';
 
 export interface AppInstallRow {
   install_id: string;
@@ -68,7 +71,7 @@ interface DeveloperPageProps {
   onClose: () => void;
 }
 
-type DeveloperTab = 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_demo';
+type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_demo';
 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
@@ -150,15 +153,60 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [partyActionFeedback, setPartyActionFeedback] = useState<string | null>(null);
   const [partyStatus, setPartyStatus] = useState(() => getPartyBackendStatus());
 
+  // Health & Structured Logs state (active only while Developer Portal is open & authenticated)
+  const [overallHealth, setOverallHealth] = useState(() => HealthMonitorService.getOverallHealth());
+  const [projectSnapshots, setProjectSnapshots] = useState(() => HealthMonitorService.getProjectSnapshots());
+  const [partyDiagnostics, setPartyDiagnostics] = useState(() => PartyService.getDiagnostics());
+  const [partyLiveState, setPartyLiveState] = useState(() => PartyService.getState());
+  const [logRevision, setLogRevision] = useState(0);
+  const [logViewMode, setLogViewMode] = useState<'all' | 'by_project'>('all');
+  const [selectedLogProjectTab, setSelectedLogProjectTab] = useState<MonitoredProjectId>('jtec_party');
+  const [logSeverityFilter, setLogSeverityFilter] = useState<LogSeverity | 'ALL'>('ALL');
+  const [logComponentFilter, setLogComponentFilter] = useState<string>('ALL');
+  const [logProjectFilter, setLogProjectFilter] = useState<LogProjectScope | 'ALL'>('ALL');
+  const [logDateFilter, setLogDateFilter] = useState<string>('ALL');
+  const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
+
   useEffect(() => {
-    if (activeTab === 'party_demo') {
+    if (!isOpen || !session) return;
+
+    setOverallHealth(HealthMonitorService.getOverallHealth());
+    setProjectSnapshots(HealthMonitorService.getProjectSnapshots());
+    setPartyDiagnostics(PartyService.getDiagnostics());
+    setPartyLiveState(PartyService.getState());
+    setPartyStatus(getPartyBackendStatus());
+
+    const unsubHealth = HealthMonitorService.subscribe(() => {
+      setOverallHealth(HealthMonitorService.getOverallHealth());
+      setProjectSnapshots(HealthMonitorService.getProjectSnapshots());
+    });
+    const unsubLogs = AppLogger.subscribe(() => {
+      setLogRevision((r) => r + 1);
+    });
+    const unsubParty = PartyService.subscribe((nextPartyState) => {
+      setPartyLiveState(nextPartyState);
+      setPartyDiagnostics(PartyService.getDiagnostics());
       setPartyStatus(getPartyBackendStatus());
+    });
+
+    return () => {
+      unsubHealth();
+      unsubLogs();
+      unsubParty();
+    };
+  }, [isOpen, session]);
+
+  useEffect(() => {
+    if (isOpen && session && (activeTab === 'party_demo' || activeTab === 'health_logs')) {
+      setPartyStatus(getPartyBackendStatus());
+      setPartyDiagnostics(PartyService.getDiagnostics());
       const timer = setInterval(() => {
         setPartyStatus(getPartyBackendStatus());
-      }, 2000);
+        setPartyDiagnostics(PartyService.getDiagnostics());
+      }, 3000);
       return () => clearInterval(timer);
     }
-  }, [activeTab]);
+  }, [isOpen, session, activeTab]);
 
   const handleBotsJoinRoom = useCallback(() => {
     MockPartyBackend.addBotsToCurrentRoom();
@@ -1302,7 +1350,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             <button
               type="button"
               onClick={() => setActiveTab('usage')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'usage'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
                   : 'border-transparent text-slate-400 hover:text-white'
@@ -1314,11 +1362,24 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
             <button
               type="button"
+              onClick={() => setActiveTab('health_logs')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
+                activeTab === 'health_logs'
+                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <HeartPulse className="w-3.5 h-3.5" />
+              <span>Health & Logs</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 setActiveTab('min_version');
                 refreshDiagnostics();
               }}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'min_version'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
                   : 'border-transparent text-slate-400 hover:text-white'
@@ -1334,7 +1395,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 setActiveTab('update_status');
                 refreshDiagnostics();
               }}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'update_status'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
                   : 'border-transparent text-slate-400 hover:text-white'
@@ -1347,7 +1408,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             <button
               type="button"
               onClick={() => setActiveTab('connection')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'connection'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
                   : 'border-transparent text-slate-400 hover:text-white'
@@ -1360,7 +1421,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             <button
               type="button"
               onClick={() => setActiveTab('party_demo')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
                 activeTab === 'party_demo'
                   ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
                   : 'border-transparent text-slate-400 hover:text-white'
@@ -1373,6 +1434,616 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
           {/* Tab Panels */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+            {/* =========================================================================
+                TAB 0: APPLICATION HEALTH, SUPABASE MONITORING & DEVICE LOGS
+               ========================================================================= */}
+            {activeTab === 'health_logs' && (() => {
+              const logStats = AppLogger.getStats();
+              const distinctComponents = AppLogger.getDistinctComponents();
+              const distinctDates = AppLogger.getDistinctDates();
+              const partyHealthSnapshot = projectSnapshots.find((p) => p.id === 'jtec_party');
+
+              const statusBadgeStyle = (status: HealthStatus | OverallHealthStatus) => {
+                switch (status) {
+                  case 'HEALTHY':
+                    return 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300';
+                  case 'DEGRADED':
+                    return 'bg-amber-500/20 border-amber-500/40 text-amber-300';
+                  case 'ERROR':
+                    return 'bg-rose-500/20 border-rose-500/40 text-rose-300';
+                  case 'OFFLINE':
+                    return 'bg-slate-700/60 border-slate-500/40 text-slate-200';
+                  case 'NOT CONFIGURED':
+                    return 'bg-slate-800/80 border-white/15 text-slate-400';
+                  case 'NOT TESTED':
+                  default:
+                    return 'bg-cyan-500/15 border-cyan-500/35 text-cyan-200';
+                }
+              };
+
+              const severityBadgeStyle = (sev: LogSeverity) => {
+                switch (sev) {
+                  case 'SUCCESS':
+                    return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/35';
+                  case 'WARNING':
+                    return 'bg-amber-500/20 text-amber-300 border-amber-500/35';
+                  case 'ERROR':
+                    return 'bg-rose-500/20 text-rose-300 border-rose-500/35';
+                  case 'INFO':
+                  default:
+                    return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/35';
+                }
+              };
+
+              const filteredDeviceLogs =
+                logViewMode === 'all'
+                  ? AppLogger.getLogs({
+                      severity: logSeverityFilter,
+                      component: logComponentFilter,
+                      project: logProjectFilter,
+                      dateKey: logDateFilter,
+                    })
+                  : AppLogger.getLogs({
+                      severity: logSeverityFilter,
+                      project: selectedLogProjectTab,
+                    });
+
+              const selectedProjectAllLogs = AppLogger.getLogs({ project: selectedLogProjectTab });
+              const selectedProjectSuccessCount = selectedProjectAllLogs.filter((l) => l.severity === 'SUCCESS').length;
+              const selectedProjectErrorCount = selectedProjectAllLogs.filter((l) => l.severity === 'ERROR').length;
+
+              return (
+                <div className="space-y-6 max-w-5xl mx-auto" data-log-revision={logRevision}>
+                  {/* Top Control Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-white tracking-wide flex items-center gap-2">
+                        <HeartPulse className="w-5 h-5 text-cyan-400" />
+                        <span>System Health & Diagnostics</span>
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Live health monitoring per Supabase project, JTEC Party diagnostics & local device logs
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => HealthMonitorService.testPartyConnection()}
+                        disabled={Boolean(partyHealthSnapshot?.isTesting)}
+                        className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                      >
+                        <Radio className={`w-3.5 h-3.5 ${partyHealthSnapshot?.isTesting ? 'animate-spin' : ''}`} />
+                        <span>{partyHealthSnapshot?.isTesting ? 'Testing Party...' : 'Test JTEC Party Connection'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => HealthMonitorService.refreshAllHealthChecks()}
+                        disabled={overallHealth.isRefreshingAll}
+                        className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 shadow-lg shadow-cyan-500/20"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${overallHealth.isRefreshingAll ? 'animate-spin' : ''}`} />
+                        <span>{overallHealth.isRefreshingAll ? 'Testing All...' : 'Refresh All Health Checks'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* CARD A: Overall Application Health */}
+                  <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                          <Activity className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Card A — Overall Application Health</h4>
+                          <p className="text-[11px] text-slate-400">Aggregated status from tested Supabase projects, network & device logs</p>
+                        </div>
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-xs font-black border ${statusBadgeStyle(overallHealth.status)}`}>
+                        {overallHealth.status}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase block">App Version & Build</span>
+                        <span className="font-mono font-bold text-white block">
+                          {isNativeAndroid() ? `v${appVersionInfo.version} (Build ${appVersionInfo.build})` : `Web • ${BUILD_DATE}`}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Device Connection</span>
+                        <span className={`font-mono font-bold flex items-center gap-1.5 ${overallHealth.isOnline ? 'text-emerald-300' : 'text-rose-300'}`}>
+                          <span className={`w-2 h-2 rounded-full ${overallHealth.isOnline ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                          <span>{overallHealth.isOnline ? 'Online' : 'Offline'}</span>
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Last Full Health Check</span>
+                        <span className="font-mono text-slate-200 block">
+                          {formatTimestamp(overallHealth.lastHealthCheckAt)}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Local Log Counts</span>
+                        <div className="font-mono text-[11px] flex items-center gap-2 flex-wrap">
+                          <span className="text-rose-300 font-bold">{logStats.error} Err</span>
+                          <span className="text-amber-300 font-bold">{logStats.warning} Warn</span>
+                          <span className="text-emerald-300 font-bold">{logStats.success} Ok</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-white/10 text-xs">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                        Most Recent Application Error (This Device)
+                      </span>
+                      {logStats.latestError ? (
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/35 text-rose-300 font-mono text-[10px] shrink-0">
+                              {logStats.latestError.component}
+                            </span>
+                            <span className="text-rose-200 font-medium break-words">
+                              {logStats.latestError.message}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                            {formatTimestamp(logStats.latestError.timestamp)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-emerald-300/90 font-medium">No errors recorded on this device.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CARD B: Supabase Project Monitoring */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Database className="w-4 h-4 text-cyan-400" />
+                        <h4 className="text-sm font-black text-white uppercase tracking-wider">
+                          Card B — Supabase Project Monitoring
+                        </h4>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        Configured projects start as <strong className="text-cyan-300">NOT TESTED</strong> until checked
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {projectSnapshots.map((proj) => (
+                        <div
+                          key={proj.id}
+                          className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 shadow-lg space-y-3.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h5 className="text-sm font-black text-white">{proj.name}</h5>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  proj.configStatus === 'CONFIGURED'
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                                    : 'bg-slate-800 border-white/15 text-slate-400'
+                                }`}>
+                                  {proj.configStatus}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-0.5">{proj.subtitle}</p>
+                              <p className="text-[11px] font-mono text-cyan-300/90 mt-1">Host: {proj.maskedHost}</p>
+                            </div>
+
+                            <div className="flex flex-col items-end gap-2 shrink-0">
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${statusBadgeStyle(proj.healthStatus)}`}>
+                                {proj.healthStatus}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => HealthMonitorService.testProjectHealth(proj.id)}
+                                disabled={proj.isTesting}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${proj.isTesting ? 'animate-spin text-cyan-400' : ''}`} />
+                                <span>{proj.isTesting ? 'Testing...' : 'Test'}</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-white/5">
+                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
+                              <span className="text-[9px] font-bold uppercase text-slate-500 block">DB Read Result</span>
+                              <span className="font-mono text-slate-200 break-words">{proj.dbReadResult}</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
+                              <span className="text-[9px] font-bold uppercase text-slate-500 block">
+                                {proj.id === 'jtec_party' ? 'Realtime Status' : 'Storage Test'}
+                              </span>
+                              <span className="font-mono text-slate-200 break-words">
+                                {proj.id === 'jtec_party' ? proj.realtimeStatus : proj.storageTestResult}
+                              </span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
+                              <span className="text-[9px] font-bold uppercase text-slate-500 block">Last Successful Check</span>
+                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastSuccessfulCheck)}</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
+                              <span className="text-[9px] font-bold uppercase text-slate-500 block">Last Failed Check</span>
+                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastFailedCheck)}</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 text-[11px] pt-1">
+                            <div className="flex items-center justify-between gap-2 text-slate-400">
+                              <span>Last Successful Op:</span>
+                              <span className="font-mono text-emerald-300 truncate max-w-[65%]" title={proj.lastSuccessfulOperation || ''}>
+                                {proj.lastSuccessfulOperation || 'None yet'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 text-slate-400">
+                              <span>Most Recent Event:</span>
+                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastEventTimestamp)}</span>
+                            </div>
+                            {proj.lastErrorMessage && (
+                              <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-200 text-[11px] font-mono break-words">
+                                Error: {proj.lastErrorMessage}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* CARD C: Dedicated JTEC Party Monitoring */}
+                  <div className="rounded-3xl border border-purple-500/35 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                          <Radio className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Card C — Dedicated JTEC Party Monitoring</h4>
+                          <p className="text-[11px] text-slate-400">
+                            Isolated project (<span className="font-mono text-purple-300">{partyDiagnostics.maskedHost}</span>) • Simulated bots excluded from real presence
+                          </p>
+                        </div>
+                      </div>
+
+                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${
+                        partyDiagnostics.connectionStatus === 'SUBSCRIBED'
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          : partyDiagnostics.connectionStatus === 'CHANNEL_ERROR' || partyDiagnostics.connectionStatus === 'TIMED_OUT'
+                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                          : 'bg-slate-800 border-white/15 text-slate-300'
+                      }`}>
+                        Room RT: {partyDiagnostics.connectionStatus}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Party Config / Connection</span>
+                        <span className="font-mono font-bold text-slate-100 block">
+                          {partyDiagnostics.isConfigured ? partyDiagnostics.maskedHost : 'NOT CONFIGURED'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Online Presence Channel</span>
+                        <span className="font-mono font-bold text-cyan-300 block">
+                          {partyStatus.onlineChannelState || 'DISCONNECTED'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Online Party Users</span>
+                        {typeof partyStatus.onlineUsersCount === 'number' ? (
+                          <span className="font-mono font-black text-emerald-300 block">
+                            {partyStatus.onlineUsersCount} online (Realtime)
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[11px] text-amber-300 block" title={partyStatus.onlineUsersUnavailableReason || ''}>
+                            Unavailable ({partyStatus.onlineUsersUnavailableReason || 'not subscribed'})
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Room Channel & Code</span>
+                        <span className="font-mono font-bold text-white block">
+                          {partyDiagnostics.roomCode ? `${partyDiagnostics.roomCode} (${partyDiagnostics.connectionStatus})` : 'None'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Host vs Guest Role</span>
+                        <span className="font-mono font-bold text-purple-300 uppercase block">
+                          {partyDiagnostics.role || 'None'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Room Participants</span>
+                        <span className="font-mono text-white block">
+                          {partyDiagnostics.realParticipantsCount} real
+                          {partyDiagnostics.simulatedBotsCount > 0 ? ` + ${partyDiagnostics.simulatedBotsCount} bot(s)` : ''}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Playback Sync & Latency</span>
+                        <span className="font-mono text-slate-200 block">
+                          {partyLiveState.roomCode
+                            ? `${partyLiveState.role === 'host' ? 'Host' : Math.abs(partyDiagnostics.currentDriftMs) < 150 ? 'Synced' : `Adjusting (${Math.round(partyDiagnostics.currentDriftMs)}ms)`} • ${partyDiagnostics.currentLatencyMs}ms`
+                            : 'Idle'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Reconnect Attempts</span>
+                        <span className="font-mono font-bold text-slate-200 block">
+                          {partyDiagnostics.reconnectAttempts}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Last Successful Broadcast</span>
+                        <span className="font-mono text-[11px] text-emerald-300 block break-words">
+                          {partyDiagnostics.lastSuccessfulBroadcastAt
+                            ? `${partyDiagnostics.lastSuccessfulBroadcastType || 'msg'} • ${formatTimestamp(partyDiagnostics.lastSuccessfulBroadcastAt)}`
+                            : 'None'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Last Failed Broadcast</span>
+                        <span className={`font-mono text-[11px] block break-words ${partyDiagnostics.lastFailedBroadcastError ? 'text-rose-300' : 'text-slate-400'}`}>
+                          {partyDiagnostics.lastFailedBroadcastError
+                            ? `${partyDiagnostics.lastFailedBroadcastError} • ${formatTimestamp(partyDiagnostics.lastFailedBroadcastAt)}`
+                            : 'None'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
+                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Most Recent Party Error</span>
+                        <span className={`font-mono text-[11px] block break-words ${
+                          partyDiagnostics.lastErrorMessage || partyStatus.lastError || partyHealthSnapshot?.lastErrorMessage
+                            ? 'text-rose-300 font-bold'
+                            : 'text-slate-400'
+                        }`}>
+                          {partyDiagnostics.lastErrorMessage ||
+                            partyStatus.lastError ||
+                            partyHealthSnapshot?.lastErrorMessage ||
+                            'None'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* STRUCTURED APPLICATION LOGS & PER-SUPABASE PROJECT LOGS */}
+                  <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-slate-800 border border-white/15 flex items-center justify-center text-cyan-400">
+                          <FileText className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Application Logs</h4>
+                          <p className="text-[11px] text-amber-300/90 font-semibold">
+                            Logs collected on this device only • {logStats.total} stored entries
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="inline-flex rounded-xl bg-slate-950 p-1 border border-white/10">
+                          <button
+                            type="button"
+                            onClick={() => setLogViewMode('all')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              logViewMode === 'all' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            All Device Logs
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLogViewMode('by_project')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              logViewMode === 'by_project' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            Per-Supabase Project
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowClearLogsConfirm(true)}
+                          disabled={logStats.total === 0}
+                          className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Clear Logs</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {logViewMode === 'by_project' ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {projectSnapshots.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setSelectedLogProjectTab(p.id)}
+                              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                                selectedLogProjectTab === p.id
+                                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
+                                  : 'bg-slate-950 border-white/10 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {p.name}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between flex-wrap gap-2 p-3 rounded-2xl bg-slate-950/70 border border-white/5 text-xs">
+                          <div className="flex items-center gap-3">
+                            <span className="text-slate-300 font-bold">
+                              Isolated logs for {projectSnapshots.find((p) => p.id === selectedLogProjectTab)?.name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono text-[10px]">
+                              {selectedProjectSuccessCount} Success
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono text-[10px]">
+                              {selectedProjectErrorCount} Error
+                            </span>
+                          </div>
+
+                          <select
+                            value={logSeverityFilter}
+                            onChange={(e) => setLogSeverityFilter(e.target.value as LogSeverity | 'ALL')}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="ALL">All Severities</option>
+                            <option value="ERROR">Errors Only</option>
+                            <option value="WARNING">Warnings Only</option>
+                            <option value="SUCCESS">Success Only</option>
+                            <option value="INFO">Info Only</option>
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1">
+                            <Filter className="w-3 h-3" /> Severity
+                          </label>
+                          <select
+                            value={logSeverityFilter}
+                            onChange={(e) => setLogSeverityFilter(e.target.value as LogSeverity | 'ALL')}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="ALL">All Severities</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="SUCCESS">SUCCESS</option>
+                            <option value="INFO">INFO</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-400 block">Component / Service</label>
+                          <select
+                            value={logComponentFilter}
+                            onChange={(e) => setLogComponentFilter(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="ALL">All Components</option>
+                            {distinctComponents.map((comp) => (
+                              <option key={comp} value={comp}>
+                                {comp}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-400 block">Project Scope</label>
+                          <select
+                            value={logProjectFilter}
+                            onChange={(e) => setLogProjectFilter(e.target.value as LogProjectScope | 'ALL')}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="ALL">All Scopes</option>
+                            <option value="app">App General</option>
+                            <option value="jtec_main">JTEC Music Main</option>
+                            <option value="jtec_party">JTEC Party</option>
+                            <option value="nasheed">Nasheed</option>
+                            {HealthMonitorService.isLoveChillConfigured() && (
+                              <option value="love_chill">Love & Chill</option>
+                            )}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-400 block">Date Range</label>
+                          <select
+                            value={logDateFilter}
+                            onChange={(e) => setLogDateFilter(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="ALL">All Dates</option>
+                            <option value="TODAY">Today</option>
+                            <option value="24H">Last 24 Hours</option>
+                            <option value="7D">Last 7 Days</option>
+                            {distinctDates.map((d) => (
+                              <option key={d} value={d}>
+                                {d}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Logs List */}
+                    <div className="max-h-96 overflow-y-auto space-y-2 p-3 rounded-2xl bg-slate-950/85 border border-white/10">
+                      {filteredDeviceLogs.length === 0 ? (
+                        <p className="text-xs text-slate-500 text-center py-8">
+                          No log entries match the current filters on this device.
+                        </p>
+                      ) : (
+                        filteredDeviceLogs.slice(0, 150).map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="p-3 rounded-xl bg-slate-900/80 border border-white/5 space-y-1.5 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${severityBadgeStyle(entry.severity)}`}>
+                                  {entry.severity}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-slate-200 font-mono text-[10px]">
+                                  {entry.component}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-200 font-mono text-[10px]">
+                                  {entry.project}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  {entry.event}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {new Date(entry.timestamp).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <p className="text-slate-100 leading-snug break-words">{entry.message}</p>
+
+                            {entry.details && Object.keys(entry.details).length > 0 && (
+                              <p className="text-[10px] font-mono text-slate-400 break-all">
+                                {JSON.stringify(entry.details)}
+                              </p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* =========================================================================
                 TAB 1: USAGE TELEMETRY & DEVICES LIST
                ========================================================================= */}
@@ -2606,22 +3277,36 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Room Channel</span>
                       <div className="flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full ${
-                          PartyService.getState().isConnected || partyStatus.roomChannelState === 'SUBSCRIBED'
+                          partyDiagnostics.connectionStatus === 'SUBSCRIBED'
                             ? 'bg-emerald-400'
+                            : partyDiagnostics.connectionStatus === 'CHANNEL_ERROR' || partyDiagnostics.connectionStatus === 'TIMED_OUT'
+                            ? 'bg-rose-400'
                             : 'bg-slate-500'
                         }`} />
                         <span className="font-mono font-bold text-xs text-white">
-                          {PartyService.getState().roomCode
-                            ? `${PartyService.getState().roomCode} (${PartyService.getState().isConnected ? 'SUBSCRIBED' : 'CONNECTING'})`
+                          {partyDiagnostics.roomCode
+                            ? `${partyDiagnostics.roomCode} (${partyDiagnostics.connectionStatus})`
                             : partyStatus.roomChannelState || 'IDLE'}
                         </span>
                       </div>
                     </div>
 
                     <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Online / Room Users</span>
+                      <p className="text-xs font-mono text-slate-200 truncate">
+                        {typeof partyStatus.onlineUsersCount === 'number'
+                          ? `${partyStatus.onlineUsersCount} online`
+                          : 'Online: Unavailable'}
+                        {' • '}
+                        {partyDiagnostics.realParticipantsCount} real
+                        {partyDiagnostics.simulatedBotsCount > 0 ? ` + ${partyDiagnostics.simulatedBotsCount} bots` : ''}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
                       <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Last Error</span>
-                      <p className={`text-xs truncate ${partyStatus.lastError ? 'text-rose-400 font-bold' : 'text-slate-400'}`}>
-                        {partyStatus.lastError || 'None'}
+                      <p className={`text-xs truncate ${partyDiagnostics.lastErrorMessage || partyStatus.lastError ? 'text-rose-400 font-bold' : 'text-slate-400'}`}>
+                        {partyDiagnostics.lastErrorMessage || partyStatus.lastError || 'None'}
                       </p>
                     </div>
                   </div>
@@ -3115,6 +3800,59 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     <span>Confirm Unblock All</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Clear Local Device Logs */}
+      {showClearLogsConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-md w-full rounded-3xl border border-rose-500/40 bg-slate-950 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Clear Device Logs</h3>
+                  <p className="text-xs text-slate-400">Removes saved diagnostic logs on this device</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowClearLogsConfirm(false)}
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-200 leading-relaxed">
+              This will permanently clear all local diagnostic logs stored on this device. No database records or music files are affected.
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowClearLogsConfirm(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  AppLogger.clearLogs();
+                  setShowClearLogsConfirm(false);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Clear Logs</span>
               </button>
             </div>
           </div>

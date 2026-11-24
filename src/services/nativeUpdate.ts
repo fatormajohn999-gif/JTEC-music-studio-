@@ -5,6 +5,7 @@ import { Network } from '@capacitor/network';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileOpener } from '@capawesome-team/capacitor-file-opener';
 import { APP_VERSION } from '../version';
+import { AppLogger } from './appLogger';
 
 function isNativeAndroidPlatform(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
@@ -698,6 +699,10 @@ export const NativeUpdateService = {
     try {
       localStorage.setItem(LS_KEY_LAST_CHECK_ERROR, reasonCode);
     } catch {}
+    AppLogger.error('Updater', 'update_check_failed', `Update check failed (${reasonCode})`, {
+      reason: lastFailureReason,
+      statusCode: lastStatusCode,
+    });
 
     return {
       hasUpdate: false,
@@ -804,7 +809,17 @@ export const NativeUpdateService = {
         directory: Directory.Cache,
       });
 
+      AppLogger.success('Updater', 'apk_download_completed', 'Update APK downloaded successfully', {
+        bytes: stat.size,
+      });
       return uriResult.uri;
+    } catch (dlErr) {
+      AppLogger.error(
+        'Updater',
+        'apk_download_failed',
+        dlErr instanceof Error ? dlErr.message : 'APK download failed'
+      );
+      throw dlErr;
     } finally {
       if (progressHandle) {
         await progressHandle.remove().catch(() => {});
@@ -844,8 +859,14 @@ export const NativeUpdateService = {
         path: uri,
         mimeType: 'application/vnd.android.package-archive',
       });
+      AppLogger.info('Updater', 'apk_installer_opened', 'Launched Android package installer');
     } catch (err) {
       console.error('[NativeUpdate] Technical details of installation error:', err);
+      AppLogger.error(
+        'Updater',
+        'apk_install_failed',
+        err instanceof Error ? err.message : 'Failed to open APK package installer'
+      );
       throw err;
     }
   },

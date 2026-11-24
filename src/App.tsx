@@ -11,6 +11,7 @@ import { WidgetBridge } from './services/widgetBridge';
 import { NotificationPermissionManager } from './services/notificationPermission';
 import { extractPaletteFromImage } from './services/colorExtractor';
 import { PersistentSettingsService } from './services/persistentSettings';
+import { AppLogger } from './services/appLogger';
 
 // UI Components
 import { Header } from './components/Header';
@@ -366,6 +367,11 @@ export default function App() {
       setIsInstallerOpened(true);
     } catch (err: unknown) {
       console.error('[NativeUpdate] Technical details of download/install failure:', err);
+      AppLogger.error(
+        'Updater',
+        'native_update_flow_failed',
+        err instanceof Error ? err.message : 'Native APK download/install failed'
+      );
       setIsDownloadingNativeUpdate(false);
       setIsInstallingNativeUpdate(false);
       setIsNativeUpdateDownloaded(false);
@@ -591,6 +597,7 @@ export default function App() {
     setIsSettingsView(true);
     const target = getSavedScrollPosition('settings:root');
     restoreScroll(mainContainerRef.current, target);
+    AppLogger.info('Navigation', 'open_settings', 'Opened Settings screen');
   }, [currentTab]);
 
   const handleOpenPartyScreen = useCallback(() => {
@@ -600,6 +607,7 @@ export default function App() {
     }
     setIsSettingsView(true);
     restoreScroll(mainContainerRef.current, 0);
+    AppLogger.info('Navigation', 'open_party', 'Opened JTEC Party screen', undefined, 'jtec_party');
   }, [currentTab]);
 
   const handleBackFromSettings = useCallback(() => {
@@ -639,6 +647,7 @@ export default function App() {
       saveScrollPosition('tab:' + currentTab, mainContainerRef.current.scrollTop);
     }
     setCurrentTab(targetTab);
+    AppLogger.info('Navigation', 'select_tab', `Switched tab to ${targetTab}`, { tab: targetTab });
     const target = getSavedScrollPosition('tab:' + targetTab);
     restoreScroll(mainContainerRef.current, target);
   }, [currentTab, isSettingsView, runNativeUpdateCheck]);
@@ -1060,8 +1069,17 @@ export default function App() {
             StorageService.getStorageStats().then(setStorageStats);
           });
         }, 1200);
+        AppLogger.success('App', 'app_initialized', 'Library and player initialized', {
+          songs: storedSongs.length,
+          playlists: storedPlaylists.length,
+        });
       } catch (err) {
         console.error('Initialization error:', err);
+        AppLogger.error(
+          'App',
+          'app_init_error',
+          err instanceof Error ? err.message : 'App initialization failed'
+        );
       }
     }
 
@@ -1379,6 +1397,10 @@ export default function App() {
         return;
       }
       console.warn('Failed to play song:', err);
+      AppLogger.error('Player', 'song_playback_error', `Failed to play "${song.title}"`, {
+        isCloud: Boolean(song.isCloud),
+        error: err instanceof Error ? err.message : String(err),
+      });
       setGlobalError(song.isCloud ? "Can't reach JTEC Cloud right now. Check your internet and try again." : "Audio file unavailable. Skipping to next song...");
       setTimeout(() => setGlobalError(null), 3000);
       setTimeout(() => {

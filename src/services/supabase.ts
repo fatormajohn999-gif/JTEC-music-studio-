@@ -5,6 +5,7 @@ import { CloudSong, Song } from '../types/music';
 import { downloadAndConvertCover } from './imageUtils';
 import { generateProceduralArtwork } from './id3Parser';
 import { extractPaletteFromImage } from './colorExtractor';
+import { AppLogger, LogProjectScope } from './appLogger';
 
 // Storage Bucket Names
 export const BUCKET_MUSIC = 'music';
@@ -291,6 +292,19 @@ export function sanitizeSecretText(input: unknown, knownSecrets: (string | undef
 
 export function logSupabaseError(context: string, details: Record<string, unknown>) {
   console.warn(`[SupabaseService] ${context}:`, details);
+}
+
+function resolveProjectScopeFromUrl(audioUrl: string): LogProjectScope {
+  if (!audioUrl) return 'app';
+  const host = getMaskedHost(audioUrl);
+  const categories: CloudCategoryKey[] = ['jtec_main', 'nasheed', 'love_chill'];
+  for (const cat of categories) {
+    const cfg = SupabaseService.getCategoryConfig(cat);
+    if (cfg.isConfigured && getMaskedHost(cfg.url) === host) {
+      return cat;
+    }
+  }
+  return 'app';
 }
 
 /**
@@ -1082,6 +1096,13 @@ export const SupabaseService = {
           errorCode: error.code,
           httpStatus: status,
         });
+        AppLogger.error(
+          'SupabaseService',
+          'catalog_fetch_error',
+          `Failed to load ${categoryTitle} tracks: ${sanitizeSecretText(error.message, [config.anonKey])}`,
+          { code: error.code, httpStatus: status },
+          categoryKey
+        );
 
         // Keep technical details only in console.log / developer logs
         throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
@@ -1119,12 +1140,26 @@ export const SupabaseService = {
         };
       });
 
+      AppLogger.success(
+        'SupabaseService',
+        'catalog_fetch_success',
+        `Loaded ${songs.length} tracks from ${categoryTitle}`,
+        { count: songs.length },
+        categoryKey
+      );
       return songs;
     } catch (err) {
       logSupabaseError(`fetchSongsForCategory.exception.${categoryKey}`, {
         errorMessage: err instanceof Error ? err.message : 'Unknown exception',
         raw: err,
       });
+      AppLogger.error(
+        'SupabaseService',
+        'catalog_fetch_exception',
+        `Catalog fetch failed for ${categoryTitle}: ${sanitizeSecretText(err, [config.anonKey])}`,
+        undefined,
+        categoryKey
+      );
       throw err;
     }
   },
@@ -1144,9 +1179,31 @@ export const SupabaseService = {
 
     if (onProgress) onProgress(5);
 
-    const response = await fetch(cloudSong.audio_url);
+    const projectScope = resolveProjectScopeFromUrl(cloudSong.audio_url);
+
+    let response: Response;
+    try {
+      response = await fetch(cloudSong.audio_url);
+    } catch (fetchErr) {
+      AppLogger.error(
+        'CloudDownload',
+        'download_fetch_error',
+        `Download request failed for "${cloudSong.title}": ${sanitizeSecretText(fetchErr)}`,
+        { songId: cloudSong.id },
+        projectScope
+      );
+      throw fetchErr;
+    }
+
     if (!response.ok) {
       console.warn(`Download failed from cloud (HTTP ${response.status})`);
+      AppLogger.error(
+        'CloudDownload',
+        'download_http_error',
+        `Download failed for "${cloudSong.title}" (HTTP ${response.status})`,
+        { songId: cloudSong.id, status: response.status },
+        projectScope
+      );
       throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
     }
 
@@ -1182,6 +1239,13 @@ export const SupabaseService = {
 
     if (!audioBlob || audioBlob.size === 0) {
       console.warn('Downloaded audio file was empty (0 bytes).');
+      AppLogger.error(
+        'CloudDownload',
+        'download_empty_blob',
+        `Downloaded empty audio file for "${cloudSong.title}"`,
+        { songId: cloudSong.id },
+        projectScope
+      );
       throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
     }
 
@@ -1234,6 +1298,13 @@ export const SupabaseService = {
     }
 
     if (onProgress) onProgress(100);
+    AppLogger.success(
+      'CloudDownload',
+      'download_completed',
+      `Downloaded "${cloudSong.title}" (${formatBytes(audioBlob.size)})`,
+      { songId: cloudSong.id, bytes: audioBlob.size },
+      projectScope
+    );
     return { song: localSong, blob: audioBlob };
   },
 

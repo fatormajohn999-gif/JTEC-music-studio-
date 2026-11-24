@@ -18,7 +18,8 @@ import {
   BackendPartyStatus,
   PARTY_ID_ALPHABET,
 } from './types';
-import { getPartySupabaseClient, isPartySupabaseConfigured } from './supabaseClient';
+import { getPartySupabaseClient, isPartySupabaseConfigured, getPartySupabaseConfigStatus } from './supabaseClient';
+import { AppLogger, sanitizeLogText } from '../../services/appLogger';
 
 const INVITE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -40,8 +41,13 @@ export class SupabasePartyBackendClass implements PartyBackend {
   private socialNotificationListeners: Set<(notification: SocialNotification) => void> = new Set();
 
   private onlineChannelStatus: string = 'DISCONNECTED';
+  private notificationsChannelStatus: string = 'IDLE';
   private roomChannelStatus: string = 'IDLE';
   private lastErrorMessage: string | null = null;
+  private lastErrorAt: number | null = null;
+  private lastConnectedAt: number | null = null;
+  private lastDisconnectedAt: number | null = null;
+  private intentionalChannelCleanup = false;
   private localLastSeenMap: Map<string, number> = new Map();
   private isLifecycleInitialized = false;
 
@@ -59,21 +65,49 @@ export class SupabasePartyBackendClass implements PartyBackend {
   }
 
   public getStatus(): BackendPartyStatus {
+    const cfg = getPartySupabaseConfigStatus();
+    let onlineUsersCount: number | null = null;
+    let onlineUsersUnavailableReason: string | null = null;
+
+    if (!cfg.isConfigured) {
+      onlineUsersUnavailableReason = cfg.reason || 'Party Supabase is not configured.';
+    } else if (!this.cachedProfile?.accountId) {
+      onlineUsersUnavailableReason = 'Unavailable (no active Party profile session on this device)';
+    } else if (!this.onlineChannel || this.onlineChannelStatus !== 'SUBSCRIBED') {
+      onlineUsersUnavailableReason = `Unavailable (online channel ${this.onlineChannelStatus || 'DISCONNECTED'})`;
+    } else {
+      try {
+        const presenceMap = this.onlineChannel.presenceState();
+        onlineUsersCount = Object.keys(presenceMap).length;
+      } catch {
+        onlineUsersCount = null;
+        onlineUsersUnavailableReason = 'Unable to read Realtime Presence state';
+      }
+    }
+
     return {
       backendType: 'Supabase',
       accountId: this.cachedProfile?.accountId || null,
       partyId: this.cachedProfile?.id || null,
       onlineChannelState: this.onlineChannelStatus,
+      notificationsChannelState: this.notificationsChannelStatus,
       roomChannelState: this.roomChannelStatus,
       lastError: this.lastErrorMessage,
+      onlineUsersCount,
+      onlineUsersUnavailableReason,
+      lastErrorAt: this.lastErrorAt,
+      lastConnectedAt: this.lastConnectedAt,
+      lastDisconnectedAt: this.lastDisconnectedAt,
     };
   }
 
-  private setLastError(err: unknown): void {
+  private setLastError(err: unknown, event = 'party_backend_error'): void {
     if (!err) return;
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = sanitizeLogText(err instanceof Error ? err.message : String(err));
     this.lastErrorMessage = msg;
+    this.lastErrorAt = Date.now();
     console.warn('[SupabasePartyBackend]', msg);
+    AppLogger.error('JTECParty', event, msg, { channelState: this.onlineChannelStatus }, 'jtec_party');
   }
 
   // =========================================================================
@@ -156,6 +190,9 @@ export class SupabasePartyBackendClass implements PartyBackend {
   public async createProfile(username: string, avatarUrl?: string | null): Promise<PartyProfile> {
     this.client = getPartySupabaseClient();
     if (!this.client) {
+      const cfg = getPartySupabaseConfigStatus();
+      const reason = cfg.reason || 'JTEC Party Supabase is not configured.';
+      this.setLastError(reason, 'party_profile_unconfigured');
       throw new Error('JTEC Party is unavailable right now');
     }
 
@@ -169,10 +206,11 @@ export class SupabasePartyBackendClass implements PartyBackend {
     if (!session || !session.user) {
       const { data: authData, error: authErr } = await this.client.auth.signInAnonymously();
       if (authErr) {
-        this.setLastError(authErr);
+        this.setLastError(authErr, 'party_auth_error');
         throw new Error('JTEC Party is unavailable right now');
       }
       session = authData.session;
+      AppLogger.success('JTECParty', 'party_auth_anonymous', 'Anonymous Party session started.', undefined, 'jtec_party');
     }
 
     const userId = session?.user?.id;
@@ -249,6 +287,14 @@ export class SupabasePartyBackendClass implements PartyBackend {
     // Initialize online presence & notifications
     await this.startOnlinePresence();
     await this.startSocialNotifications();
+
+    AppLogger.success(
+      'JTECParty',
+      'party_profile_created',
+      `Created Party profile (${finalPartyId})`,
+      { partyId: finalPartyId },
+      'jtec_party'
+    );
 
     return profile;
   }
@@ -376,27 +422,33 @@ export class SupabasePartyBackendClass implements PartyBackend {
   }
 
   private cleanupChannels(): void {
-    if (this.onlineChannel) {
-      try {
-        this.onlineChannel.unsubscribe();
-      } catch {}
-      this.onlineChannel = null;
-      this.onlineChannelStatus = 'DISCONNECTED';
-    }
+    this.intentionalChannelCleanup = true;
+    try {
+      if (this.onlineChannel) {
+        try {
+          this.onlineChannel.unsubscribe();
+        } catch {}
+        this.onlineChannel = null;
+        this.onlineChannelStatus = 'DISCONNECTED';
+      }
 
-    if (this.notificationsChannel) {
-      try {
-        this.notificationsChannel.unsubscribe();
-      } catch {}
-      this.notificationsChannel = null;
-    }
+      if (this.notificationsChannel) {
+        try {
+          this.notificationsChannel.unsubscribe();
+        } catch {}
+        this.notificationsChannel = null;
+        this.notificationsChannelStatus = 'IDLE';
+      }
 
-    if (this.roomChannel) {
-      try {
-        this.roomChannel.unsubscribe();
-      } catch {}
-      this.roomChannel = null;
-      this.roomChannelStatus = 'IDLE';
+      if (this.roomChannel) {
+        try {
+          this.roomChannel.unsubscribe();
+        } catch {}
+        this.roomChannel = null;
+        this.roomChannelStatus = 'IDLE';
+      }
+    } finally {
+      this.intentionalChannelCleanup = false;
     }
   }
 
@@ -829,9 +881,15 @@ export class SupabasePartyBackendClass implements PartyBackend {
       }
     );
 
-    channel.subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        this.setLastError('Social notifications channel error');
+    channel.subscribe((status, err) => {
+      this.notificationsChannelStatus = status;
+      if (status === 'SUBSCRIBED') {
+        AppLogger.info('JTECParty', 'party_notifications_subscribed', 'Social notifications channel subscribed.', undefined, 'jtec_party');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        const msg = err?.message ? `Social notifications ${status}: ${err.message}` : `Social notifications channel ${status}`;
+        this.setLastError(msg, 'party_notifications_error');
+      } else if (status === 'CLOSED' && !this.intentionalChannelCleanup) {
+        AppLogger.warning('JTECParty', 'party_notifications_closed', 'Social notifications channel closed unexpectedly.', undefined, 'jtec_party');
       }
     });
 
@@ -854,12 +912,15 @@ export class SupabasePartyBackendClass implements PartyBackend {
     if (!me || !me.accountId || !this.client) return;
 
     if (this.onlineChannel) {
+      this.intentionalChannelCleanup = true;
       try {
-        this.onlineChannel.unsubscribe();
+        await this.onlineChannel.unsubscribe();
       } catch {}
+      this.intentionalChannelCleanup = false;
       this.onlineChannel = null;
     }
 
+    this.onlineChannelStatus = 'CONNECTING';
     const channel = this.client.channel('online', {
       config: {
         presence: { key: me.accountId },
@@ -884,14 +945,26 @@ export class SupabasePartyBackendClass implements PartyBackend {
         this.broadcastPresenceState();
       });
 
-    channel.subscribe(async (status) => {
+    channel.subscribe(async (status, err) => {
       this.onlineChannelStatus = status;
       if (status === 'SUBSCRIBED') {
+        this.lastConnectedAt = Date.now();
+        AppLogger.success('JTECParty', 'party_online_presence_subscribed', 'Online presence channel subscribed.', undefined, 'jtec_party');
         try {
-          await channel.track({ id: me.accountId });
-        } catch (err) {
-          this.setLastError(err);
+          const trackResult = await channel.track({ id: me.accountId });
+          if (trackResult !== 'ok') {
+            this.setLastError(`Online presence track returned "${String(trackResult)}"`, 'party_online_track_failed');
+          }
+        } catch (trackErr) {
+          this.setLastError(trackErr, 'party_online_track_exception');
         }
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        this.lastDisconnectedAt = Date.now();
+        const reason = err?.message ? `Online presence ${status}: ${err.message}` : `Online presence channel ${status}`;
+        this.setLastError(reason, 'party_online_presence_error');
+      } else if (status === 'CLOSED' && !this.intentionalChannelCleanup) {
+        this.lastDisconnectedAt = Date.now();
+        AppLogger.warning('JTECParty', 'party_online_presence_closed', 'Online presence channel closed.', undefined, 'jtec_party');
       }
     });
 
@@ -1129,27 +1202,35 @@ export class SupabasePartyBackendClass implements PartyBackend {
         }
       });
 
-    channel.subscribe((status) => {
+    channel.subscribe((status, err) => {
       this.roomChannelStatus = status;
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        this.setLastError(err || `Backend room channel ${status}`, 'party_backend_room_channel_error');
+      }
     });
 
     return {
       send: async (msg: any) => {
         try {
-          await channel.send({
+          const res = await channel.send({
             type: 'broadcast',
             event: 'party_msg',
             payload: msg,
           });
+          if (res !== 'ok') {
+            this.setLastError(`Realtime send returned "${String(res)}"`, 'party_backend_send_failed');
+          }
         } catch (err) {
-          this.setLastError(err);
+          this.setLastError(err, 'party_backend_send_exception');
         }
       },
       leave: async () => {
+        this.intentionalChannelCleanup = true;
         try {
           await channel.untrack();
           await channel.unsubscribe();
         } catch {}
+        this.intentionalChannelCleanup = false;
         this.roomChannel = null;
         this.roomChannelStatus = 'IDLE';
       },

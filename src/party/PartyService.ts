@@ -1,8 +1,13 @@
 import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
-import { SupabaseService } from '../services/supabase';
 import { audioEngine } from '../services/audioEngine';
 import { PersistentSettingsService } from '../services/persistentSettings';
-import { getPartySupabaseClient } from './backend/supabaseClient';
+import {
+  getPartySupabaseClient,
+  isPartySupabaseConfigured,
+  getPartySupabaseConfigStatus,
+  getPartySupabaseMaskedHost,
+} from './backend/supabaseClient';
+import { AppLogger, sanitizeLogText } from '../services/appLogger';
 import {
   PartyRole,
   PartyMember,
@@ -18,6 +23,43 @@ import {
   SyncLogEntry,
 } from './types';
 import { MockPartyBackend, DEMO_BOT_TRACKS } from './MockPartyBackend';
+
+export type PartyRealtimeStatus =
+  | 'IDLE'
+  | 'CONNECTING'
+  | 'SUBSCRIBED'
+  | 'CHANNEL_ERROR'
+  | 'TIMED_OUT'
+  | 'CLOSED';
+
+export interface PartyServiceDiagnostics {
+  roomCode: string | null;
+  role: PartyRole;
+  isBotDemoRoom: boolean;
+  isConnected: boolean;
+  isReconnecting: boolean;
+  connectionStatus: PartyRealtimeStatus;
+  maskedHost: string;
+  isConfigured: boolean;
+  configError: string | null;
+  reconnectAttempts: number;
+  currentLatencyMs: number;
+  currentDriftMs: number;
+  realParticipantsCount: number;
+  simulatedBotsCount: number;
+  lastConnectionAttemptAt: number | null;
+  lastConnectedAt: number | null;
+  lastDisconnectedAt: number | null;
+  lastSuccessfulBroadcastAt: number | null;
+  lastSuccessfulBroadcastType: string | null;
+  lastFailedBroadcastAt: number | null;
+  lastFailedBroadcastError: string | null;
+  lastPresenceError: string | null;
+  lastErrorMessage: string | null;
+  lastErrorAt: number | null;
+}
+
+const CHANNEL_CONNECT_TIMEOUT_MS = 12000;
 
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_MEMBERS = 8;
@@ -134,6 +176,21 @@ class PartyServiceClass {
   private hostHeartbeatChecker: ReturnType<typeof setInterval> | null = null;
   private broadcastSeq = 0;
 
+  // Realtime diagnostics & connection lifecycle tracking
+  private roomChannelStatus: PartyRealtimeStatus = 'IDLE';
+  private isIntentionalDisconnect = false;
+  private totalReconnectAttempts = 0;
+  private lastConnectionAttemptAt: number | null = null;
+  private lastConnectedAt: number | null = null;
+  private lastDisconnectedAt: number | null = null;
+  private lastSuccessfulBroadcastAt: number | null = null;
+  private lastSuccessfulBroadcastType: string | null = null;
+  private lastFailedBroadcastAt: number | null = null;
+  private lastFailedBroadcastError: string | null = null;
+  private lastPresenceError: string | null = null;
+  private lastDiagnosticErrorMessage: string | null = null;
+  private lastDiagnosticErrorAt: number | null = null;
+
   // Track playback handlers attached by usePartyPlayer
   private playerHandlers: {
     loadTrack?: (track: PartyTrack) => Promise<boolean>;
@@ -215,6 +272,55 @@ class PartyServiceClass {
       queue: [...this.state.queue],
       activeReactions: [...this.state.activeReactions],
     };
+  }
+
+  public getDiagnostics(): PartyServiceDiagnostics {
+    const cfg = getPartySupabaseConfigStatus();
+    const realParticipantsCount = this.state.roomCode
+      ? this.state.members.filter((m) => !m.id.startsWith('bot_')).length
+      : 0;
+    const simulatedBotsCount = this.state.roomCode
+      ? this.state.members.filter((m) => m.id.startsWith('bot_')).length
+      : 0;
+
+    return {
+      roomCode: this.state.roomCode,
+      role: this.state.role,
+      isBotDemoRoom: this.isBotDemoRoom,
+      isConnected: this.state.isConnected,
+      isReconnecting: this.state.isReconnecting,
+      connectionStatus: this.roomChannelStatus,
+      maskedHost: getPartySupabaseMaskedHost(),
+      isConfigured: cfg.isConfigured,
+      configError: cfg.reason,
+      reconnectAttempts: this.totalReconnectAttempts,
+      currentLatencyMs: this.currentLatencyMs,
+      currentDriftMs: this.currentDriftMs,
+      realParticipantsCount,
+      simulatedBotsCount,
+      lastConnectionAttemptAt: this.lastConnectionAttemptAt,
+      lastConnectedAt: this.lastConnectedAt,
+      lastDisconnectedAt: this.lastDisconnectedAt,
+      lastSuccessfulBroadcastAt: this.lastSuccessfulBroadcastAt,
+      lastSuccessfulBroadcastType: this.lastSuccessfulBroadcastType,
+      lastFailedBroadcastAt: this.lastFailedBroadcastAt,
+      lastFailedBroadcastError: this.lastFailedBroadcastError,
+      lastPresenceError: this.lastPresenceError,
+      lastErrorMessage: this.lastDiagnosticErrorMessage || this.state.errorMessage,
+      lastErrorAt: this.lastDiagnosticErrorAt,
+    };
+  }
+
+  private recordDiagnosticError(message: string, event = 'party_error', details?: Record<string, unknown>): void {
+    const clean = sanitizeLogText(message) || 'Unknown Party error';
+    this.lastDiagnosticErrorMessage = clean;
+    this.lastDiagnosticErrorAt = Date.now();
+    AppLogger.error('JTECParty', event, clean, {
+      roomCode: this.state.roomCode,
+      role: this.state.role,
+      connectionStatus: this.roomChannelStatus,
+      ...details,
+    }, 'jtec_party');
   }
 
   public subscribe(listener: PartyListener): () => void {
@@ -320,7 +426,17 @@ class PartyServiceClass {
           status: this.state.playbackStatus,
           joinedAt: Date.now(),
         })
-        .catch((err) => console.warn('[PartyService] track update failed:', err));
+        .then((res) => {
+          if (res !== 'ok') {
+            this.lastPresenceError = `Presence update returned "${String(res)}"`;
+            AppLogger.warning('JTECParty', 'party_presence_track_failed', this.lastPresenceError, { status: res }, 'jtec_party');
+          }
+        })
+        .catch((err) => {
+          this.lastPresenceError = sanitizeLogText(err);
+          console.warn('[PartyService] track update failed:', err);
+          AppLogger.warning('JTECParty', 'party_presence_track_exception', this.lastPresenceError, undefined, 'jtec_party');
+        });
     }
   }
 
@@ -349,7 +465,17 @@ class PartyServiceClass {
           status: this.state.playbackStatus,
           joinedAt: Date.now(),
         })
-        .catch((err) => console.warn('[PartyService] track update failed:', err));
+        .then((res) => {
+          if (res !== 'ok') {
+            this.lastPresenceError = `Presence update returned "${String(res)}"`;
+            AppLogger.warning('JTECParty', 'party_presence_track_failed', this.lastPresenceError, { status: res }, 'jtec_party');
+          }
+        })
+        .catch((err) => {
+          this.lastPresenceError = sanitizeLogText(err);
+          console.warn('[PartyService] track update failed:', err);
+          AppLogger.warning('JTECParty', 'party_presence_track_exception', this.lastPresenceError, undefined, 'jtec_party');
+        });
     }
   }
 
@@ -651,14 +777,35 @@ class PartyServiceClass {
   private async initRoom(code: string, role: PartyRole): Promise<void> {
     await this.leaveRoom(false);
 
-    // Prefer dedicated Party Supabase client, fallback to main if testing
-    this.client = getPartySupabaseClient() || SupabaseService.getClientForCategory('jtec_main');
+    // STRICT ISOLATION: Only use the dedicated JTEC Party Supabase client (VITE_PARTY_SUPABASE_URL/ANON_KEY).
+    // Never fall back to the JTEC Music main Supabase client.
+    const cfg = getPartySupabaseConfigStatus();
+    if (!isPartySupabaseConfigured() || !cfg.isConfigured) {
+      const msg = cfg.reason || 'JTEC Party Supabase is not configured on this build.';
+      this.roomChannelStatus = 'CHANNEL_ERROR';
+      this.state.isConnected = false;
+      this.state.isReconnecting = false;
+      this.state.errorMessage = 'JTEC Party is not configured. Contact support or check environment settings.';
+      this.recordDiagnosticError(msg, 'party_unconfigured', { maskedHost: cfg.maskedHost });
+      this.emitState();
+      throw new Error(this.state.errorMessage);
+    }
+
+    this.client = getPartySupabaseClient();
     if (!this.client) {
-      throw new Error('JTEC Party is unavailable right now');
+      const msg = 'Failed to initialize dedicated JTEC Party Supabase client.';
+      this.roomChannelStatus = 'CHANNEL_ERROR';
+      this.state.isConnected = false;
+      this.state.isReconnecting = false;
+      this.state.errorMessage = 'JTEC Party connection unavailable right now.';
+      this.recordDiagnosticError(msg, 'party_client_init_failed', { maskedHost: cfg.maskedHost });
+      this.emitState();
+      throw new Error(this.state.errorMessage);
     }
 
     this.state.roomCode = code;
     this.state.role = role;
+    this.state.isConnected = false;
     this.state.errorMessage = null;
     this.state.isLocked = false;
     this.state.skipVotes = [];
@@ -677,23 +824,53 @@ class PartyServiceClass {
     this.medianOffsetMs = 0;
     this.lastHostSeenMs = Date.now();
     this.broadcastSeq = 0;
+    this.totalReconnectAttempts = 0;
+    this.reconnectAttempts = 0;
+    this.lastPresenceError = null;
+    this.lastDiagnosticErrorMessage = null;
+    this.roomChannelStatus = 'CONNECTING';
 
     // Apply neutral sound effects override during party
     audioEngine.setPartyNeutralOverride(true);
     this.emitState();
 
-    await this.connectChannel(code, role);
+    AppLogger.info(
+      'JTECParty',
+      'party_room_connecting',
+      `Connecting to room ${code} as ${role} on ${cfg.maskedHost}`,
+      { roomCode: code, role, maskedHost: cfg.maskedHost },
+      'jtec_party'
+    );
+
+    try {
+      await this.connectChannel(code, role);
+    } catch (err) {
+      const reason = sanitizeLogText(err) || 'Failed to connect to Party Realtime channel.';
+      this.state.errorMessage = reason;
+      this.state.isConnected = false;
+      this.state.isReconnecting = false;
+      await this.leaveRoom(false, true);
+      throw new Error(reason);
+    }
   }
 
   private async connectChannel(code: string, role: PartyRole): Promise<void> {
-    if (!this.client) return;
+    if (!this.client) {
+      throw new Error('Dedicated JTEC Party Supabase client is missing.');
+    }
+
+    this.lastConnectionAttemptAt = Date.now();
+    this.roomChannelStatus = 'CONNECTING';
+    this.state.isConnected = false;
+    this.isIntentionalDisconnect = false;
+    this.emitState();
 
     const presenceKey = this.state.partyId || this.state.selfId;
     const channelName = `party:${code}`;
     const channel = this.client.channel(channelName, {
       config: {
         presence: { key: presenceKey },
-        broadcast: { self: false, ack: false },
+        broadcast: { self: false, ack: true },
       },
     });
 
@@ -716,61 +893,167 @@ class PartyServiceClass {
       this.handleBroadcastMessage(payload as PartyBroadcastPayload);
     });
 
-    try {
-      channel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          this.state.isConnected = true;
-          this.state.isReconnecting = false;
-          this.state.errorMessage = null;
-          this.reconnectAttempts = 0;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finishResolve = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
+        resolve();
+      };
+      const finishReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
+        reject(error);
+      };
 
-          // Track presence
-          await channel.track({
-            id: this.state.selfId,
-            partyId: this.state.partyId || '',
-            accountId: this.state.partyId || '',
-            username: this.state.nickname,
-            nickname: this.state.nickname,
-            avatar: this.state.avatar,
-            avatarUrl: this.state.avatarUrl || null,
-            tag: this.state.tag,
-            isHost: role === 'host',
-            status: this.state.playbackStatus,
-            joinedAt: Date.now(),
-          });
+      const handshakeTimer = setTimeout(() => {
+        this.roomChannelStatus = 'TIMED_OUT';
+        this.state.isConnected = false;
+        this.lastDisconnectedAt = Date.now();
+        const timeoutMsg = `Party Realtime connection timed out while joining room ${code}.`;
+        this.recordDiagnosticError(timeoutMsg, 'party_connect_timeout', { roomCode: code, role });
+        this.emitState();
+        finishReject(new Error(timeoutMsg));
+      }, CHANNEL_CONNECT_TIMEOUT_MS);
 
-          this.handlePresenceSync();
+      try {
+        channel.subscribe(async (status, err) => {
+          // Guard against stale callbacks from replaced channels
+          if (this.channel !== channel) return;
 
-          if (role === 'guest') {
-            // Send hello to host to receive current state immediately
-            this.broadcastMessage({
-              type: 'hello',
-              memberId: this.state.selfId,
-              partyId: this.state.partyId || '',
-              accountId: this.state.partyId || '',
-              username: this.state.nickname,
-              nickname: this.state.nickname,
-              avatar: this.state.avatar,
-              avatarUrl: this.state.avatarUrl || null,
-              tag: this.state.tag,
-            });
+          if (status === 'SUBSCRIBED') {
+            this.roomChannelStatus = 'SUBSCRIBED';
+            this.state.isConnected = true;
+            this.state.isReconnecting = false;
+            this.state.errorMessage = null;
+            this.reconnectAttempts = 0;
+            this.lastConnectedAt = Date.now();
+            this.lastHostSeenMs = Date.now();
 
-            this.startPingTimer();
-          } else {
-            this.startHostStateBroadcastTimer();
+            AppLogger.success(
+              'JTECParty',
+              'party_channel_subscribed',
+              `Connected to Party room ${code} as ${role}`,
+              { roomCode: code, role, maskedHost: getPartySupabaseMaskedHost() },
+              'jtec_party'
+            );
+
+            // Track presence & verify return status
+            try {
+              const trackResult = await channel.track({
+                id: this.state.selfId,
+                partyId: this.state.partyId || '',
+                accountId: this.state.partyId || '',
+                username: this.state.nickname,
+                nickname: this.state.nickname,
+                avatar: this.state.avatar,
+                avatarUrl: this.state.avatarUrl || null,
+                tag: this.state.tag,
+                isHost: role === 'host',
+                status: this.state.playbackStatus,
+                joinedAt: Date.now(),
+              });
+              if (trackResult !== 'ok') {
+                this.lastPresenceError = `Presence track returned "${String(trackResult)}"`;
+                AppLogger.warning(
+                  'JTECParty',
+                  'party_presence_track_failed',
+                  this.lastPresenceError,
+                  { roomCode: code, status: trackResult },
+                  'jtec_party'
+                );
+              }
+            } catch (trackErr) {
+              this.lastPresenceError = sanitizeLogText(trackErr);
+              AppLogger.warning(
+                'JTECParty',
+                'party_presence_track_exception',
+                this.lastPresenceError || 'Presence track exception',
+                { roomCode: code },
+                'jtec_party'
+              );
+            }
+
+            this.handlePresenceSync();
+
+            if (role === 'guest') {
+              this.broadcastMessage({
+                type: 'hello',
+                memberId: this.state.selfId,
+                partyId: this.state.partyId || '',
+                accountId: this.state.partyId || '',
+                username: this.state.nickname,
+                nickname: this.state.nickname,
+                avatar: this.state.avatar,
+                avatarUrl: this.state.avatarUrl || null,
+                tag: this.state.tag,
+              });
+              this.startPingTimer();
+            } else {
+              this.startHostStateBroadcastTimer();
+            }
+
+            this.startHostHeartbeatChecker();
+            this.emitState();
+            finishResolve();
+          } else if (status === 'CHANNEL_ERROR') {
+            this.roomChannelStatus = 'CHANNEL_ERROR';
+            this.state.isConnected = false;
+            this.lastDisconnectedAt = Date.now();
+            const errMsg = err?.message
+              ? `Realtime channel error: ${err.message}`
+              : 'Realtime channel error while connecting to JTEC Party.';
+            this.recordDiagnosticError(errMsg, 'party_channel_error', { roomCode: code, role });
+            this.emitState();
+            if (!settled) {
+              finishReject(new Error(errMsg));
+            } else if (!this.isIntentionalDisconnect) {
+              this.handleConnectionDrop();
+            }
+          } else if (status === 'TIMED_OUT') {
+            this.roomChannelStatus = 'TIMED_OUT';
+            this.state.isConnected = false;
+            this.lastDisconnectedAt = Date.now();
+            const timeoutMsg = err?.message
+              ? `Realtime timed out: ${err.message}`
+              : 'Realtime connection timed out.';
+            this.recordDiagnosticError(timeoutMsg, 'party_channel_timed_out', { roomCode: code, role });
+            this.emitState();
+            if (!settled) {
+              finishReject(new Error(timeoutMsg));
+            } else if (!this.isIntentionalDisconnect) {
+              this.handleConnectionDrop();
+            }
+          } else if (status === 'CLOSED') {
+            this.roomChannelStatus = 'CLOSED';
+            this.state.isConnected = false;
+            this.lastDisconnectedAt = Date.now();
+            if (this.isIntentionalDisconnect) {
+              AppLogger.info('JTECParty', 'party_channel_closed', `Left Party room ${code}`, { roomCode: code }, 'jtec_party');
+              this.emitState();
+              return;
+            }
+            const closedMsg = 'Party Realtime connection closed unexpectedly.';
+            this.recordDiagnosticError(closedMsg, 'party_unexpected_disconnect', { roomCode: code, role });
+            this.emitState();
+            if (!settled) {
+              finishReject(new Error(closedMsg));
+            } else {
+              this.handleConnectionDrop();
+            }
           }
-
-          this.startHostHeartbeatChecker();
-          this.emitState();
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.warn(`[PartyService] Channel status: ${status}`);
-          this.handleConnectionDrop();
-        }
-      });
-    } catch (err) {
-      console.warn('[PartyService] Subscription failed:', err);
-      this.handleConnectionDrop();
-    }
+        });
+      } catch (subErr) {
+        this.roomChannelStatus = 'CHANNEL_ERROR';
+        this.state.isConnected = false;
+        const msg = sanitizeLogText(subErr) || 'Subscription call failed.';
+        this.recordDiagnosticError(msg, 'party_subscribe_exception', { roomCode: code, role });
+        this.emitState();
+        finishReject(new Error(msg));
+      }
+    });
   }
 
   private handlePresenceSync(): void {
@@ -924,15 +1207,39 @@ class PartyServiceClass {
   private sendBroadcast(payload: PartyBroadcastPayload): void {
     MockPartyBackend.handleHostBroadcast(payload);
 
+    if (this.isBotDemoRoom) return;
     if (!this.channel || !this.state.isConnected) return;
+
     this.channel
       .send({
         type: 'broadcast',
         event: 'party_msg',
         payload,
       })
+      .then((status) => {
+        if (status === 'ok') {
+          this.lastSuccessfulBroadcastAt = Date.now();
+          this.lastSuccessfulBroadcastType = payload.type;
+        } else {
+          const reason = `Broadcast "${payload.type}" returned status "${String(status)}"`;
+          this.lastFailedBroadcastAt = Date.now();
+          this.lastFailedBroadcastError = reason;
+          this.addSyncLog('info', reason, { type: payload.type, status });
+          this.recordDiagnosticError(reason, 'party_broadcast_status_failed', {
+            messageType: payload.type,
+            sendStatus: status,
+          });
+        }
+      })
       .catch((err) => {
+        const reason = `Broadcast "${payload.type}" failed: ${sanitizeLogText(err)}`;
+        this.lastFailedBroadcastAt = Date.now();
+        this.lastFailedBroadcastError = reason;
         console.warn('[PartyService] Failed to send broadcast:', err);
+        this.addSyncLog('info', reason, { type: payload.type });
+        this.recordDiagnosticError(reason, 'party_broadcast_exception', {
+          messageType: payload.type,
+        });
       });
   }
 
@@ -1624,24 +1931,43 @@ class PartyServiceClass {
   }
 
   private handleConnectionDrop(): void {
-    if (!this.state.roomCode) return;
+    if (!this.state.roomCode || this.isIntentionalDisconnect) return;
     this.state.isConnected = false;
     this.state.isReconnecting = true;
     this.state.errorMessage = 'Connection lost, reconnecting...';
     this.emitState();
 
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.totalReconnectAttempts += 1;
+    const attemptNumber = this.reconnectAttempts + 1;
     const delay = Math.min(10000, 1000 * Math.pow(2, this.reconnectAttempts++));
 
+    AppLogger.warning(
+      'JTECParty',
+      'party_reconnect_scheduled',
+      `Scheduling Realtime reconnect #${attemptNumber} in ${delay}ms`,
+      { roomCode: this.state.roomCode, attemptNumber, delayMs: delay },
+      'jtec_party'
+    );
+
     this.reconnectTimer = setTimeout(async () => {
-      if (!this.state.roomCode) return;
+      if (!this.state.roomCode || this.isIntentionalDisconnect) return;
       try {
         if (this.channel) {
-          await this.channel.unsubscribe();
+          this.isIntentionalDisconnect = true;
+          try {
+            await this.channel.unsubscribe();
+          } catch {}
+          this.isIntentionalDisconnect = false;
         }
         await this.connectChannel(this.state.roomCode, this.state.role);
       } catch (err) {
         console.warn('[PartyService] Reconnect attempt failed:', err);
+        this.recordDiagnosticError(
+          `Reconnect attempt #${attemptNumber} failed: ${sanitizeLogText(err)}`,
+          'party_reconnect_failed',
+          { attemptNumber }
+        );
         this.handleConnectionDrop();
       }
     }, delay);
@@ -1672,14 +1998,15 @@ class PartyServiceClass {
 
   private endPartyByHost(reason: string): void {
     this.state.errorMessage = reason;
-    this.leaveRoom(false);
+    this.leaveRoom(false, true);
   }
 
   /**
    * Leave room & restore user's persistent sound effects (Requirement 4)
    */
-  public async leaveRoom(notifyHost = true): Promise<void> {
+  public async leaveRoom(notifyHost = true, preserveError = false): Promise<void> {
     triggerHapticFeedback();
+    this.isIntentionalDisconnect = true;
 
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.stateBroadcastTimer) clearInterval(this.stateBroadcastTimer);
@@ -1687,6 +2014,12 @@ class PartyServiceClass {
     if (this.readyCheckTimer) clearTimeout(this.readyCheckTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.hostHeartbeatChecker) clearInterval(this.hostHeartbeatChecker);
+    this.pingTimer = null;
+    this.stateBroadcastTimer = null;
+    this.countdownTimer = null;
+    this.readyCheckTimer = null;
+    this.reconnectTimer = null;
+    this.hostHeartbeatChecker = null;
 
     if (this.isBotDemoRoom) {
       MockPartyBackend.stopBotHostRoom();
@@ -1703,13 +2036,18 @@ class PartyServiceClass {
         } catch {}
       }
 
+      const ch = this.channel;
+      this.channel = null;
       try {
-        await this.channel.untrack();
-        await this.channel.unsubscribe();
+        await ch.untrack();
+        await ch.unsubscribe();
       } catch (e) {
         console.warn('[PartyService] Channel cleanup error:', e);
       }
-      this.channel = null;
+    }
+
+    if (!preserveError) {
+      this.roomChannelStatus = 'IDLE';
     }
 
     // Restore user's persisted audio effects (Slow + Reverb, EQ, speed)
@@ -1742,7 +2080,7 @@ class PartyServiceClass {
       countdownNumber: null,
       isConnected: false,
       isReconnecting: false,
-      errorMessage: this.state.errorMessage,
+      errorMessage: preserveError ? this.state.errorMessage : null,
       targetStartTime: null,
       diagnostics: [],
       skipVotes: [],
@@ -1753,12 +2091,12 @@ class PartyServiceClass {
       syncLogs: this.state.syncLogs || [],
     };
 
+    this.isIntentionalDisconnect = false;
     this.emitState();
   }
 
-  public getRoomChannelStatus(): string {
-    if (!this.channel) return 'IDLE';
-    return this.state.isConnected ? 'SUBSCRIBED' : 'CONNECTING';
+  public getRoomChannelStatus(): PartyRealtimeStatus {
+    return this.roomChannelStatus;
   }
 
   public clearErrorMessage(): void {

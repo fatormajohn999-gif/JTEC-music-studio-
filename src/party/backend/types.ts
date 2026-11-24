@@ -69,6 +69,12 @@ export interface BackendPartyStatus {
   onlineChannelState: string;
   roomChannelState: string;
   lastError: string | null;
+  onlineUsersCount?: number | null;
+  onlineUsersUnavailableReason?: string | null;
+  notificationsChannelState?: string;
+  lastErrorAt?: number | null;
+  lastConnectedAt?: number | null;
+  lastDisconnectedAt?: number | null;
 }
 
 export interface PartyBackend {

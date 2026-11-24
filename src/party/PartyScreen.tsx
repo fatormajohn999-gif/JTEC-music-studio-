@@ -14,6 +14,7 @@ import { registerBackHandler } from '../services/navigation';
 import { Song } from '../types/music';
 import {
   getPartyBackend,
+  getPartySupabaseConfigStatus,
   PartyProfile,
   FriendRequest,
   PartyInvite,
@@ -21,6 +22,7 @@ import {
   PARTY_ID_ALPHABET,
   isValidPartyId,
 } from './backend';
+import { AppLogger } from '../services/appLogger';
 import { Avatar } from './components/Avatar';
 import { processProfilePhoto } from './utils/photoProcessor';
 
@@ -50,6 +52,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   const [profile, setProfile] = useState<PartyProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isBackendUnavailable, setIsBackendUnavailable] = useState(false);
+  const [backendUnavailableReason, setBackendUnavailableReason] = useState<string | null>(null);
   const [incomingFriendRequestNotification, setIncomingFriendRequestNotification] = useState<{
     type: 'friend_request';
     name: string;
@@ -156,9 +159,14 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   const loadUserProfile = useCallback(async () => {
     setIsLoadingProfile(true);
     setIsBackendUnavailable(false);
+    setBackendUnavailableReason(null);
     try {
+      const cfg = getPartySupabaseConfigStatus();
       if (backend.isConfigured && !backend.isConfigured() && !backend.isMock()) {
+        const msg = cfg.reason || 'JTEC Party Supabase is not configured in this build.';
         setIsBackendUnavailable(true);
+        setBackendUnavailableReason(msg);
+        AppLogger.error('JTECParty', 'party_screen_unconfigured', msg, { maskedHost: cfg.maskedHost }, 'jtec_party');
         setIsLoadingProfile(false);
         return;
       }
@@ -173,8 +181,15 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       }
     } catch (err: any) {
       console.warn('Failed to load party profile:', err);
+      const errMsg = err instanceof Error ? err.message : 'Unable to reach JTEC Party right now.';
+      AppLogger.error('JTECParty', 'party_profile_load_failed', errMsg, undefined, 'jtec_party');
       if (err?.message?.includes('unavailable') || (!backend.isConfigured?.() && !backend.isMock())) {
         setIsBackendUnavailable(true);
+        setBackendUnavailableReason(
+          !backend.isConfigured?.()
+            ? (getPartySupabaseConfigStatus().reason || 'JTEC Party Supabase is not configured.')
+            : errMsg
+        );
       }
     } finally {
       setIsLoadingProfile(false);
@@ -921,13 +936,14 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   JTEC Party is unavailable right now
                 </h3>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Please check your internet connection or tap Retry to reconnect.
+                  {backendUnavailableReason || 'Please check your internet connection or tap Retry to reconnect.'}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setIsBackendUnavailable(false);
+                  setBackendUnavailableReason(null);
                   loadUserProfile();
                 }}
                 className="px-6 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 active:scale-95 transition cursor-pointer"
@@ -1556,7 +1572,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                     </div>
                   </div>
 
-                  <div className="text-right text-xs">
+                  <div className="text-right text-xs flex flex-col items-end gap-1">
                     <span
                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
                         partyState.role === 'host'
@@ -1567,10 +1583,38 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                       {partyState.role === 'host' ? <Crown className="w-3.5 h-3.5" /> : null}
                       <span>{partyState.role === 'host' ? 'Host' : 'Guest'}</span>
                     </span>
+                    {(() => {
+                      const diag = PartyService.getDiagnostics();
+                      const statusLabel = diag.isBotDemoRoom
+                        ? 'Demo Room'
+                        : partyState.isConnected && diag.connectionStatus === 'SUBSCRIBED'
+                        ? 'Realtime Connected'
+                        : partyState.isReconnecting
+                        ? `Reconnecting (${diag.reconnectAttempts})`
+                        : diag.connectionStatus === 'CONNECTING'
+                        ? 'Connecting...'
+                        : diag.connectionStatus === 'TIMED_OUT'
+                        ? 'Timed Out'
+                        : diag.connectionStatus === 'CHANNEL_ERROR'
+                        ? 'Channel Error'
+                        : 'Disconnected';
+                      const statusClass = diag.isBotDemoRoom
+                        ? 'text-purple-300'
+                        : partyState.isConnected && diag.connectionStatus === 'SUBSCRIBED'
+                        ? 'text-emerald-400'
+                        : partyState.isReconnecting || diag.connectionStatus === 'CONNECTING'
+                        ? 'text-amber-300'
+                        : 'text-rose-400';
+                      return (
+                        <span className={`text-[10px] font-mono font-semibold ${statusClass}`}>
+                          ● {statusLabel}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
 
-                {/* Buttons row: Copy, Share, Invite */}
+                {/* Buttons row: Copy, Share, Invite, Connection */}
                 <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/5">
                   <button
                     type="button"
@@ -1602,28 +1646,26 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   </button>
 
                   {partyState.role === 'host' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setShowInviteModal(true)}
-                        aria-label="Invite friends"
-                        className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                      >
-                        <UserPlus className="w-3.5 h-3.5 text-purple-300" />
-                        <span>Invite</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowConnectionDetailsModal(true)}
-                        aria-label="Connection details and sync log"
-                        className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                      >
-                        <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Connection</span>
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={() => setShowInviteModal(true)}
+                      aria-label="Invite friends"
+                      className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-purple-300" />
+                      <span>Invite</span>
+                    </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowConnectionDetailsModal(true)}
+                    aria-label="Connection details and sync log"
+                    className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
+                  >
+                    <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Connection</span>
+                  </button>
                 </div>
               </div>
 
@@ -2358,24 +2400,52 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
             </div>
 
             {/* Quick stats summary */}
-            <div className="grid grid-cols-3 gap-2 shrink-0">
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
-                <span className="text-[10px] text-slate-400 block">Status</span>
-                <span className="text-xs font-bold text-emerald-400">
-                  {partyState.isConnected ? 'Connected' : 'Reconnecting'}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
-                <span className="text-[10px] text-slate-400 block">Listeners</span>
-                <span className="text-xs font-bold text-white">{partyState.members.length}</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
-                <span className="text-[10px] text-slate-400 block">Events Logged</span>
-                <span className="text-xs font-bold text-cyan-300">
-                  {partyState.syncLogs?.length || 0}
-                </span>
-              </div>
-            </div>
+            {(() => {
+              const diag = PartyService.getDiagnostics();
+              return (
+                <div className="space-y-2 shrink-0">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                      <span className="text-[10px] text-slate-400 block">Status</span>
+                      <span
+                        className={`text-xs font-bold ${
+                          partyState.isConnected && diag.connectionStatus === 'SUBSCRIBED'
+                            ? 'text-emerald-400'
+                            : partyState.isReconnecting || diag.connectionStatus === 'CONNECTING'
+                            ? 'text-amber-300'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {diag.isBotDemoRoom ? 'DEMO' : diag.connectionStatus}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                      <span className="text-[10px] text-slate-400 block">Listeners</span>
+                      <span className="text-xs font-bold text-white">
+                        {diag.realParticipantsCount}
+                        {diag.simulatedBotsCount > 0 ? ` (+${diag.simulatedBotsCount} bot)` : ''}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                      <span className="text-[10px] text-slate-400 block">Events Logged</span>
+                      <span className="text-xs font-bold text-cyan-300">
+                        {partyState.syncLogs?.length || 0}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5 text-[11px] flex flex-wrap items-center justify-between gap-2 text-slate-300 font-mono">
+                    <span>Role: {partyState.role.toUpperCase()}</span>
+                    <span>Host: {diag.maskedHost}</span>
+                    <span>Reconnects: {diag.reconnectAttempts}</span>
+                  </div>
+                  {(diag.lastErrorMessage || diag.lastFailedBroadcastError) && (
+                    <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-[11px] text-rose-200 break-words">
+                      {diag.lastErrorMessage || diag.lastFailedBroadcastError}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Sync Log Box (Last 30 events) */}
             <div className="space-y-1.5 flex-1 min-h-0 flex flex-col">
