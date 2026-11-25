@@ -129,18 +129,21 @@ const TARGET_MIGRATIONS = [
     migrationPath: 'supabase/migrations/002_jtec_main_music_manager.sql',
     preCheckPath: 'supabase/checks/jtec_main_pre_music_manager.sql',
     postCheckPath: 'supabase/checks/jtec_main_post_music_manager.sql',
+    rollbackPath: 'supabase/rollbacks/jtec_main_002_rollback.sql',
   },
   {
     name: 'nasheed',
     migrationPath: 'supabase/migrations/nasheed/001_nasheed_music_security.sql',
     preCheckPath: 'supabase/checks/nasheed_pre_migration_audit.sql',
     postCheckPath: 'supabase/checks/nasheed_post_migration_verify.sql',
+    rollbackPath: 'supabase/rollbacks/nasheed_001_rollback.sql',
   },
   {
     name: 'love_chill',
     migrationPath: 'supabase/migrations/love_chill/001_love_chill_music_security.sql',
     preCheckPath: 'supabase/checks/love_chill_pre_migration_audit.sql',
     postCheckPath: 'supabase/checks/love_chill_post_migration_verify.sql',
+    rollbackPath: 'supabase/rollbacks/love_chill_001_rollback.sql',
   },
 ];
 
@@ -154,22 +157,27 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
     touchAdminActivity();
   });
 
-  test('1. All three music migrations enforce owner-only permissions, mandatory TOTP (aal2), safe search_path, and storage isolation', () => {
+  test('1. All three music migrations enforce owner-only permissions, email match, TOTP amr + AAL2, NULLIF audit fallback, safe search_path & storage isolation', () => {
     for (const target of TARGET_MIGRATIONS) {
       const sql = readRepoFile(target.migrationPath);
 
-      // Atomic transaction wrapper
+      // Atomic transaction wrapper & valid PostgreSQL coalesce syntax
       assert.ok(sql.includes('\nbegin;\n'), `${target.name} migration missing begin;`);
       assert.ok(sql.trimEnd().endsWith('commit;'), `${target.name} migration missing commit;`);
+      assert.equal(sql.includes('pg_catalog.coalesce('), false, `${target.name} must use SQL keyword coalesce(`);
+      assert.equal(sql.includes('pg_catalog.nullif('), false, `${target.name} must use SQL keyword nullif(`);
 
-      // Owner-only helper & check (`role = 'owner'` required; never trusts app_metadata role)
+      // Explicit active confirmed owner check before tightening access + email binding
       assert.ok(sql.includes('function public.is_jtec_owner()'), `${target.name} missing is_jtec_owner()`);
       assert.ok(sql.includes('function public.is_jtec_owner_aal2()'), `${target.name} missing is_jtec_owner_aal2()`);
       assert.ok(sql.includes("a.role = 'owner'"), `${target.name} must enforce owner-only role`);
+      assert.ok(sql.includes('pg_catalog.lower(a.email) = pg_catalog.lower(u.email)'), `${target.name} must match owner email to auth.users.email`);
+      assert.ok(sql.includes('u.email_confirmed_at is not null'), `${target.name} must require confirmed email`);
       assert.equal(sql.includes('raw_app_meta_data'), false, `${target.name} must not trust raw_app_meta_data`);
 
-      // Mandatory TOTP MFA (AAL2)
+      // Mandatory TOTP MFA (AAL2 + JWT amr totp + verified factor)
       assert.ok(sql.includes("if v_aal <> 'aal2' then\n    return false;"), `${target.name} must block AAL1`);
+      assert.ok(sql.includes("= 'totp'"), `${target.name} must verify TOTP in JWT amr`);
       assert.ok(sql.includes("f.factor_type = 'totp'"), `${target.name} must require TOTP factor`);
       assert.ok(sql.includes("f.status = 'verified'"), `${target.name} must require verified factor`);
 
@@ -180,9 +188,16 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
       assert.ok(sql.includes('revoke all on function public.is_jtec_owner_aal2() from public, anon;'));
       assert.ok(sql.includes('grant execute on function public.is_jtec_owner_aal2() to authenticated;'));
       assert.ok(sql.includes('revoke all on function public.log_music_action(text, jsonb) from public, anon;'));
+      assert.ok(sql.includes('revoke all on function public.touch_songs_updated_at() from public, anon, authenticated;'));
 
-      // Dynamic policy cleanup + FORCE RLS on songs + public read + owner-only AAL2 writes
+      // Pre-existing updated_at validation before trigger + admin schema checks
+      assert.ok(sql.includes("and c.column_name = 'updated_at'"), `${target.name} must validate updated_at column type`);
+      assert.ok(sql.includes("not in ('timestamptz', 'timestamp')"), `${target.name} must reject invalid updated_at type`);
+
+      // Dynamic policy cleanup without broad %music% / %artwork% wildcard matching
       assert.ok(sql.includes('from pg_catalog.pg_policies'));
+      assert.equal(sql.includes("ilike '%music%'"), false, `${target.name} must not use broad %music% wildcard`);
+      assert.equal(sql.includes("ilike '%artwork%'"), false, `${target.name} must not use broad %artwork% wildcard`);
       assert.ok(sql.includes('alter table public.songs force row level security;'));
       assert.ok(sql.includes('create policy "Allow public read on songs"'));
       assert.ok(sql.includes('create policy "Owner insert songs"'));
@@ -199,9 +214,11 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
       assert.ok(sql.includes('Restrict authenticated updates on music and artwork buckets'));
       assert.ok(sql.includes('Restrict authenticated deletes on music and artwork buckets'));
 
-      // Audit trigger & RPC for upload, edit, replacement, and deletion operations
+      // Audit trigger with NULLIF empty-string handling & immediate app.jtec_audit_write reset
       assert.ok(sql.includes('function public.audit_song_mutations()'));
       assert.ok(sql.includes('create trigger trg_audit_song_mutations'));
+      assert.ok(sql.includes("nullif(v_new ->> 'storage_path', '')"));
+      assert.ok(sql.includes("perform pg_catalog.set_config('app.jtec_audit_write', '', true);"));
       assert.ok(sql.includes("'song_uploaded'"));
       assert.ok(sql.includes("'song_replaced'"));
       assert.ok(sql.includes("'song_edited'"));
@@ -215,10 +232,11 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
     }
   });
 
-  test('2. Pre-migration and post-migration verification SQL files are strictly read-only for all three targets', () => {
+  test('2. Pre-checks, post-checks (read-only), and rollback SQL files preserve data, verify TOTP/RLS/triggers, and remain non-destructive', () => {
     for (const target of TARGET_MIGRATIONS) {
       const preSql = readRepoFile(target.preCheckPath);
       const postSql = readRepoFile(target.postCheckPath);
+      const rollbackSql = readRepoFile(target.rollbackPath);
 
       assert.equal(
         /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke)\b/i.test(preSql),
@@ -231,10 +249,30 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
         `${target.postCheckPath} must remain strictly read-only`
       );
 
-      assert.ok(preSql.includes('information_schema.columns'), `${target.preCheckPath} should inspect songs columns`);
-      assert.ok(preSql.includes('from storage.buckets'), `${target.preCheckPath} should inspect storage buckets`);
-      assert.ok(postSql.includes('trg_audit_song_mutations') || postSql.includes('audit_song_mutations'));
+      // NULLIF empty-string handling & full readiness/schema verification in pre & post checks
+      assert.ok(preSql.includes('information_schema.columns'));
+      assert.ok(preSql.includes('from storage.buckets'));
+      assert.ok(preSql.includes("nullif(to_jsonb(s) ->> 'storage_path', '')"));
+      assert.ok(preSql.includes('has_verified_totp'));
+
+      assert.ok(postSql.includes('trg_audit_song_mutations'));
       assert.ok(postSql.includes('preserved_songs_count'));
+      assert.ok(postSql.includes('rls_forced'));
+      assert.ok(postSql.includes('pg_catalog.pg_indexes'));
+      assert.ok(postSql.includes('emails_match'));
+      assert.ok(postSql.includes('has_verified_totp'));
+
+      // Rollback SQL is atomic, non-destructive, keeps public read & write-locks storage
+      assert.ok(rollbackSql.includes('\nbegin;\n'), `${target.rollbackPath} missing begin;`);
+      assert.ok(rollbackSql.trimEnd().endsWith('commit;'), `${target.rollbackPath} missing commit;`);
+      assert.equal(/\bdrop\s+table\b/i.test(rollbackSql), false, `${target.rollbackPath} must never drop tables`);
+      assert.equal(/\btruncate\b/i.test(rollbackSql), false, `${target.rollbackPath} must never truncate`);
+      assert.equal(/delete\s+from\s+public\./i.test(rollbackSql), false, `${target.rollbackPath} must never delete rows`);
+      assert.equal(/delete\s+from\s+storage\./i.test(rollbackSql), false, `${target.rollbackPath} must never delete storage files/buckets`);
+      assert.ok(rollbackSql.includes('create policy "Allow public read on songs"'));
+      assert.ok(rollbackSql.includes('create policy "Public Access music"'));
+      assert.ok(rollbackSql.includes('create policy "Public Access artwork"'));
+      assert.ok(rollbackSql.includes('as restrictive'));
     }
   });
 

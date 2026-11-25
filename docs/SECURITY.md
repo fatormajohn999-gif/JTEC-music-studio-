@@ -126,9 +126,9 @@ When `001_secure_admin_auth.sql` runs in `jtec_main`, Section 10 inspects every 
    - **Missing or inactive owner row**: Confirm `fatormajohn999@gmail.com` exists and is email-confirmed in the target project's `auth.users`, then insert/re-activate `role = 'owner'`, `is_active = true` in that project's `public.admin_users`. Never grant public write policies.
    - **Lost authenticator device**: Delete only the lost row in `auth.mfa_factors` in that project's SQL Editor (or Auth -> Users), forcing **Mandatory 2FA Setup** on next sign-in.
 3. **Rollback Music Management Triggers / Policies Safely (Zero Data Loss)**:
-   - Every migration runs inside `BEGIN; ... COMMIT;`, so any SQL execution error automatically rolls back with zero partial state.
-   - To pause only automatic song audit triggers on any target without losing songs or historical logs:
-     `DROP TRIGGER IF EXISTS trg_audit_song_mutations ON public.songs;`
-   - On `jtec_main`, if reverting `002_jtec_main_music_manager.sql` back to `001_secure_admin_auth.sql` policies while preserving all songs and `artwork` files: drop the `Owner * songs` / `'artwork'` storage policies and re-apply only the `songs` & `'music'` policy section of `001_secure_admin_auth.sql` (never drop `public.songs` or `public.app_installs`).
-   - On `nasheed` or `love_chill`, restore the exact pre-migration `pg_policies` snapshot saved during Step 1 (`nasheed_pre_migration_audit.sql` / `love_chill_pre_migration_audit.sql`) without dropping `public.songs` or deleting any files in `storage.objects`.
+   - Every migration runs inside `BEGIN; ... COMMIT;`, so any SQL validation error (missing confirmed owner, incompatible admin table, or wrong `updated_at` column type) automatically rolls back with zero partial state.
+   - Use the dedicated non-destructive rollback scripts (never drop `songs` / `admin_audit_logs` or delete storage files):
+     - **JTEC Main (`002`)**: `supabase/rollbacks/jtec_main_002_rollback.sql` *(restores `001_secure_admin_auth.sql` policies while keeping `public.songs`, `admin_audit_logs`, `'music'`, and `'artwork'` read access & write protections intact)*
+     - **JTEC Nasheed (`001`)**: `supabase/rollbacks/nasheed_001_rollback.sql` *(removes triggers/owner write RPCs while keeping `songs`, `'music'`, and `'artwork'` publicly readable and fail-closed against client writes)*
+     - **JTEC Love & Chill (`001`)**: `supabase/rollbacks/love_chill_001_rollback.sql` *(same non-destructive public-read / fail-closed rollback for `love_chill`)*
    - On `jtec_main` telemetry, if `ping_install` / `touch_install` behaves unexpectedly, inspect `owner_has_bypassrls = true` and `search_path` in `002_post_migration_verify.sql` before altering any policies.

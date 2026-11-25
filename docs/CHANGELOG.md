@@ -16,10 +16,13 @@ Prepared isolated, owner-only (`role = 'owner'`), mandatory-TOTP (`aal2`) databa
   - Dedicated atomic owner-only AAL2 admin auth, `public.songs` + `'music'`/`'artwork'` storage RLS, and song audit triggers isolated to `nasheed` (no `jtec_main` telemetry objects).
 - **`supabase/migrations/love_chill/001_love_chill_music_security.sql`** *(new)*, **`supabase/checks/love_chill_pre_migration_audit.sql`** *(new)*, & **`supabase/checks/love_chill_post_migration_verify.sql`** *(new)*:
   - Dedicated atomic owner-only AAL2 admin auth, `public.songs` + `'music'`/`'artwork'` storage RLS, and song audit triggers isolated to `love_chill` (no `jtec_main` telemetry objects).
+- **`supabase/rollbacks/*` (`jtec_main_002_rollback.sql`, `nasheed_001_rollback.sql`, `love_chill_001_rollback.sql`)** *(new)*:
+  - Added non-destructive, fail-closed rollback SQL scripts preserving all songs, audit logs, storage objects, and public streaming/artwork reads.
+  - Hardened all three catalogue migrations (`002_jtec_main_music_manager.sql`, `nasheed/001_nasheed_music_security.sql`, `love_chill/001_love_chill_music_security.sql`) and 6 check scripts with: `NULLIF(value, '')` fallbacks before `COALESCE`, explicit confirmed active owner assertions, `admin_users.email = auth.users.email` matching, JWT `amr` `'totp'` verification alongside `aal2`, exact `'music'`/`'artwork'` storage policy matching (eliminating `%music%`/`%artwork%` wildcards), immediate `app.jtec_audit_write` reset, `songs.updated_at` type validation, pre-existing admin table validation/repair, and unqualified SQL `coalesce()` syntax.
 - **`src/services/__tests__/musicManagementSecurity.test.ts`** *(new)*:
-  - Added 5 automated tests validating owner-only AAL2 enforcement, locked `search_path`, `'music'` & `'artwork'` restrictive storage policies, read-only check scripts, strict multi-project / `jtec-party` isolation, and zero exposed `service_role` keys.
+  - Added 5 automated tests validating owner-only AAL2 + TOTP `amr` enforcement, email matching, `NULLIF` audit fallbacks, locked `search_path`, `'music'` & `'artwork'` restrictive storage policies, read-only check scripts, safe rollback scripts, strict multi-project / `jtec-party` isolation, and zero exposed `service_role` keys.
 - **`README.md`, `docs/SECURITY.md`, & `docs/CHANGELOG.md`**:
-  - Documented pending manual activation across all three music projects, exact execution order, Dashboard auth/TOTP/CORS settings, schema/bucket assumptions, live verification, and zero-data-loss rollback procedures.
+  - Documented pending manual activation across all three music projects, exact execution order, Dashboard auth/TOTP/CORS settings, schema/bucket assumptions, live verification, and non-destructive rollback SQL scripts.
 
 ---
 

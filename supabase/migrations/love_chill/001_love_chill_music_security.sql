@@ -7,22 +7,25 @@
 -- Prerequisites:
 -- 1. Run `supabase/checks/love_chill_pre_migration_audit.sql` first and save baselines.
 -- 2. Confirm `fatormajohn999@gmail.com` exists in `love_chill` Authentication -> Users
---    with a verified email, and enable TOTP MFA under Authentication -> Multi-Factor Auth.
+--    with a verified email (`email_confirmed_at IS NOT NULL`), and enable TOTP MFA
+--    under Authentication -> Multi-Factor Auth.
 --
--- Security guarantees:
--- 1. Owner-only authorization (`public.admin_users`, `role = 'owner'` only):
---    zero non-owner admins, zero client INSERT/UPDATE/DELETE, zero `app_metadata` bypass.
--- 2. Mandatory TOTP MFA (`aal2`) for every database or storage write operation.
--- 3. Public listeners (`anon`, `authenticated`) can read/stream/download `songs`,
---    `'music'`, and `'artwork'`, while uploads/edits/replacements/deletes are blocked
---    unless verified as active owner at AAL2.
--- 4. Preserves all existing Love & Chill songs, metadata, and storage objects.
--- 5. Immutable `public.admin_audit_logs` + automatic `audit_song_mutations` trigger.
+-- Security & Compatibility Guarantees:
+-- 1. Repairs or explicitly rejects incompatible pre-existing `admin_users` /
+--    `admin_audit_logs` schemas and blocks unauthorized non-owner admin rows.
+-- 2. Fails atomically (`BEGIN; ... COMMIT;`) if no confirmed, active owner with
+--    matching `auth.users.email` exists before tightening permissions.
+-- 3. Enforces verified TOTP factor + JWT `aal = 'aal2'` + TOTP `amr` claim on
+--    every `songs` and `'music'` / `'artwork'` write operation.
+-- 4. Preserves all existing Love & Chill songs, metadata, storage objects, and
+--    public read/streaming/download access while blocking ordinary/anonymous writes.
+-- 5. Uses NULLIF empty-string handling in `audit_song_mutations()` and resets
+--    `app.jtec_audit_write` immediately after each audit insert.
 -- ==============================================================================
 
 begin;
 
--- 1. Owner-Only Admins Table (zero client writes; `role = 'owner'` strictly enforced)
+-- 1. Owner-Only Admins Table (repair/validate pre-existing table or reject if incompatible)
 create table if not exists public.admin_users (
   user_id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -30,6 +33,75 @@ create table if not exists public.admin_users (
   is_active boolean not null default true,
   created_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now())
 );
+
+alter table public.admin_users add column if not exists role text not null default 'owner';
+alter table public.admin_users add column if not exists is_active boolean not null default true;
+alter table public.admin_users add column if not exists created_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now());
+
+do $$
+declare
+  v_bad_cols integer := 0;
+  v_bad_rows integer := 0;
+  v_has_owner_chk boolean := false;
+begin
+  select count(*) into v_bad_cols
+  from (
+    values
+      ('user_id', 'uuid'),
+      ('email', 'text'),
+      ('role', 'text'),
+      ('is_active', 'bool'),
+      ('created_at', 'timestamptz')
+  ) as req(col, expected_udt)
+  where not exists (
+    select 1
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and c.table_name = 'admin_users'
+      and c.column_name = req.col
+      and (
+        c.udt_name = req.expected_udt
+        or (req.expected_udt = 'text' and c.udt_name in ('varchar', 'citext', 'bpchar'))
+        or (req.expected_udt = 'timestamptz' and c.udt_name in ('timestamptz', 'timestamp'))
+      )
+  );
+
+  if v_bad_cols > 0 then
+    raise exception 'Incompatible pre-existing public.admin_users schema on love_chill. Expected (user_id uuid, email text, role text, is_active bool, created_at timestamptz).';
+  end if;
+
+  select count(*) into v_bad_rows
+  from public.admin_users a
+  where pg_catalog.lower(coalesce(a.email, '')) <> 'fatormajohn999@gmail.com'
+     or a.role not in ('owner', 'admin');
+
+  if v_bad_rows > 0 then
+    raise exception 'Incompatible or unauthorized pre-existing rows found in public.admin_users on love_chill (% row(s)). Inspect before migrating.', v_bad_rows;
+  end if;
+
+  -- Safely upgrade legacy 'admin' role to 'owner' ONLY for the authorized owner email (never reactivates is_active=false)
+  update public.admin_users
+  set role = 'owner'
+  where pg_catalog.lower(email) = 'fatormajohn999@gmail.com'
+    and role = 'admin';
+
+  select exists (
+    select 1
+    from pg_catalog.pg_constraint con
+    join pg_catalog.pg_class rel on rel.oid = con.conrelid
+    join pg_catalog.pg_namespace nsp on nsp.oid = rel.relnamespace
+    where nsp.nspname = 'public'
+      and rel.relname = 'admin_users'
+      and con.contype = 'c'
+      and pg_catalog.pg_get_constraintdef(con.oid) ~* $$role\s*=\s*'owner'$$
+  ) into v_has_owner_chk;
+
+  if not v_has_owner_chk then
+    alter table public.admin_users
+      add constraint chk_love_chill_admin_users_owner_only check (role = 'owner');
+  end if;
+end
+$$;
 
 alter table public.admin_users enable row level security;
 alter table public.admin_users force row level security;
@@ -42,11 +114,33 @@ insert into public.admin_users (user_id, email, role, is_active)
 select u.id, pg_catalog.lower(u.email), 'owner', true
 from auth.users u
 where pg_catalog.lower(u.email) = 'fatormajohn999@gmail.com'
-  and pg_catalog.coalesce(u.is_anonymous, false) = false
+  and coalesce(u.is_anonymous, false) = false
   and u.email_confirmed_at is not null
+  and (u.banned_until is null or u.banned_until <= pg_catalog.now())
 on conflict (user_id) do nothing;
 
--- 2. Immutable Admin & Music Audit Log Table (isolated to `love_chill`)
+-- Refuse to continue and lock tables if zero active confirmed owners exist
+do $$
+begin
+  if not exists (
+    select 1
+    from public.admin_users a
+    join auth.users u on u.id = a.user_id
+    where a.is_active = true
+      and a.role = 'owner'
+      and u.email is not null
+      and pg_catalog.lower(a.email) = pg_catalog.lower(u.email)
+      and pg_catalog.lower(u.email) = 'fatormajohn999@gmail.com'
+      and coalesce(u.is_anonymous, false) = false
+      and u.email_confirmed_at is not null
+      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
+  ) then
+    raise exception 'Cannot tighten Love & Chill access: fatormajohn999@gmail.com must exist as a confirmed, non-anonymous user in Love & Chill auth.users and active owner in public.admin_users.';
+  end if;
+end
+$$;
+
+-- 2. Immutable Admin & Music Audit Log Table (validate/repair schema, isolated to `love_chill`)
 create table if not exists public.admin_audit_logs (
   id bigint generated always as identity primary key,
   admin_user_id uuid not null references auth.users(id) on delete cascade,
@@ -57,7 +151,43 @@ create table if not exists public.admin_audit_logs (
   created_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now())
 );
 
+alter table public.admin_audit_logs add column if not exists admin_email text;
 alter table public.admin_audit_logs add column if not exists project_scope text not null default 'love_chill';
+alter table public.admin_audit_logs add column if not exists details jsonb not null default '{}'::jsonb;
+alter table public.admin_audit_logs add column if not exists created_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now());
+
+do $$
+declare
+  v_bad_audit_cols integer := 0;
+begin
+  select count(*) into v_bad_audit_cols
+  from (
+    values
+      ('admin_user_id', 'uuid'),
+      ('admin_email', 'text'),
+      ('project_scope', 'text'),
+      ('action', 'text'),
+      ('details', 'jsonb'),
+      ('created_at', 'timestamptz')
+  ) as req(col, expected_udt)
+  where not exists (
+    select 1
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and c.table_name = 'admin_audit_logs'
+      and c.column_name = req.col
+      and (
+        c.udt_name = req.expected_udt
+        or (req.expected_udt = 'text' and c.udt_name in ('varchar', 'citext', 'bpchar'))
+        or (req.expected_udt = 'timestamptz' and c.udt_name in ('timestamptz', 'timestamp'))
+      )
+  );
+
+  if v_bad_audit_cols > 0 then
+    raise exception 'Incompatible pre-existing public.admin_audit_logs schema on love_chill.';
+  end if;
+end
+$$;
 
 alter table public.admin_audit_logs enable row level security;
 alter table public.admin_audit_logs force row level security;
@@ -65,7 +195,7 @@ alter table public.admin_audit_logs force row level security;
 revoke all on table public.admin_audit_logs from public, anon, authenticated;
 grant select on table public.admin_audit_logs to authenticated;
 
--- 3. Non-destructive `public.songs` creation & column alignment for Love & Chill
+-- 3. Non-destructive `public.songs` creation, `updated_at` validation, and column alignment
 create table if not exists public.songs (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -86,6 +216,23 @@ create table if not exists public.songs (
   created_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now()),
   updated_at timestamptz not null default pg_catalog.timezone('utc', pg_catalog.now())
 );
+
+do $$
+declare
+  v_updated_at_udt text;
+begin
+  select c.udt_name
+  into v_updated_at_udt
+  from information_schema.columns c
+  where c.table_schema = 'public'
+    and c.table_name = 'songs'
+    and c.column_name = 'updated_at';
+
+  if v_updated_at_udt is not null and v_updated_at_udt not in ('timestamptz', 'timestamp') then
+    raise exception 'Incompatible public.songs.updated_at type (%) on love_chill. Expected timestamptz/timestamp.', v_updated_at_udt;
+  end if;
+end
+$$;
 
 alter table public.songs add column if not exists title text;
 alter table public.songs add column if not exists artist text default 'Unknown Artist';
@@ -121,13 +268,15 @@ begin
 end;
 $$;
 
+revoke all on function public.touch_songs_updated_at() from public, anon, authenticated;
+
 drop trigger if exists trg_touch_songs_updated_at on public.songs;
 create trigger trg_touch_songs_updated_at
   before update on public.songs
   for each row
   execute function public.touch_songs_updated_at();
 
--- 4. Drop ALL existing policies on protected Love & Chill tables & storage buckets cleanly
+-- 4. Drop ALL existing policies on protected Love & Chill tables & ONLY `'music'` / `'artwork'` storage policies
 do $$
 declare
   v_pol record;
@@ -158,12 +307,28 @@ begin
     where schemaname = 'storage'
       and tablename = 'objects'
       and (
-        pg_catalog.coalesce(qual, '') ilike '%music%'
-        or pg_catalog.coalesce(with_check, '') ilike '%music%'
-        or pg_catalog.coalesce(qual, '') ilike '%artwork%'
-        or pg_catalog.coalesce(with_check, '') ilike '%artwork%'
-        or policyname ilike '%music%'
-        or policyname ilike '%artwork%'
+        coalesce(qual, '') ~ $$(^|[^[:alnum:]_'])'(music|artwork)'([^[:alnum:]_']|$)$$
+        or coalesce(with_check, '') ~ $$(^|[^[:alnum:]_'])'(music|artwork)'([^[:alnum:]_']|$)$$
+        or policyname in (
+          'Public Access music',
+          'Public Access artwork',
+          'Public Read music',
+          'Public Read artwork',
+          'Admin manage music bucket',
+          'Owner manage music and artwork buckets',
+          'Restrict anon writes on music bucket',
+          'Restrict anon updates on music bucket',
+          'Restrict anon deletes on music bucket',
+          'Restrict authenticated inserts on music bucket',
+          'Restrict authenticated updates on music bucket',
+          'Restrict authenticated deletes on music bucket',
+          'Restrict anon writes on music and artwork buckets',
+          'Restrict anon updates on music and artwork buckets',
+          'Restrict anon deletes on music and artwork buckets',
+          'Restrict authenticated inserts on music and artwork buckets',
+          'Restrict authenticated updates on music and artwork buckets',
+          'Restrict authenticated deletes on music and artwork buckets'
+        )
       )
   loop
     execute pg_catalog.format(
@@ -183,7 +348,7 @@ create policy "Owner can view own admin row"
   to authenticated
   using (auth.uid() = user_id);
 
--- 5. Owner-Only Authoritative Helpers & Mandatory TOTP MFA (`aal2`)
+-- 5. Owner-Only Authoritative Helpers & Mandatory TOTP MFA (`aal2` + TOTP `amr`)
 create or replace function public.is_jtec_owner()
 returns boolean
 language plpgsql
@@ -194,11 +359,10 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_is_anon boolean := pg_catalog.coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
-  v_provider text := pg_catalog.coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
-  v_amr jsonb := pg_catalog.coalesce(v_jwt -> 'amr', '[]'::jsonb);
+  v_is_anon boolean := coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
+  v_provider text := coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
   v_amr_anon boolean := false;
-  v_user_valid boolean := false;
   v_active_owner boolean := false;
 begin
   if v_uid is null or v_jwt is null or v_is_anon or v_provider = 'anonymous' then
@@ -208,7 +372,12 @@ begin
   select exists (
     select 1
     from pg_catalog.jsonb_array_elements(v_amr) as elem
-    where elem ->> 'method' = 'anonymous'
+    where (
+      case
+        when pg_catalog.jsonb_typeof(elem) = 'object' then elem ->> 'method'
+        else elem #>> '{}'
+      end
+    ) = 'anonymous'
   ) into v_amr_anon;
 
   if v_amr_anon then
@@ -217,27 +386,19 @@ begin
 
   select exists (
     select 1
-    from auth.users u
-    where u.id = v_uid
-      and pg_catalog.coalesce(u.is_anonymous, false) = false
-      and u.email is not null
-      and u.email_confirmed_at is not null
-      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
-  ) into v_user_valid;
-
-  if not v_user_valid then
-    return false;
-  end if;
-
-  select exists (
-    select 1
     from public.admin_users a
+    join auth.users u on u.id = a.user_id
     where a.user_id = v_uid
       and a.is_active = true
       and a.role = 'owner'
+      and coalesce(u.is_anonymous, false) = false
+      and u.email is not null
+      and u.email_confirmed_at is not null
+      and pg_catalog.lower(a.email) = pg_catalog.lower(u.email)
+      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
   ) into v_active_owner;
 
-  return pg_catalog.coalesce(v_active_owner, false);
+  return coalesce(v_active_owner, false);
 end;
 $$;
 
@@ -261,7 +422,9 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_aal text := pg_catalog.coalesce(v_jwt ->> 'aal', 'aal1');
+  v_aal text := coalesce(v_jwt ->> 'aal', 'aal1');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
+  v_has_totp_amr boolean := false;
   v_has_verified_totp boolean := false;
 begin
   if not public.is_jtec_owner() then
@@ -274,13 +437,28 @@ begin
 
   select exists (
     select 1
+    from pg_catalog.jsonb_array_elements(v_amr) as elem
+    where (
+      case
+        when pg_catalog.jsonb_typeof(elem) = 'object' then elem ->> 'method'
+        else elem #>> '{}'
+      end
+    ) = 'totp'
+  ) into v_has_totp_amr;
+
+  if not coalesce(v_has_totp_amr, false) then
+    return false;
+  end if;
+
+  select exists (
+    select 1
     from auth.mfa_factors f
     where f.user_id = v_uid
       and f.factor_type = 'totp'
       and f.status = 'verified'
   ) into v_has_verified_totp;
 
-  return pg_catalog.coalesce(v_has_verified_totp, false);
+  return coalesce(v_has_verified_totp, false);
 end;
 $$;
 
@@ -317,11 +495,13 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_is_anon boolean := pg_catalog.coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
-  v_aal text := pg_catalog.coalesce(v_jwt ->> 'aal', 'aal1');
+  v_is_anon boolean := coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
+  v_aal text := coalesce(v_jwt ->> 'aal', 'aal1');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
   v_email text := v_jwt ->> 'email';
   v_is_owner boolean := public.is_jtec_owner();
   v_has_verified_mfa boolean := false;
+  v_has_totp_amr boolean := false;
   v_role text := null;
 begin
   if v_uid is null or v_jwt is null or v_is_anon then
@@ -354,9 +534,13 @@ begin
 
   select a.role into v_role
   from public.admin_users a
+  join auth.users u on u.id = a.user_id
   where a.user_id = v_uid
     and a.is_active = true
-    and a.role = 'owner';
+    and a.role = 'owner'
+    and u.email is not null
+    and u.email_confirmed_at is not null
+    and pg_catalog.lower(a.email) = pg_catalog.lower(u.email);
 
   if v_role is null then
     return pg_catalog.jsonb_build_object(
@@ -380,6 +564,17 @@ begin
       and f.status = 'verified'
   ) into v_has_verified_mfa;
 
+  select exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(v_amr) as elem
+    where (
+      case
+        when pg_catalog.jsonb_typeof(elem) = 'object' then elem ->> 'method'
+        else elem #>> '{}'
+      end
+    ) = 'totp'
+  ) into v_has_totp_amr;
+
   return pg_catalog.jsonb_build_object(
     'is_admin', true,
     'is_anonymous', false,
@@ -389,7 +584,7 @@ begin
     'has_verified_mfa', v_has_verified_mfa,
     'needs_mfa_enrollment', (not v_has_verified_mfa),
     'current_aal', v_aal,
-    'aal_enforced', (v_has_verified_mfa and v_aal = 'aal2'),
+    'aal_enforced', (v_has_verified_mfa and v_aal = 'aal2' and v_has_totp_amr),
     'user_id', v_uid,
     'email', v_email
   );
@@ -421,9 +616,11 @@ begin
     v_uid,
     v_email,
     'love_chill',
-    pg_catalog.left(pg_catalog.coalesce(p_action, 'unknown'), 80),
-    pg_catalog.coalesce(p_details, '{}'::jsonb)
+    pg_catalog.left(coalesce(nullif(pg_catalog.btrim(p_action), ''), 'unknown'), 80),
+    coalesce(p_details, '{}'::jsonb)
   );
+
+  perform pg_catalog.set_config('app.jtec_audit_write', '', true);
 end;
 $$;
 
@@ -436,7 +633,7 @@ as $$
 begin
   perform public.log_admin_action(
     p_action,
-    pg_catalog.coalesce(p_details, '{}'::jsonb) || pg_catalog.jsonb_build_object('project', 'love_chill')
+    coalesce(p_details, '{}'::jsonb) || pg_catalog.jsonb_build_object('project', 'love_chill')
   );
 end;
 $$;
@@ -489,8 +686,10 @@ declare
   v_new jsonb := case when tg_op in ('INSERT', 'UPDATE') then pg_catalog.to_jsonb(new) else null end;
   v_old jsonb := case when tg_op in ('UPDATE', 'DELETE') then pg_catalog.to_jsonb(old) else null end;
   v_action text;
-  v_old_audio text;
-  v_new_audio text;
+  v_old_path text;
+  v_new_path text;
+  v_old_url text;
+  v_new_url text;
   v_old_cover text;
   v_new_cover text;
   v_details jsonb;
@@ -506,16 +705,21 @@ begin
       'song_id', v_new ->> 'id',
       'title', v_new ->> 'title',
       'artist', v_new ->> 'artist',
-      'file_path', coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', ''),
-      'has_cover', coalesce(v_new ->> 'artwork_url', v_new ->> 'cover_url', '') <> ''
+      'file_path', coalesce(nullif(v_new ->> 'storage_path', ''), nullif(v_new ->> 'file_path', ''), ''),
+      'audio_url', coalesce(nullif(v_new ->> 'public_url', ''), nullif(v_new ->> 'audio_url', ''), ''),
+      'has_cover', coalesce(nullif(v_new ->> 'artwork_url', ''), nullif(v_new ->> 'cover_url', ''), '') <> ''
     );
   elsif tg_op = 'UPDATE' then
-    v_old_audio := coalesce(v_old ->> 'storage_path', v_old ->> 'file_path', v_old ->> 'public_url', v_old ->> 'audio_url', '');
-    v_new_audio := coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', v_new ->> 'public_url', v_new ->> 'audio_url', '');
-    v_old_cover := coalesce(v_old ->> 'artwork_url', v_old ->> 'cover_url', '');
-    v_new_cover := coalesce(v_new ->> 'artwork_url', v_new ->> 'cover_url', '');
+    v_old_path := coalesce(nullif(v_old ->> 'storage_path', ''), nullif(v_old ->> 'file_path', ''), '');
+    v_new_path := coalesce(nullif(v_new ->> 'storage_path', ''), nullif(v_new ->> 'file_path', ''), '');
+    v_old_url := coalesce(nullif(v_old ->> 'public_url', ''), nullif(v_old ->> 'audio_url', ''), '');
+    v_new_url := coalesce(nullif(v_new ->> 'public_url', ''), nullif(v_new ->> 'audio_url', ''), '');
+    v_old_cover := coalesce(nullif(v_old ->> 'artwork_url', ''), nullif(v_old ->> 'cover_url', ''), '');
+    v_new_cover := coalesce(nullif(v_new ->> 'artwork_url', ''), nullif(v_new ->> 'cover_url', ''), '');
 
-    if v_old_audio is distinct from v_new_audio or v_old_cover is distinct from v_new_cover then
+    if v_old_path is distinct from v_new_path
+       or v_old_url is distinct from v_new_url
+       or v_old_cover is distinct from v_new_cover then
       v_action := 'song_replaced';
     else
       v_action := 'song_edited';
@@ -525,9 +729,9 @@ begin
       'project', 'love_chill',
       'song_id', v_new ->> 'id',
       'title', v_new ->> 'title',
-      'audio_changed', (v_old_audio is distinct from v_new_audio),
+      'audio_changed', ((v_old_path is distinct from v_new_path) or (v_old_url is distinct from v_new_url)),
       'cover_changed', (v_old_cover is distinct from v_new_cover),
-      'file_path', coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', '')
+      'file_path', v_new_path
     );
   else
     v_action := 'song_deleted';
@@ -535,7 +739,7 @@ begin
       'project', 'love_chill',
       'song_id', v_old ->> 'id',
       'title', v_old ->> 'title',
-      'file_path', coalesce(v_old ->> 'storage_path', v_old ->> 'file_path', '')
+      'file_path', coalesce(nullif(v_old ->> 'storage_path', ''), nullif(v_old ->> 'file_path', ''), '')
     );
   end if;
 
@@ -543,6 +747,8 @@ begin
 
   insert into public.admin_audit_logs (admin_user_id, admin_email, project_scope, action, details)
   values (v_uid, v_email, 'love_chill', v_action, v_details);
+
+  perform pg_catalog.set_config('app.jtec_audit_write', '', true);
 
   return coalesce(new, old);
 end;

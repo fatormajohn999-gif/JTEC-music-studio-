@@ -62,6 +62,10 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 │       │   └── 001_nasheed_music_security.sql # Owner-only AAL2 auth, songs, storage & audit (nasheed)
 │       └── love_chill/
 │           └── 001_love_chill_music_security.sql # Owner-only AAL2 auth, songs, storage & audit (love_chill)
+│   └── rollbacks/
+│       ├── jtec_main_002_rollback.sql        # Non-destructive 002 rollback -> 001 state (jtec_main)
+│       ├── nasheed_001_rollback.sql          # Non-destructive fail-closed read-only rollback (nasheed)
+│       └── love_chill_001_rollback.sql       # Non-destructive fail-closed read-only rollback (love_chill)
 ├── vite.config.ts              # Vite config (base: './', envPrefix: ['VITE_'])
 └── capacitor.config.ts         # Capacitor config (appId: com.jtecmusic.app, webDir: dist)
 ```
@@ -116,16 +120,19 @@ npm run dev                      # Start Vite dev server on port 3000
 
 1. **JTEC Main (`jtec_main`)**:
    - Pre-check: `supabase/checks/jtec_main_pre_music_manager.sql`
-   - Migration: `supabase/migrations/002_jtec_main_music_manager.sql` *(requires `001_secure_admin_auth.sql` first)*
+   - Migration: `supabase/migrations/002_jtec_main_music_manager.sql` *(requires `001_secure_admin_auth.sql` + active confirmed owner first)*
    - Post-verify: `supabase/checks/jtec_main_post_music_manager.sql`
+   - Rollback: `supabase/rollbacks/jtec_main_002_rollback.sql`
 2. **JTEC Nasheed (`nasheed`)**:
    - Pre-check: `supabase/checks/nasheed_pre_migration_audit.sql`
-   - Migration: `supabase/migrations/nasheed/001_nasheed_music_security.sql`
+   - Migration: `supabase/migrations/nasheed/001_nasheed_music_security.sql` *(requires confirmed `fatormajohn999@gmail.com` in Nasheed Auth -> Users)*
    - Post-verify: `supabase/checks/nasheed_post_migration_verify.sql`
+   - Rollback: `supabase/rollbacks/nasheed_001_rollback.sql`
 3. **JTEC Love & Chill (`love_chill`)**:
    - Pre-check: `supabase/checks/love_chill_pre_migration_audit.sql`
-   - Migration: `supabase/migrations/love_chill/001_love_chill_music_security.sql`
+   - Migration: `supabase/migrations/love_chill/001_love_chill_music_security.sql` *(requires confirmed `fatormajohn999@gmail.com` in Love & Chill Auth -> Users)*
    - Post-verify: `supabase/checks/love_chill_post_migration_verify.sql`
+   - Rollback: `supabase/rollbacks/love_chill_001_rollback.sql`
 
 ### Key Security Guarantees & Manual Prerequisites
 

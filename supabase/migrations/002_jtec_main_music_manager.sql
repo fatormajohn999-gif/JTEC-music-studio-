@@ -4,28 +4,32 @@
 -- Run this script in the `jtec_main` Supabase SQL Editor ONLY AFTER:
 --   1. `supabase/migrations/001_secure_admin_auth.sql` has been applied.
 --   2. `supabase/checks/jtec_main_pre_music_manager.sql` baseline has been saved.
+--   3. At least one confirmed, non-anonymous owner (`role = 'owner'`, matching
+--      `auth.users.email`) is active in `public.admin_users`.
 --
 -- Do NOT run this script on `nasheed`, `love_chill`, or `jtec-party`.
 --
--- What this migration adds on top of `001_secure_admin_auth.sql`:
--- 1. Non-destructively ensures all Music Management columns exist on `public.songs`
---    plus an `updated_at` maintenance trigger (zero existing data touched).
--- 2. Adds strict owner-only AAL2 helpers (`public.is_jtec_owner()` and
---    `public.is_jtec_owner_aal2()`, requiring `role = 'owner'`, `is_active = true`,
---    verified TOTP factor, and JWT `aal = 'aal2'`).
--- 3. Restricts `public.songs` INSERT/UPDATE/DELETE and `storage.objects` writes
---    on BOTH `'music'` and `'artwork'` buckets strictly to `is_jtec_owner_aal2()`
---    while keeping public anonymous `SELECT` streaming/cover access intact.
--- 4. Provisions/hardens the `'artwork'` bucket (5 MB limit, JPEG/PNG/WebP MIME
---    allowlist) alongside `'music'` so embedded and manual cover uploads work safely.
--- 5. Attaches an immutable `AFTER INSERT OR UPDATE OR DELETE` audit trigger on
---    `public.songs` + owner-only `public.log_music_action()` RPC for storage events.
+-- Security & Compatibility Guarantees:
+-- 1. Verifies `001` prerequisites, admin table column compatibility, `songs.updated_at`
+--    type compatibility, and an active confirmed owner before changing policies.
+-- 2. Enforces strict owner-only AAL2 helpers (`public.is_jtec_owner()` and
+--    `public.is_jtec_owner_aal2()`): `role = 'owner'`, `is_active = true`,
+--    `admin_users.email = auth.users.email`, verified TOTP factor, JWT `aal = 'aal2'`,
+--    AND TOTP `amr` verification.
+-- 3. Non-destructively adds missing Music Management columns/indexes to `public.songs`.
+-- 4. Protects `public.songs` + `'music'` & `'artwork'` buckets with `AS RESTRICTIVE`
+--    storage guards while preserving public read/streaming/download access.
+-- 5. Attaches `audit_song_mutations()` with NULLIF empty-string handling, resets
+--    `app.jtec_audit_write` immediately after each insert, and exposes `log_music_action()`.
 -- ==============================================================================
 
 begin;
 
--- 1. Verify prerequisite security foundation from 001_secure_admin_auth.sql
+-- 1. Verify `001` prerequisites, admin table schemas, `updated_at` type, and active confirmed owner
 do $$
+declare
+  v_updated_at_udt text;
+  v_bad_cols integer := 0;
 begin
   if pg_catalog.to_regclass('public.admin_users') is null
      or pg_catalog.to_regclass('public.admin_audit_logs') is null
@@ -33,6 +37,62 @@ begin
      or pg_catalog.to_regprocedure('public.is_jtec_admin_aal2()') is null
      or pg_catalog.to_regprocedure('public.log_admin_action(text, jsonb)') is null then
     raise exception 'Prerequisites missing on jtec_main. Apply supabase/migrations/001_secure_admin_auth.sql before 002_jtec_main_music_manager.sql.';
+  end if;
+
+  -- Reject incompatible admin_users / admin_audit_logs schemas
+  select count(*) into v_bad_cols
+  from (
+    values
+      ('admin_users', 'user_id', 'uuid'),
+      ('admin_users', 'email', 'text'),
+      ('admin_users', 'role', 'text'),
+      ('admin_users', 'is_active', 'bool'),
+      ('admin_audit_logs', 'admin_user_id', 'uuid'),
+      ('admin_audit_logs', 'action', 'text'),
+      ('admin_audit_logs', 'details', 'jsonb')
+  ) as req(tbl, col, expected_udt)
+  where not exists (
+    select 1
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and c.table_name = req.tbl
+      and c.column_name = req.col
+      and (
+        c.udt_name = req.expected_udt
+        or (req.expected_udt = 'text' and c.udt_name in ('varchar', 'citext', 'bpchar'))
+      )
+  );
+
+  if v_bad_cols > 0 then
+    raise exception 'Incompatible public.admin_users or public.admin_audit_logs column schema on jtec_main.';
+  end if;
+
+  -- Ensure at least one active, email-confirmed owner with matching email exists before tightening access
+  if not exists (
+    select 1
+    from public.admin_users a
+    join auth.users u on u.id = a.user_id
+    where a.is_active = true
+      and a.role = 'owner'
+      and u.email is not null
+      and pg_catalog.lower(a.email) = pg_catalog.lower(u.email)
+      and coalesce(u.is_anonymous, false) = false
+      and u.email_confirmed_at is not null
+      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
+  ) then
+    raise exception 'Cannot tighten jtec_main Music Manager permissions: no active confirmed owner matching auth.users.email was found in public.admin_users.';
+  end if;
+
+  -- Validate existing public.songs.updated_at type (if column already exists) before attaching trigger
+  select c.udt_name
+  into v_updated_at_udt
+  from information_schema.columns c
+  where c.table_schema = 'public'
+    and c.table_name = 'songs'
+    and c.column_name = 'updated_at';
+
+  if v_updated_at_udt is not null and v_updated_at_udt not in ('timestamptz', 'timestamp') then
+    raise exception 'Incompatible public.songs.updated_at type (%). Expected timestamptz/timestamp before attaching touch_songs_updated_at().', v_updated_at_udt;
   end if;
 end
 $$;
@@ -73,13 +133,15 @@ begin
 end;
 $$;
 
+revoke all on function public.touch_songs_updated_at() from public, anon, authenticated;
+
 drop trigger if exists trg_touch_songs_updated_at on public.songs;
 create trigger trg_touch_songs_updated_at
   before update on public.songs
   for each row
   execute function public.touch_songs_updated_at();
 
--- 3. Strict Owner-Only Helpers (`role = 'owner'`, `is_active = true`, verified TOTP + AAL2)
+-- 3. Strict Owner-Only Helpers (`role = 'owner'`, matching email, `is_active = true`, TOTP factor + AAL2 + TOTP amr)
 create or replace function public.is_jtec_owner()
 returns boolean
 language plpgsql
@@ -90,11 +152,10 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_is_anon boolean := pg_catalog.coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
-  v_provider text := pg_catalog.coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
-  v_amr jsonb := pg_catalog.coalesce(v_jwt -> 'amr', '[]'::jsonb);
+  v_is_anon boolean := coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
+  v_provider text := coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
   v_amr_anon boolean := false;
-  v_user_valid boolean := false;
   v_active_owner boolean := false;
 begin
   if v_uid is null or v_jwt is null or v_is_anon or v_provider = 'anonymous' then
@@ -104,7 +165,12 @@ begin
   select exists (
     select 1
     from pg_catalog.jsonb_array_elements(v_amr) as elem
-    where elem ->> 'method' = 'anonymous'
+    where (
+      case
+        when pg_catalog.jsonb_typeof(elem) = 'object' then elem ->> 'method'
+        else elem #>> '{}'
+      end
+    ) = 'anonymous'
   ) into v_amr_anon;
 
   if v_amr_anon then
@@ -113,27 +179,19 @@ begin
 
   select exists (
     select 1
-    from auth.users u
-    where u.id = v_uid
-      and pg_catalog.coalesce(u.is_anonymous, false) = false
-      and u.email is not null
-      and u.email_confirmed_at is not null
-      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
-  ) into v_user_valid;
-
-  if not v_user_valid then
-    return false;
-  end if;
-
-  select exists (
-    select 1
     from public.admin_users a
+    join auth.users u on u.id = a.user_id
     where a.user_id = v_uid
       and a.is_active = true
       and a.role = 'owner'
+      and coalesce(u.is_anonymous, false) = false
+      and u.email is not null
+      and u.email_confirmed_at is not null
+      and pg_catalog.lower(a.email) = pg_catalog.lower(u.email)
+      and (u.banned_until is null or u.banned_until <= pg_catalog.now())
   ) into v_active_owner;
 
-  return pg_catalog.coalesce(v_active_owner, false);
+  return coalesce(v_active_owner, false);
 end;
 $$;
 
@@ -147,7 +205,9 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_aal text := pg_catalog.coalesce(v_jwt ->> 'aal', 'aal1');
+  v_aal text := coalesce(v_jwt ->> 'aal', 'aal1');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
+  v_has_totp_amr boolean := false;
   v_has_verified_totp boolean := false;
 begin
   if not public.is_jtec_owner() then
@@ -160,13 +220,28 @@ begin
 
   select exists (
     select 1
+    from pg_catalog.jsonb_array_elements(v_amr) as elem
+    where (
+      case
+        when pg_catalog.jsonb_typeof(elem) = 'object' then elem ->> 'method'
+        else elem #>> '{}'
+      end
+    ) = 'totp'
+  ) into v_has_totp_amr;
+
+  if not coalesce(v_has_totp_amr, false) then
+    return false;
+  end if;
+
+  select exists (
+    select 1
     from auth.mfa_factors f
     where f.user_id = v_uid
       and f.factor_type = 'totp'
       and f.status = 'verified'
   ) into v_has_verified_totp;
 
-  return pg_catalog.coalesce(v_has_verified_totp, false);
+  return coalesce(v_has_verified_totp, false);
 end;
 $$;
 
@@ -248,7 +323,7 @@ create policy "Owner delete songs"
   to authenticated
   using (public.is_jtec_owner_aal2());
 
--- 6. Cleanly rebuild `storage.objects` policies for `'music'` and `'artwork'` buckets
+-- 6. Rebuild ONLY `'music'` & `'artwork'` `storage.objects` policies (never affects unrelated buckets)
 do $$
 declare
   v_pol record;
@@ -259,12 +334,26 @@ begin
     where schemaname = 'storage'
       and tablename = 'objects'
       and (
-        pg_catalog.coalesce(qual, '') ilike '%music%'
-        or pg_catalog.coalesce(with_check, '') ilike '%music%'
-        or pg_catalog.coalesce(qual, '') ilike '%artwork%'
-        or pg_catalog.coalesce(with_check, '') ilike '%artwork%'
-        or policyname ilike '%music%'
-        or policyname ilike '%artwork%'
+        coalesce(qual, '') ~ $$(^|[^[:alnum:]_'])'(music|artwork)'([^[:alnum:]_']|$)$$
+        or coalesce(with_check, '') ~ $$(^|[^[:alnum:]_'])'(music|artwork)'([^[:alnum:]_']|$)$$
+        or policyname in (
+          'Public Access music',
+          'Public Access artwork',
+          'Admin manage music bucket',
+          'Owner manage music and artwork buckets',
+          'Restrict anon writes on music bucket',
+          'Restrict anon updates on music bucket',
+          'Restrict anon deletes on music bucket',
+          'Restrict authenticated inserts on music bucket',
+          'Restrict authenticated updates on music bucket',
+          'Restrict authenticated deletes on music bucket',
+          'Restrict anon writes on music and artwork buckets',
+          'Restrict anon updates on music and artwork buckets',
+          'Restrict anon deletes on music and artwork buckets',
+          'Restrict authenticated inserts on music and artwork buckets',
+          'Restrict authenticated updates on music and artwork buckets',
+          'Restrict authenticated deletes on music and artwork buckets'
+        )
       )
   loop
     execute pg_catalog.format(
@@ -353,8 +442,10 @@ declare
   v_new jsonb := case when tg_op in ('INSERT', 'UPDATE') then pg_catalog.to_jsonb(new) else null end;
   v_old jsonb := case when tg_op in ('UPDATE', 'DELETE') then pg_catalog.to_jsonb(old) else null end;
   v_action text;
-  v_old_audio text;
-  v_new_audio text;
+  v_old_path text;
+  v_new_path text;
+  v_old_url text;
+  v_new_url text;
   v_old_cover text;
   v_new_cover text;
   v_details jsonb;
@@ -371,16 +462,21 @@ begin
       'song_id', v_new ->> 'id',
       'title', v_new ->> 'title',
       'artist', v_new ->> 'artist',
-      'file_path', coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', ''),
-      'has_cover', coalesce(v_new ->> 'artwork_url', v_new ->> 'cover_url', '') <> ''
+      'file_path', coalesce(nullif(v_new ->> 'storage_path', ''), nullif(v_new ->> 'file_path', ''), ''),
+      'audio_url', coalesce(nullif(v_new ->> 'public_url', ''), nullif(v_new ->> 'audio_url', ''), ''),
+      'has_cover', coalesce(nullif(v_new ->> 'artwork_url', ''), nullif(v_new ->> 'cover_url', ''), '') <> ''
     );
   elsif tg_op = 'UPDATE' then
-    v_old_audio := coalesce(v_old ->> 'storage_path', v_old ->> 'file_path', v_old ->> 'public_url', v_old ->> 'audio_url', '');
-    v_new_audio := coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', v_new ->> 'public_url', v_new ->> 'audio_url', '');
-    v_old_cover := coalesce(v_old ->> 'artwork_url', v_old ->> 'cover_url', '');
-    v_new_cover := coalesce(v_new ->> 'artwork_url', v_new ->> 'cover_url', '');
+    v_old_path := coalesce(nullif(v_old ->> 'storage_path', ''), nullif(v_old ->> 'file_path', ''), '');
+    v_new_path := coalesce(nullif(v_new ->> 'storage_path', ''), nullif(v_new ->> 'file_path', ''), '');
+    v_old_url := coalesce(nullif(v_old ->> 'public_url', ''), nullif(v_old ->> 'audio_url', ''), '');
+    v_new_url := coalesce(nullif(v_new ->> 'public_url', ''), nullif(v_new ->> 'audio_url', ''), '');
+    v_old_cover := coalesce(nullif(v_old ->> 'artwork_url', ''), nullif(v_old ->> 'cover_url', ''), '');
+    v_new_cover := coalesce(nullif(v_new ->> 'artwork_url', ''), nullif(v_new ->> 'cover_url', ''), '');
 
-    if v_old_audio is distinct from v_new_audio or v_old_cover is distinct from v_new_cover then
+    if v_old_path is distinct from v_new_path
+       or v_old_url is distinct from v_new_url
+       or v_old_cover is distinct from v_new_cover then
       v_action := 'song_replaced';
     else
       v_action := 'song_edited';
@@ -390,9 +486,9 @@ begin
       'project', 'jtec_main',
       'song_id', v_new ->> 'id',
       'title', v_new ->> 'title',
-      'audio_changed', (v_old_audio is distinct from v_new_audio),
+      'audio_changed', ((v_old_path is distinct from v_new_path) or (v_old_url is distinct from v_new_url)),
       'cover_changed', (v_old_cover is distinct from v_new_cover),
-      'file_path', coalesce(v_new ->> 'storage_path', v_new ->> 'file_path', '')
+      'file_path', v_new_path
     );
   else
     v_action := 'song_deleted';
@@ -400,7 +496,7 @@ begin
       'project', 'jtec_main',
       'song_id', v_old ->> 'id',
       'title', v_old ->> 'title',
-      'file_path', coalesce(v_old ->> 'storage_path', v_old ->> 'file_path', '')
+      'file_path', coalesce(nullif(v_old ->> 'storage_path', ''), nullif(v_old ->> 'file_path', ''), '')
     );
   end if;
 
@@ -408,6 +504,8 @@ begin
 
   insert into public.admin_audit_logs (admin_user_id, admin_email, action, details)
   values (v_uid, v_email, v_action, v_details);
+
+  perform pg_catalog.set_config('app.jtec_audit_write', '', true);
 
   return coalesce(new, old);
 end;
@@ -442,9 +540,11 @@ begin
   values (
     v_uid,
     v_email,
-    pg_catalog.left(pg_catalog.coalesce(p_action, 'music_action'), 80),
-    pg_catalog.coalesce(p_details, '{}'::jsonb) || pg_catalog.jsonb_build_object('project', 'jtec_main')
+    pg_catalog.left(coalesce(nullif(btrim(p_action), ''), 'music_action'), 80),
+    coalesce(p_details, '{}'::jsonb) || pg_catalog.jsonb_build_object('project', 'jtec_main')
   );
+
+  perform pg_catalog.set_config('app.jtec_audit_write', '', true);
 end;
 $$;
 
