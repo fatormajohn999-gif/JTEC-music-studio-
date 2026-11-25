@@ -23,7 +23,7 @@
 -- 4. Legacy policy neutralization:
 --    - Dynamically drops ALL existing policies on `admin_users`,
 --      `admin_audit_logs`, `app_config`, `app_installs`, and `songs` before
---      recreating least-privilege policies, plus drops `'music'` write policies
+--      recreating least-privilege policies, plus drops precise `'music'` write policies
 --      on `storage.objects` and adds `AS RESTRICTIVE` write guards.
 -- 5. Immutable `public.admin_audit_logs`:
 --    - Forced RLS; no client INSERT/UPDATE/DELETE/TRUNCATE grants; explicit
@@ -59,7 +59,7 @@ insert into public.admin_users (user_id, email, role, is_active)
 select u.id, pg_catalog.lower(u.email), 'owner', true
 from auth.users u
 where pg_catalog.lower(u.email) = 'fatormajohn999@gmail.com'
-  and pg_catalog.coalesce(u.is_anonymous, false) = false
+  and coalesce(u.is_anonymous, false) = false
   and u.email_confirmed_at is not null
 on conflict (user_id) do nothing;
 
@@ -101,7 +101,7 @@ begin
 end
 $$;
 
--- Drop any legacy policies on storage.objects referencing the 'music' bucket so we rebuild cleanly
+-- Drop precise legacy policies on storage.objects referencing the 'music' bucket so we rebuild cleanly
 do $$
 declare
   v_pol record;
@@ -112,9 +112,19 @@ begin
     where schemaname = 'storage'
       and tablename = 'objects'
       and (
-        pg_catalog.coalesce(qual, '') ilike '%music%'
-        or pg_catalog.coalesce(with_check, '') ilike '%music%'
-        or policyname ilike '%music%'
+        coalesce(qual, '') ~ $$(^|[^[:alnum:]_'])'music'([^[:alnum:]_']|$)$$
+        or coalesce(with_check, '') ~ $$(^|[^[:alnum:]_'])'music'([^[:alnum:]_']|$)$$
+        or policyname in (
+          'Public Access music',
+          'Public Read music',
+          'Admin manage music bucket',
+          'Restrict anon writes on music bucket',
+          'Restrict anon updates on music bucket',
+          'Restrict anon deletes on music bucket',
+          'Restrict authenticated inserts on music bucket',
+          'Restrict authenticated updates on music bucket',
+          'Restrict authenticated deletes on music bucket'
+        )
       )
   loop
     execute pg_catalog.format(
@@ -145,9 +155,9 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_is_anon boolean := pg_catalog.coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
-  v_provider text := pg_catalog.coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
-  v_amr jsonb := pg_catalog.coalesce(v_jwt -> 'amr', '[]'::jsonb);
+  v_is_anon boolean := coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
+  v_provider text := coalesce(v_jwt -> 'app_metadata' ->> 'provider', '');
+  v_amr jsonb := coalesce(v_jwt -> 'amr', '[]'::jsonb);
   v_amr_anon boolean := false;
   v_user_valid boolean := false;
   v_active_admin boolean := false;
@@ -170,7 +180,7 @@ begin
     select 1
     from auth.users u
     where u.id = v_uid
-      and pg_catalog.coalesce(u.is_anonymous, false) = false
+      and coalesce(u.is_anonymous, false) = false
       and u.email is not null
       and u.email_confirmed_at is not null
       and (u.banned_until is null or u.banned_until <= pg_catalog.now())
@@ -188,7 +198,7 @@ begin
       and a.role in ('admin', 'owner')
   ) into v_active_admin;
 
-  return pg_catalog.coalesce(v_active_admin, false);
+  return coalesce(v_active_admin, false);
 end;
 $$;
 
@@ -203,7 +213,7 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_aal text := pg_catalog.coalesce(v_jwt ->> 'aal', 'aal1');
+  v_aal text := coalesce(v_jwt ->> 'aal', 'aal1');
   v_has_verified_totp boolean := false;
 begin
   if not public.is_jtec_admin() then
@@ -222,7 +232,7 @@ begin
       and f.status = 'verified'
   ) into v_has_verified_totp;
 
-  return pg_catalog.coalesce(v_has_verified_totp, false);
+  return coalesce(v_has_verified_totp, false);
 end;
 $$;
 
@@ -243,8 +253,8 @@ as $$
 declare
   v_uid uuid := auth.uid();
   v_jwt jsonb := auth.jwt();
-  v_is_anon boolean := pg_catalog.coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
-  v_aal text := pg_catalog.coalesce(v_jwt ->> 'aal', 'aal1');
+  v_is_anon boolean := coalesce((v_jwt ->> 'is_anonymous')::boolean, false);
+  v_aal text := coalesce(v_jwt ->> 'aal', 'aal1');
   v_email text := v_jwt ->> 'email';
   v_is_admin boolean := public.is_jtec_admin();
   v_has_verified_mfa boolean := false;
@@ -348,7 +358,7 @@ begin
     v_uid,
     v_email,
     pg_catalog.left(pg_catalog.coalesce(p_action, 'unknown'), 80),
-    pg_catalog.coalesce(p_details, '{}'::jsonb)
+    coalesce(p_details, '{}'::jsonb)
   );
 end;
 $$;
