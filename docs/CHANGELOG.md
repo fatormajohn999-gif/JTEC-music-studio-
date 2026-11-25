@@ -4,6 +4,25 @@ All notable security, telemetry, build, and deployment changes are recorded in t
 
 ---
 
+## 2026-11-25 — Unified Music Management Database & Storage Security Layer (3 Targets)
+
+### Summary
+Prepared isolated, owner-only (`role = 'owner'`), mandatory-TOTP (`aal2`) database and storage security migrations, pre/post read-only verification scripts, automated security/isolation tests, and step-by-step activation/rollback documentation for **JTEC Main**, **JTEC Nasheed**, and **JTEC Love & Chill** (no SQL executed on live databases; **JTEC Party** untouched; upload UI deferred to next step).
+
+### Files Modified / Created
+- **`supabase/migrations/002_jtec_main_music_manager.sql`** *(new)*, **`supabase/checks/jtec_main_pre_music_manager.sql`** *(new)*, & **`supabase/checks/jtec_main_post_music_manager.sql`** *(new)*:
+  - Builds cleanly on `001_secure_admin_auth.sql` with `is_jtec_owner()` / `is_jtec_owner_aal2()`, non-destructive `songs` column alignment + `touch_songs_updated_at()`, `'artwork'` bucket hardening alongside `'music'`, `AS RESTRICTIVE` storage guards, immutable `audit_song_mutations` triggers (`song_uploaded`, `song_edited`, `song_replaced`, `song_deleted`), and `log_music_action()`.
+- **`supabase/migrations/nasheed/001_nasheed_music_security.sql`** *(new)*, **`supabase/checks/nasheed_pre_migration_audit.sql`** *(new)*, & **`supabase/checks/nasheed_post_migration_verify.sql`** *(new)*:
+  - Dedicated atomic owner-only AAL2 admin auth, `public.songs` + `'music'`/`'artwork'` storage RLS, and song audit triggers isolated to `nasheed` (no `jtec_main` telemetry objects).
+- **`supabase/migrations/love_chill/001_love_chill_music_security.sql`** *(new)*, **`supabase/checks/love_chill_pre_migration_audit.sql`** *(new)*, & **`supabase/checks/love_chill_post_migration_verify.sql`** *(new)*:
+  - Dedicated atomic owner-only AAL2 admin auth, `public.songs` + `'music'`/`'artwork'` storage RLS, and song audit triggers isolated to `love_chill` (no `jtec_main` telemetry objects).
+- **`src/services/__tests__/musicManagementSecurity.test.ts`** *(new)*:
+  - Added 5 automated tests validating owner-only AAL2 enforcement, locked `search_path`, `'music'` & `'artwork'` restrictive storage policies, read-only check scripts, strict multi-project / `jtec-party` isolation, and zero exposed `service_role` keys.
+- **`README.md`, `docs/SECURITY.md`, & `docs/CHANGELOG.md`**:
+  - Documented pending manual activation across all three music projects, exact execution order, Dashboard auth/TOTP/CORS settings, schema/bucket assumptions, live verification, and zero-data-loss rollback procedures.
+
+---
+
 ## 2026-11-25 — Final Pre-Migration Safety Review (Telemetry Compatibility & CI Security Gates)
 
 ### Summary

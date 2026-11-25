@@ -17,9 +17,10 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 | Protection Layer | Current Status | Details |
 |---|---|---|
 | **Application & CI Controls** (`src/services/adminAuth.ts`, `DeveloperPage.tsx`, `vite.config.ts`, `.github/workflows/*`) | **Active in Code** | Fail-closed RPC & MFA verification, mandatory TOTP UI gate (`aal2` required), anonymous user rejection, session inactivity locks, `VITE_`-only env bundling, isolated `jtec-party` client, and CI gates (`bun 1.4.4` -> `npm test` -> `npm run lint` -> `npm run build`). |
-| **Database & Supabase Auth Controls** (`supabase/migrations/001_secure_admin_auth.sql`) | **Pending Manual Activation on `jtec_main`** | `public.admin_users`, `public.admin_audit_logs`, `verify_admin_access()`, `is_jtec_admin_aal2()`, forced RLS on `app_installs` with hardened `ping_install()`/`touch_install()`, `storage.objects` (`music`) restrictive guards, and Supabase Dashboard TOTP settings are **not yet executed on the live `jtec_main` database**. |
+| **`jtec_main` Auth & Telemetry DB Controls** (`supabase/migrations/001_secure_admin_auth.sql`) | **Pending Manual Activation on `jtec_main`** | `public.admin_users`, `public.admin_audit_logs`, `verify_admin_access()`, `is_jtec_admin_aal2()`, forced RLS on `app_installs` with hardened `ping_install()`/`touch_install()`, `storage.objects` (`music`) restrictive guards, and Supabase Dashboard TOTP settings are **not yet executed on the live `jtec_main` database**. |
+| **Unified Music Management DB & Storage Security** (`002_jtec_main_music_manager.sql`, `nasheed/001_nasheed_music_security.sql`, `love_chill/001_love_chill_music_security.sql`) | **Ready in Repo — Pending Manual Activation on Each Target** | Separate owner-only (`role = 'owner'`, mandatory TOTP `aal2`) migrations, `'music'` + `'artwork'` storage `AS RESTRICTIVE` guards, public read preservation, and `audit_song_mutations` triggers for **JTEC Main**, **Nasheed**, and **Love & Chill** (**not yet executed** on live databases; `jtec-party` untouched; Upload UI not implemented yet). |
 
-> Because the frontend fails closed when `verify_admin_access()` is missing, the Developer Portal stays locked until an authorized owner executes the SQL migration and enables TOTP in the `jtec_main` Supabase Dashboard (see [`docs/SECURITY.md`](docs/SECURITY.md)).
+> Because the frontend fails closed when `verify_admin_access()` is missing, the Developer Portal stays locked until an authorized owner executes the SQL migrations and enables TOTP in each target Supabase Dashboard (see [`docs/SECURITY.md`](docs/SECURITY.md)).
 
 ---
 
@@ -46,10 +47,21 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 │   └── services/               # audioEngine, supabase, adminAuth, appConfig, healthMonitor, mediaSession, widgetBridge
 ├── supabase/
 │   ├── checks/
-│   │   ├── 000_pre_migration_audit.sql   # Read-only pre-flight check for jtec_main
-│   │   └── 002_post_migration_verify.sql # Read-only post-migration verification for jtec_main
+│   │   ├── 000_pre_migration_audit.sql       # Read-only pre-flight check for jtec_main (001)
+│   │   ├── 002_post_migration_verify.sql     # Read-only post-migration verify for jtec_main (001)
+│   │   ├── jtec_main_pre_music_manager.sql   # Read-only Music Manager baseline check (jtec_main)
+│   │   ├── jtec_main_post_music_manager.sql  # Read-only Music Manager verify (jtec_main)
+│   │   ├── nasheed_pre_migration_audit.sql   # Read-only pre-flight check for nasheed
+│   │   ├── nasheed_post_migration_verify.sql # Read-only post-migration verify for nasheed
+│   │   ├── love_chill_pre_migration_audit.sql  # Read-only pre-flight check for love_chill
+│   │   └── love_chill_post_migration_verify.sql # Read-only post-migration verify for love_chill
 │   └── migrations/
-│       └── 001_secure_admin_auth.sql     # Atomic admin auth, mandatory AAL2, RLS & telemetry hardening
+│       ├── 001_secure_admin_auth.sql         # Atomic admin auth, mandatory AAL2 & telemetry hardening (jtec_main)
+│       ├── 002_jtec_main_music_manager.sql   # Owner-only AAL2 songs/music/artwork & audit triggers (jtec_main)
+│       ├── nasheed/
+│       │   └── 001_nasheed_music_security.sql # Owner-only AAL2 auth, songs, storage & audit (nasheed)
+│       └── love_chill/
+│           └── 001_love_chill_music_security.sql # Owner-only AAL2 auth, songs, storage & audit (love_chill)
 ├── vite.config.ts              # Vite config (base: './', envPrefix: ['VITE_'])
 └── capacitor.config.ts         # Capacitor config (appId: com.jtecmusic.app, webDir: dist)
 ```
@@ -93,3 +105,31 @@ npm run lint                     # Run TypeScript type check (tsc --noEmit)
 npm run build                    # Build static production bundle into ./dist
 npm run dev                      # Start Vite dev server on port 3000
 ```
+
+---
+
+## 7. Unified Music Management Database & Storage Security Layer
+
+> **Status**: SQL migrations and verification scripts are prepared in-repo for **JTEC Main**, **JTEC Nasheed**, and **JTEC Love & Chill** (**not yet executed against live databases**). Upload UI is not implemented yet, and **JTEC Party** (`jtec-party`, ID `dihyzyqhppmqtkheqpbs`) remains completely untouched.
+
+### Prepared Target Migrations
+
+1. **JTEC Main (`jtec_main`)**:
+   - Pre-check: `supabase/checks/jtec_main_pre_music_manager.sql`
+   - Migration: `supabase/migrations/002_jtec_main_music_manager.sql` *(requires `001_secure_admin_auth.sql` first)*
+   - Post-verify: `supabase/checks/jtec_main_post_music_manager.sql`
+2. **JTEC Nasheed (`nasheed`)**:
+   - Pre-check: `supabase/checks/nasheed_pre_migration_audit.sql`
+   - Migration: `supabase/migrations/nasheed/001_nasheed_music_security.sql`
+   - Post-verify: `supabase/checks/nasheed_post_migration_verify.sql`
+3. **JTEC Love & Chill (`love_chill`)**:
+   - Pre-check: `supabase/checks/love_chill_pre_migration_audit.sql`
+   - Migration: `supabase/migrations/love_chill/001_love_chill_music_security.sql`
+   - Post-verify: `supabase/checks/love_chill_post_migration_verify.sql`
+
+### Key Security Guarantees & Manual Prerequisites
+
+- **Owner-Only Authorization + Mandatory TOTP (`aal2`)**: Every target restricts `songs` and `'music'` / `'artwork'` bucket writes exclusively to `public.is_jtec_owner_aal2()` (`public.admin_users.role = 'owner'`, `is_active = true`, verified TOTP factor, JWT `aal = 'aal2'`). Public listeners keep `SELECT` streaming/cover/download access.
+- **No `service_role` Keys in Frontend**: Admin/owner authentication relies solely on per-project Supabase Auth + TOTP MFA + Postgres RLS (`AS RESTRICTIVE` storage policies), never embedding `service_role` credentials in Vite, Capacitor, or GitHub Actions.
+- **Immutable Audit Trail**: All three projects include `public.admin_audit_logs` (`FORCE RLS`, `UPDATE`/`DELETE` denied) plus `trg_audit_song_mutations` (`song_uploaded`, `song_edited`, `song_replaced`, `song_deleted`) and `log_music_action()`.
+- **Pre-Flight Schema Check Required**: Each target assumes default `public.songs` + `'music'` and `'artwork'` buckets; run each target's pre-check SQL first and see [`docs/SECURITY.md`](docs/SECURITY.md) Section 5–6 for exact execution order, dashboard settings, schema assumptions, and rollback procedures.
