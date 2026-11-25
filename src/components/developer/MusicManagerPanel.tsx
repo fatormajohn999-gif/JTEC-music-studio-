@@ -49,6 +49,79 @@ interface ProjectStorageStats {
   error?: string;
 }
 
+/**
+ * Recursively measures storage objects and bytes in a Supabase storage bucket
+ * with complete pagination (handling > 500 objects) and folder traversal.
+ * Never ignores errors or converts failed requests into zero values.
+ */
+export async function measureBucketStorageRecursive(
+  client: SupabaseClient,
+  bucketName: string,
+  folderPath = ''
+): Promise<{ count: number; bytes: number; error?: string }> {
+  let fileCount = 0;
+  let totalBytes = 0;
+  const limit = 1000;
+  let offset = 0;
+  let hasMore = true;
+  const foldersToExplore: string[] = [folderPath];
+  const visitedFolders = new Set<string>();
+
+  try {
+    while (foldersToExplore.length > 0) {
+      const currentFolder = foldersToExplore.pop()!;
+      if (visitedFolders.has(currentFolder)) continue;
+      visitedFolders.add(currentFolder);
+
+      offset = 0;
+      hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await client.storage
+          .from(bucketName)
+          .list(currentFolder, {
+            limit,
+            offset,
+            sortBy: { column: 'name', order: 'asc' },
+          });
+
+        if (error) {
+          return { count: fileCount, bytes: totalBytes, error: error.message };
+        }
+
+        if (!data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const item of data) {
+          const size = item.metadata?.size || (item as any).size || 0;
+          // If item is a folder (id is null or has no size/metadata and no extension), explore it
+          if (!item.id && !item.metadata) {
+            const subFolder = currentFolder ? `${currentFolder}/${item.name}` : item.name;
+            if (!visitedFolders.has(subFolder)) {
+              foldersToExplore.push(subFolder);
+            }
+          } else {
+            fileCount += 1;
+            totalBytes += Number(size) || 0;
+          }
+        }
+
+        if (data.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+        }
+      }
+    }
+
+    return { count: fileCount, bytes: totalBytes };
+  } catch (err: any) {
+    return { count: fileCount, bytes: totalBytes, error: err?.message || 'Unknown storage measurement error' };
+  }
+}
+
 export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClient, onUnauthorized }) => {
   const [activeTab, setActiveTab] = useState<ManagerTab>('catalogue');
   const [activeCategory, setActiveCategory] = useState<CloudCategoryKey>('jtec_main');
@@ -123,7 +196,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     loadCatalogSongs();
   }, [loadCatalogSongs]);
 
-  // Load storage statistics for all 3 projects independently
+  // Load storage statistics for all 3 projects independently with recursive measurement & error reporting
   const loadAllStorageStats = useCallback(async () => {
     setIsRefreshingStorage(true);
     const categories: CloudCategoryKey[] = ['jtec_main', 'nasheed', 'love_chill'];
@@ -146,33 +219,41 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
           totalBytes: 0,
           recentUploads: [],
           isLoading: false,
+          error: 'Project unconfigured (missing VITE URL/Key)',
         };
         continue;
       }
 
-      updated[catKey] = { ...updated[catKey], isLoading: true };
+      updated[catKey] = { ...updated[catKey], isLoading: true, error: undefined };
       setStorageStats({ ...updated });
 
       try {
         const client = SupabaseService.getClientForCategory(catKey);
         if (!client) throw new Error('Client unavailable');
 
-        // List music bucket objects
-        const { data: musicFiles } = await client.storage.from(cfg.bucket || BUCKET_MUSIC).list('tracks', { limit: 500 });
-        const musicList = musicFiles || [];
-        const musicBytes = musicList.reduce((acc, f) => acc + (f.metadata?.size || 0), 0);
+        // Measure music bucket recursively
+        const musicBucketName = cfg.bucket || BUCKET_MUSIC;
+        const musicRes = await measureBucketStorageRecursive(client, musicBucketName);
+        if (musicRes.error) {
+          throw new Error(`Music bucket error: ${musicRes.error}`);
+        }
 
-        // List artwork bucket objects
-        const { data: artworkFiles } = await client.storage.from(BUCKET_ARTWORK).list('covers', { limit: 500 });
-        const artworkList = artworkFiles || [];
-        const artworkBytes = artworkList.reduce((acc, f) => acc + (f.metadata?.size || 0), 0);
+        // Measure artwork bucket recursively
+        const artworkRes = await measureBucketStorageRecursive(client, BUCKET_ARTWORK);
+        if (artworkRes.error) {
+          throw new Error(`Artwork bucket error: ${artworkRes.error}`);
+        }
 
-        // Fetch song records for recent uploads
-        const { data: songRows } = await client
+        // Fetch song records for recent uploads with explicit error checking
+        const { data: songRows, error: dbErr } = await client
           .from(cfg.tableName || 'songs')
           .select('title, artist, created_at, file_size')
           .order('created_at', { ascending: false })
           .limit(5);
+
+        if (dbErr) {
+          throw new Error(`Database query failed: ${dbErr.message}`);
+        }
 
         const recentUploads = (songRows || []).map((r) => ({
           title: r.title || 'Untitled',
@@ -185,19 +266,27 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
           categoryKey: catKey,
           projectName,
           isConfigured: true,
-          musicFilesCount: musicList.length,
-          musicBytes,
-          artworkFilesCount: artworkList.length,
-          artworkBytes,
-          totalBytes: musicBytes + artworkBytes,
+          musicFilesCount: musicRes.count,
+          musicBytes: musicRes.bytes,
+          artworkFilesCount: artworkRes.count,
+          artworkBytes: artworkRes.bytes,
+          totalBytes: musicRes.bytes + artworkRes.bytes,
           recentUploads,
           isLoading: false,
         };
       } catch (err: any) {
         updated[catKey] = {
-          ...updated[catKey],
+          categoryKey: catKey,
+          projectName,
+          isConfigured: true,
+          musicFilesCount: 0,
+          musicBytes: 0,
+          artworkFilesCount: 0,
+          artworkBytes: 0,
+          totalBytes: 0,
+          recentUploads: [],
           isLoading: false,
-          error: sanitizeSecretText(err?.message || 'Failed to load storage stats'),
+          error: sanitizeSecretText(err?.message || 'Failed to measure storage'),
         };
       }
     }
@@ -255,7 +344,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     }
   };
 
-  // Execute Upload to Supabase Storage & Database
+  // Execute Upload to Supabase Storage & Database with project-specific client & session verification
   const handleExecuteUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!audioFileToUpload || !uploadTitle.trim()) {
@@ -265,28 +354,31 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
 
     setIsUploading(true);
     setErrorMsg(null);
-    setUploadProgressText('Verifying admin session...');
+    setUploadProgressText('Verifying admin session for project...');
+    let uploadedAudioPath: string | null = null;
+    let uploadedCoverPath: string | null = null;
 
     try {
-      const authCheck = await assertActiveAdminSession(adminClient);
-      if (!authCheck.ok) {
-        onUnauthorized();
-        throw new Error(authCheck.reason || 'Admin session expired or missing AAL2 2FA.');
-      }
-
       const client = SupabaseService.getClientForCategory(activeCategory);
       if (!client) {
         throw new Error(`Supabase project for ${activeCategory} is not configured.`);
       }
 
+      // Independently verify active admin session & AAL2 on the target project's client
+      const authCheck = await assertActiveAdminSession(client);
+      if (!authCheck.ok) {
+        onUnauthorized();
+        throw new Error(authCheck.reason || `Admin session expired or missing AAL2 2FA for ${activeCategory}.`);
+      }
+
       const timestamp = Date.now();
       const cleanAudioName = audioFileToUpload.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
-      const audioStoragePath = `tracks/${timestamp}_${cleanAudioName}`;
+      uploadedAudioPath = `tracks/${timestamp}_${cleanAudioName}`;
 
       setUploadProgressText('Uploading audio file to storage...');
       const { error: audioUploadErr } = await client.storage
         .from(categoryConfig.bucket || BUCKET_MUSIC)
-        .upload(audioStoragePath, audioFileToUpload, {
+        .upload(uploadedAudioPath, audioFileToUpload, {
           cacheControl: '3600',
           upsert: false,
         });
@@ -297,17 +389,17 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
 
       const { data: audioPublicUrlData } = client.storage
         .from(categoryConfig.bucket || BUCKET_MUSIC)
-        .getPublicUrl(audioStoragePath);
+        .getPublicUrl(uploadedAudioPath);
       const audioPublicUrl = audioPublicUrlData?.publicUrl || '';
 
       let artworkPublicUrl = previewCoverUrl;
 
       if (coverFileToUpload) {
         setUploadProgressText('Uploading cover artwork to storage...');
-        const coverStoragePath = `covers/${timestamp}_cover.jpg`;
+        uploadedCoverPath = `covers/${timestamp}_cover.jpg`;
         const { error: coverUploadErr } = await client.storage
           .from(BUCKET_ARTWORK)
-          .upload(coverStoragePath, coverFileToUpload, {
+          .upload(uploadedCoverPath, coverFileToUpload, {
             cacheControl: '3600',
             upsert: true,
           });
@@ -315,7 +407,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
         if (!coverUploadErr) {
           const { data: coverUrlData } = client.storage
             .from(BUCKET_ARTWORK)
-            .getPublicUrl(coverStoragePath);
+            .getPublicUrl(uploadedCoverPath);
           if (coverUrlData?.publicUrl) {
             artworkPublicUrl = coverUrlData.publicUrl;
           }
@@ -332,7 +424,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
           genre: uploadGenre.trim() || 'Music',
           duration: uploadDuration || 0,
           file_name: audioFileToUpload.name,
-          file_path: audioStoragePath,
+          file_path: uploadedAudioPath,
           file_size: audioFileToUpload.size,
           audio_url: audioPublicUrl,
           cover_url: artworkPublicUrl,
@@ -340,7 +432,13 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
         });
 
       if (dbInsertErr) {
-        await client.storage.from(categoryConfig.bucket || BUCKET_MUSIC).remove([audioStoragePath]).catch(() => {});
+        // Safe cleanup: remove orphaned storage files if database insert failed
+        if (uploadedAudioPath) {
+          await client.storage.from(categoryConfig.bucket || BUCKET_MUSIC).remove([uploadedAudioPath]).catch(() => {});
+        }
+        if (uploadedCoverPath) {
+          await client.storage.from(BUCKET_ARTWORK).remove([uploadedCoverPath]).catch(() => {});
+        }
         throw new Error(`Database insert failed: ${dbInsertErr.message}`);
       }
 
@@ -361,7 +459,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     }
   };
 
-  // Save Edit Metadata
+  // Save Edit Metadata with project-specific client & session verification
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSong || !editTitle.trim()) return;
@@ -370,14 +468,14 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     setErrorMsg(null);
 
     try {
-      const authCheck = await assertActiveAdminSession(adminClient);
+      const client = SupabaseService.getClientForCategory(activeCategory);
+      if (!client) throw new Error('Client unavailable.');
+
+      const authCheck = await assertActiveAdminSession(client);
       if (!authCheck.ok) {
         onUnauthorized();
         throw new Error(authCheck.reason || 'Admin session expired.');
       }
-
-      const client = SupabaseService.getClientForCategory(activeCategory);
-      if (!client) throw new Error('Client unavailable.');
 
       const { error } = await client
         .from(categoryConfig.tableName || 'songs')
@@ -402,23 +500,24 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     }
   };
 
-  // Replace Audio File for Existing Song
+  // Replace Audio File for Existing Song with project-specific client & cleanup on failure
   const handleReplaceAudioFile = async (song: CloudSong, file: File) => {
     setIsProcessingFile(true);
     setErrorMsg(null);
+    let newPath: string | null = null;
     try {
-      const authCheck = await assertActiveAdminSession(adminClient);
+      const client = SupabaseService.getClientForCategory(activeCategory);
+      if (!client) throw new Error('Client unavailable.');
+
+      const authCheck = await assertActiveAdminSession(client);
       if (!authCheck.ok) {
         onUnauthorized();
         throw new Error(authCheck.reason || 'Admin session expired.');
       }
 
-      const client = SupabaseService.getClientForCategory(activeCategory);
-      if (!client) throw new Error('Client unavailable.');
-
       const timestamp = Date.now();
       const cleanName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
-      const newPath = `tracks/${timestamp}_${cleanName}`;
+      newPath = `tracks/${timestamp}_${cleanName}`;
 
       const { error: uploadErr } = await client.storage
         .from(categoryConfig.bucket || BUCKET_MUSIC)
@@ -444,7 +543,12 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
         })
         .eq('id', song.id);
 
-      if (dbErr) throw new Error(dbErr.message);
+      if (dbErr) {
+        if (newPath) {
+          await client.storage.from(categoryConfig.bucket || BUCKET_MUSIC).remove([newPath]).catch(() => {});
+        }
+        throw new Error(dbErr.message);
+      }
 
       if (song.file_path && song.file_path !== newPath) {
         await client.storage.from(categoryConfig.bucket || BUCKET_MUSIC).remove([song.file_path]).catch(() => {});
@@ -460,19 +564,19 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     }
   };
 
-  // Replace Cover Image for Existing Song
+  // Replace Cover Image for Existing Song with project-specific client
   const handleReplaceCoverImage = async (song: CloudSong, file: File) => {
     setIsProcessingFile(true);
     setErrorMsg(null);
     try {
-      const authCheck = await assertActiveAdminSession(adminClient);
+      const client = SupabaseService.getClientForCategory(activeCategory);
+      if (!client) throw new Error('Client unavailable.');
+
+      const authCheck = await assertActiveAdminSession(client);
       if (!authCheck.ok) {
         onUnauthorized();
         throw new Error(authCheck.reason || 'Admin session expired.');
       }
-
-      const client = SupabaseService.getClientForCategory(activeCategory);
-      if (!client) throw new Error('Client unavailable.');
 
       const jpegDataUrl = await resizeImageToJpegDataUrl(file, 512, 0.85);
       const timestamp = Date.now();
@@ -510,21 +614,21 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
     }
   };
 
-  // Delete Song & Associated Storage Files
+  // Delete Song & Associated Storage Files with project-specific client
   const handleConfirmDelete = async () => {
     if (!songToDelete) return;
     setIsDeleting(true);
     setErrorMsg(null);
 
     try {
-      const authCheck = await assertActiveAdminSession(adminClient);
+      const client = SupabaseService.getClientForCategory(activeCategory);
+      if (!client) throw new Error('Client unavailable.');
+
+      const authCheck = await assertActiveAdminSession(client);
       if (!authCheck.ok) {
         onUnauthorized();
         throw new Error(authCheck.reason || 'Admin session expired.');
       }
-
-      const client = SupabaseService.getClientForCategory(activeCategory);
-      if (!client) throw new Error('Client unavailable.');
 
       const { error: dbErr } = await client
         .from(categoryConfig.tableName || 'songs')
@@ -854,7 +958,7 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
                 <span>Independent Supabase Storage Monitor</span>
               </h4>
               <p className="text-xs text-slate-400 mt-1">
-                Real-time measured storage consumption, file counts, and breakdown across all three isolated music projects.
+                Real-time measured storage consumption, complete recursive pagination across all folders, file counts, and breakdown across all three isolated music projects.
               </p>
             </div>
 
@@ -874,11 +978,6 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
               const stats = storageStats[catKey];
               const meta = CLOUD_CATEGORIES.find((c) => c.key === catKey);
 
-              // Calculate percentages & warnings
-              const maxRecommendedBytes = 500 * 1024 * 1024; // 500MB free tier baseline for visualization
-              const usagePercent = Math.min(100, Math.round((stats.totalBytes / maxRecommendedBytes) * 100));
-              const isWarning = usagePercent > 80;
-
               return (
                 <div
                   key={catKey}
@@ -891,20 +990,25 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
                         <h5 className="text-base font-bold text-white">{stats.projectName}</h5>
                       </div>
                       <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border uppercase tracking-wider ${
-                        stats.isConfigured ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35' : 'bg-amber-500/15 text-amber-300 border-amber-500/35'
+                        !stats.isConfigured ? 'bg-amber-500/15 text-amber-300 border-amber-500/35' : stats.error ? 'bg-rose-500/15 text-rose-300 border-rose-500/35' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
                       }`}>
-                        {stats.isConfigured ? 'Active' : 'Unconfigured'}
+                        {!stats.isConfigured ? 'Unconfigured' : stats.error ? 'Failed' : 'Successful'}
                       </span>
                     </div>
 
                     {stats.isLoading ? (
                       <div className="p-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-                        <span>Measuring storage...</span>
+                        <span>Measuring storage across all folders...</span>
                       </div>
                     ) : stats.error ? (
-                      <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/35 text-xs text-rose-200">
-                        {stats.error}
+                      <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/35 text-xs text-rose-200 space-y-1">
+                        <p className="font-bold">Storage Error:</p>
+                        <p>{stats.error}</p>
+                      </div>
+                    ) : !stats.isConfigured ? (
+                      <div className="p-6 text-center text-xs text-slate-400">
+                        Project environment variables are not configured.
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -914,33 +1018,26 @@ export const MusicManagerPanel: React.FC<MusicManagerPanelProps> = ({ adminClien
                           <div className="text-2xl font-black text-white font-mono tracking-tight">
                             {formatBytes(stats.totalBytes)}
                           </div>
-                          <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                            <span>Usage vs 500MB baseline</span>
-                            <span className={isWarning ? 'text-rose-400 font-bold' : 'text-cyan-300 font-semibold'}>{usagePercent}%</span>
-                          </div>
-                          <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden mt-1">
-                            <div 
-                              className={`h-full transition-all duration-500 ${isWarning ? 'bg-rose-500' : 'bg-cyan-400'}`}
-                              style={{ width: `${Math.max(3, usagePercent)}%` }}
-                            />
-                          </div>
+                          <span className="text-[11px] text-cyan-300 block">
+                            {stats.musicFilesCount + stats.artworkFilesCount} total files indexed
+                          </span>
                         </div>
 
                         {/* Breakdown per bucket */}
                         <div className="grid grid-cols-2 gap-3 text-xs">
                           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                            <span className="text-[11px] text-slate-400 block">Music Tracks ({stats.musicFilesCount})</span>
+                            <span className="text-[11px] text-slate-400 block">Music Bucket ({stats.musicFilesCount} files)</span>
                             <span className="font-mono text-sm font-bold text-slate-200 block">{formatBytes(stats.musicBytes)}</span>
                           </div>
                           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                            <span className="text-[11px] text-slate-400 block">Artwork Covers ({stats.artworkFilesCount})</span>
+                            <span className="text-[11px] text-slate-400 block">Artwork Bucket ({stats.artworkFilesCount} files)</span>
                             <span className="font-mono text-sm font-bold text-slate-200 block">{formatBytes(stats.artworkBytes)}</span>
                           </div>
                         </div>
 
                         {/* Recent Upload Activity */}
                         <div className="space-y-2 pt-2 border-t border-slate-800">
-                          <span className="text-xs font-bold text-slate-300 block">Recent Uploads</span>
+                          <span className="text-xs font-bold text-slate-300 block">Recent Upload Activity</span>
                           {stats.recentUploads.length === 0 ? (
                             <p className="text-xs text-slate-500 italic">No upload activity recorded yet.</p>
                           ) : (

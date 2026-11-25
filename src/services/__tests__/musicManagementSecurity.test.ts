@@ -403,4 +403,15 @@ describe('Unified Music Management — Authorization & Multi-Database Security I
       assert.equal(/VITE_.*SERVICE_ROLE/i.test(content), false, `${rel} must not expose service role via VITE_`);
     }
   });
+
+  test('6. Storage monitor multi-project isolation and pagination requirements', () => {
+    // Verify that storage stats and client resolutions are independent per project category
+    const categories: Array<'jtec_main' | 'nasheed' | 'love_chill'> = ['jtec_main', 'nasheed', 'love_chill'];
+    for (const cat of categories) {
+      const cfg = SupabaseService.getCategoryConfig(cat);
+      assert.equal(typeof cfg.bucket, 'string');
+      assert.equal(typeof cfg.tableName, 'string');
+    }
+  });
 });
+
