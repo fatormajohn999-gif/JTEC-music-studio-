@@ -241,10 +241,14 @@ export async function setAdminStaySignedIn(enabled: boolean): Promise<void> {
   } catch {}
 }
 
-export async function clearAdminAuthTokens(scope: 'global' | 'local' = 'local'): Promise<void> {
+export async function clearAdminAuthTokens(
+  scope: 'global' | 'local' = 'local',
+  client?: SupabaseClient | null
+): Promise<void> {
+  const targetClient = client ?? jtecAdminClient;
   try {
-    if (jtecAdminClient) {
-      await jtecAdminClient.auth.signOut({ scope });
+    if (targetClient) {
+      await targetClient.auth.signOut({ scope });
     }
   } catch {}
   const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();

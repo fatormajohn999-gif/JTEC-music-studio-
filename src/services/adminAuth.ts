@@ -19,20 +19,23 @@ const BASE_LOCKOUT_MS = 30 * 1000; // 30 seconds initial lockout after 5 failure
 
 export type AdminAuthStage =
   | 'unauthenticated'
+  | 'mfa_enrollment_required'
   | 'mfa_required'
   | 'authorized'
   | 'denied';
 
 export type ServerEnforcementMode =
   | 'enforced'
-  | 'transition_missing_sql';
+  | 'unavailable';
 
 export interface AdminVerifyRpcResponse {
   is_admin: boolean;
   is_anonymous?: boolean;
+  is_active?: boolean;
   role?: string | null;
   mfa_required?: boolean;
   has_verified_mfa?: boolean;
+  needs_mfa_enrollment?: boolean;
   current_aal?: string | null;
   aal_enforced?: boolean;
   user_id?: string;
@@ -47,6 +50,7 @@ export interface AdminAuthResult {
   assuranceLevel: 'aal1' | 'aal2' | null;
   nextAssuranceLevel: 'aal1' | 'aal2' | null;
   hasVerifiedMfa: boolean;
+  needsMfaEnrollment: boolean;
   totpFactors: Factor[];
   enforcementMode: ServerEnforcementMode;
   reason: string | null;
@@ -90,6 +94,25 @@ function recordFailedLoginAttempt(): number {
     lockoutUntilMs = Date.now() + BASE_LOCKOUT_MS * multiplier;
   }
   return getAdminLoginCooldownRemainingMs();
+}
+
+function makeClosedResult(
+  stage: 'unauthenticated' | 'denied',
+  reason: string | null,
+  enforcementMode: ServerEnforcementMode = 'enforced'
+): AdminAuthResult {
+  return {
+    stage,
+    session: null,
+    user: null,
+    assuranceLevel: null,
+    nextAssuranceLevel: null,
+    hasVerifiedMfa: false,
+    needsMfaEnrollment: false,
+    totpFactors: [],
+    enforcementMode,
+    reason,
+  };
 }
 
 /**
@@ -174,25 +197,18 @@ export function toSafeQrImageSrc(rawQrCode: string): string {
 }
 
 /**
- * Validates and authorizes the current admin session against the Supabase Auth server
- * and trusted database layer (`verify_admin_access` RPC + MFA Assurance Level).
+ * Validates and authorizes the current admin session against Supabase Auth
+ * and `public.verify_admin_access()` (`public.admin_users` + mandatory TOTP AAL2).
+ *
+ * Strictly fail-closed: any missing RPC, network error, permission error,
+ * MFA verification error, or unexpected payload clears tokens and denies access.
  */
 export async function verifyAdminAuthorization(
   client: SupabaseClient | null,
   options: { checkInactivity?: boolean } = {}
 ): Promise<AdminAuthResult> {
   if (!client) {
-    return {
-      stage: 'unauthenticated',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'transition_missing_sql',
-      reason: 'Admin client is not configured.',
-    };
+    return makeClosedResult('denied', 'Admin client is not configured.', 'unavailable');
   }
 
   try {
@@ -204,49 +220,23 @@ export async function verifyAdminAuthorization(
       : ADMIN_SESSION_MAX_AGE_NON_PERSISTENT_MS;
 
     if (lastOpened && Date.now() - lastOpened > maxAllowedAge) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'unauthenticated',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'transition_missing_sql',
-        reason: 'Admin session expired due to inactivity.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('unauthenticated', 'Admin session expired due to inactivity.');
     }
 
     if (options.checkInactivity && Date.now() - lastActiveInteractionMs > ADMIN_IDLE_TIMEOUT_MS) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'unauthenticated',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'transition_missing_sql',
-        reason: 'Session locked after 30 minutes of inactivity.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('unauthenticated', 'Session locked after 30 minutes of inactivity.');
     }
 
     // 2. Read current local session
     const { data: sessionData, error: sessionErr } = await client.auth.getSession();
-    if (sessionErr || !sessionData?.session) {
-      return {
-        stage: 'unauthenticated',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'transition_missing_sql',
-        reason: null,
-      };
+    if (sessionErr) {
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('denied', sanitizeSecretText(sessionErr.message) || 'Failed to read admin session.');
+    }
+    if (!sessionData?.session) {
+      return makeClosedResult('unauthenticated', null);
     }
 
     let activeSession = sessionData.session;
@@ -256,18 +246,8 @@ export async function verifyAdminAuthorization(
     if (expiresAtMs > 0 && expiresAtMs <= Date.now() + ADMIN_TOKEN_REFRESH_BUFFER_MS) {
       const { data: refreshData, error: refreshErr } = await client.auth.refreshSession();
       if (refreshErr || !refreshData?.session) {
-        await clearAdminAuthTokens('local');
-        return {
-          stage: 'unauthenticated',
-          session: null,
-          user: null,
-          assuranceLevel: null,
-          nextAssuranceLevel: null,
-          hasVerifiedMfa: false,
-          totpFactors: [],
-          enforcementMode: 'transition_missing_sql',
-          reason: 'Session expired. Please sign in again.',
-        };
+        await clearAdminAuthTokens('local', client);
+        return makeClosedResult('unauthenticated', 'Session expired. Please sign in again.');
       }
       activeSession = refreshData.session;
     }
@@ -276,192 +256,134 @@ export async function verifyAdminAuthorization(
     const { data: userData, error: userErr } = await client.auth.getUser(activeSession.access_token);
     const verifiedUser = userData?.user;
     if (userErr || !verifiedUser) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'unauthenticated',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'transition_missing_sql',
-        reason: 'Session is no longer valid. Please sign in again.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('unauthenticated', 'Session is no longer valid. Please sign in again.');
     }
 
-    // 5. Inspect MFA assurance level & factors
-    let assuranceLevel: 'aal1' | 'aal2' | null = 'aal1';
-    let nextAssuranceLevel: 'aal1' | 'aal2' | null = 'aal1';
+    // 5. Inspect MFA assurance level & factors — fail closed on any error
+    let assuranceLevel: 'aal1' | 'aal2' | null = null;
+    let nextAssuranceLevel: 'aal1' | 'aal2' | null = null;
     let amrMethods: Array<string | { method?: string }> = [];
     let verifiedTotpFactors: Factor[] = [];
 
     try {
-      const { data: aalData } = await client.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aalData) {
-        assuranceLevel = (aalData.currentLevel as 'aal1' | 'aal2') || 'aal1';
-        nextAssuranceLevel = (aalData.nextLevel as 'aal1' | 'aal2') || 'aal1';
-        amrMethods = Array.isArray(aalData.currentAuthenticationMethods)
-          ? aalData.currentAuthenticationMethods
-          : [];
+      const { data: aalData, error: aalErr } = await client.auth.mfa.getAuthenticatorAssuranceLevel();
+      const { data: factorsData, error: factorsErr } = await client.auth.mfa.listFactors();
+
+      if (aalErr || factorsErr || !aalData) {
+        await clearAdminAuthTokens('local', client);
+        return makeClosedResult(
+          'denied',
+          sanitizeSecretText(aalErr?.message || factorsErr?.message) ||
+            'Could not verify multi-factor authentication status. Access denied.'
+        );
       }
-      const { data: factorsData } = await client.auth.mfa.listFactors();
-      if (factorsData?.totp) {
-        verifiedTotpFactors = factorsData.totp.filter((f) => f.status === 'verified');
-      }
-    } catch {
-      // MFA API errors fall back to session AAL claims if present
+
+      assuranceLevel = (aalData.currentLevel as 'aal1' | 'aal2') || 'aal1';
+      nextAssuranceLevel = (aalData.nextLevel as 'aal1' | 'aal2') || 'aal1';
+      amrMethods = Array.isArray(aalData.currentAuthenticationMethods)
+        ? aalData.currentAuthenticationMethods
+        : [];
+
+      const rawTotp = Array.isArray(factorsData?.totp) ? factorsData.totp : [];
+      verifiedTotpFactors = rawTotp.filter((f) => f.status === 'verified');
+    } catch (mfaErr) {
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult(
+        'denied',
+        sanitizeSecretText(mfaErr) || 'Failed to inspect multi-factor authentication factors. Access denied.'
+      );
     }
 
     // 6. Strictly reject anonymous or unconfirmed accounts
     if (isAnonymousUser(verifiedUser, amrMethods)) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'denied',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'enforced',
-        reason: 'Anonymous accounts are never permitted to access admin controls.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('denied', 'Anonymous accounts are never permitted to access admin controls.');
     }
 
     if (!verifiedUser.email || !verifiedUser.email_confirmed_at) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'denied',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'enforced',
-        reason: 'Admin account email must be verified.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('denied', 'Admin account email must be verified.');
     }
 
     // 7. Enforce optional build-time email allowlist if configured
     const envAllowlist = getAllowedAdminEmailsFromEnv();
     if (envAllowlist.length > 0 && !envAllowlist.includes(verifiedUser.email.toLowerCase())) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'denied',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'enforced',
-        reason: 'This account is not in the authorized administrator allowlist.',
-      };
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('denied', 'This account is not in the authorized administrator allowlist.');
     }
 
     // 8. Verify admin authorization at the trusted database layer (verify_admin_access RPC)
-    let enforcementMode: ServerEnforcementMode = 'enforced';
-    let serverMfaRequired = false;
+    //    `public.admin_users` is authoritative; ALL missing/network/permission/unexpected errors fail closed.
     const { data: rpcData, error: rpcError } = await client.rpc('verify_admin_access');
 
-    if (!rpcError && rpcData) {
-      const result = rpcData as AdminVerifyRpcResponse;
-      if (result.is_admin !== true || result.is_anonymous === true) {
-        await clearAdminAuthTokens('local');
-        return {
-          stage: 'denied',
-          session: null,
-          user: null,
-          assuranceLevel: null,
-          nextAssuranceLevel: null,
-          hasVerifiedMfa: false,
-          totpFactors: [],
-          enforcementMode: 'enforced',
-          reason: result.reason || 'Access denied: account is not an authorized JTEC administrator.',
-        };
+    if (rpcError) {
+      await clearAdminAuthTokens('local', client);
+      if (isRpcMissingError(rpcError)) {
+        return makeClosedResult(
+          'denied',
+          'Server admin verification RPC (verify_admin_access) is not installed on jtec_main. Apply 001_secure_admin_auth.sql in Supabase SQL Editor.',
+          'unavailable'
+        );
       }
-      serverMfaRequired = Boolean(result.mfa_required);
-    } else if (rpcError && isPermissionDeniedError(rpcError)) {
-      await clearAdminAuthTokens('local');
+      if (isPermissionDeniedError(rpcError)) {
+        return makeClosedResult('denied', 'Access denied by server authorization policy.');
+      }
+      return makeClosedResult(
+        'denied',
+        sanitizeSecretText(rpcError.message) || 'Authorization check failed on server. Access denied.',
+        'unavailable'
+      );
+    }
+
+    if (!rpcData || typeof rpcData !== 'object') {
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult('denied', 'Unexpected server authorization response. Access denied.');
+    }
+
+    const result = rpcData as AdminVerifyRpcResponse;
+    if (result.is_admin !== true || result.is_anonymous === true || result.is_active === false) {
+      await clearAdminAuthTokens('local', client);
+      return makeClosedResult(
+        'denied',
+        result.reason || 'Access denied: account is deactivated or not an authorized JTEC administrator.'
+      );
+    }
+
+    // 9. Enforce MANDATORY TOTP MFA (AAL2) for EVERY administrator — zero AAL1 bypass
+    const hasVerifiedMfa = verifiedTotpFactors.length > 0 && result.needs_mfa_enrollment !== true;
+
+    if (!hasVerifiedMfa) {
       return {
-        stage: 'denied',
+        stage: 'mfa_enrollment_required',
         session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
+        user: verifiedUser,
+        assuranceLevel,
+        nextAssuranceLevel: 'aal2',
         hasVerifiedMfa: false,
+        needsMfaEnrollment: true,
         totpFactors: [],
         enforcementMode: 'enforced',
-        reason: 'Access denied by server authorization policy.',
-      };
-    } else if (rpcError && isRpcMissingError(rpcError)) {
-      // Transition path ONLY when the SQL migration has not yet been installed in Supabase.
-      // Never use public app_config SELECT for authorization; probe protected app_installs instead.
-      enforcementMode = 'transition_missing_sql';
-      const hasTrustedAppMetaRole =
-        verifiedUser.app_metadata?.role === 'admin' ||
-        verifiedUser.app_metadata?.is_admin === true;
-
-      if (!hasTrustedAppMetaRole) {
-        const { error: installsProbeErr } = await client
-          .from('app_installs')
-          .select('install_id', { count: 'exact', head: true })
-          .limit(1);
-
-        if (installsProbeErr && isPermissionDeniedError(installsProbeErr)) {
-          await clearAdminAuthTokens('local');
-          return {
-            stage: 'denied',
-            session: null,
-            user: null,
-            assuranceLevel: null,
-            nextAssuranceLevel: null,
-            hasVerifiedMfa: false,
-            totpFactors: [],
-            enforcementMode,
-            reason: 'Access denied: missing administrator permissions.',
-          };
-        }
-      }
-    } else if (rpcError) {
-      await clearAdminAuthTokens('local');
-      return {
-        stage: 'denied',
-        session: null,
-        user: null,
-        assuranceLevel: null,
-        nextAssuranceLevel: null,
-        hasVerifiedMfa: false,
-        totpFactors: [],
-        enforcementMode: 'enforced',
-        reason: sanitizeSecretText(rpcError.message) || 'Could not verify administrator permissions.',
+        reason: 'Two-factor authentication (TOTP) enrollment is required before accessing admin operations.',
       };
     }
 
-    // 9. Enforce MFA (aal2) before unlocking Portal if TOTP is enrolled or required
-    const hasVerifiedMfa = verifiedTotpFactors.length > 0;
-    const needsMfaStep =
-      (hasVerifiedMfa && assuranceLevel !== 'aal2') ||
-      (serverMfaRequired && assuranceLevel !== 'aal2') ||
-      (nextAssuranceLevel === 'aal2' && assuranceLevel !== 'aal2');
-
-    if (needsMfaStep) {
+    if (assuranceLevel !== 'aal2' || result.current_aal === 'aal1') {
       return {
         stage: 'mfa_required',
-        session: activeSession,
+        session: null,
         user: verifiedUser,
         assuranceLevel,
-        nextAssuranceLevel,
-        hasVerifiedMfa,
+        nextAssuranceLevel: 'aal2',
+        hasVerifiedMfa: true,
+        needsMfaEnrollment: false,
         totpFactors: verifiedTotpFactors,
-        enforcementMode,
+        enforcementMode: 'enforced',
         reason: null,
       };
     }
 
-    // 10. All checks passed! Update activity timestamps
+    // 10. All checks passed (active admin_users row + verified TOTP + AAL2)! Update activity timestamps
     await setAdminLastOpened(Date.now());
     touchAdminActivity();
 
@@ -469,30 +391,22 @@ export async function verifyAdminAuthorization(
       stage: 'authorized',
       session: activeSession,
       user: verifiedUser,
-      assuranceLevel,
-      nextAssuranceLevel,
-      hasVerifiedMfa,
+      assuranceLevel: 'aal2',
+      nextAssuranceLevel: 'aal2',
+      hasVerifiedMfa: true,
+      needsMfaEnrollment: false,
       totpFactors: verifiedTotpFactors,
-      enforcementMode,
+      enforcementMode: 'enforced',
       reason: null,
     };
   } catch (err) {
-    return {
-      stage: 'unauthenticated',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'enforced',
-      reason: sanitizeSecretText(err) || 'Session verification error.',
-    };
+    await clearAdminAuthTokens('local', client).catch(() => {});
+    return makeClosedResult('denied', sanitizeSecretText(err) || 'Session verification error. Access denied.');
   }
 }
 
 /**
- * Performs email/password sign-in followed by strict server-verified admin & MFA checks.
+ * Performs email/password sign-in followed by strict server-verified admin & mandatory MFA checks.
  */
 export async function signInAdminWithPassword(
   client: SupabaseClient | null,
@@ -503,31 +417,11 @@ export async function signInAdminWithPassword(
   const cooldownMs = getAdminLoginCooldownRemainingMs();
   if (cooldownMs > 0) {
     const secs = Math.ceil(cooldownMs / 1000);
-    return {
-      stage: 'denied',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'enforced',
-      reason: `Too many failed sign-in attempts. Wait ${secs}s before trying again.`,
-    };
+    return makeClosedResult('denied', `Too many failed sign-in attempts. Wait ${secs}s before trying again.`);
   }
 
   if (!client || !email.trim() || !password) {
-    return {
-      stage: 'denied',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'enforced',
-      reason: 'Please enter a valid email and password.',
-    };
+    return makeClosedResult('denied', 'Please enter a valid email and password.');
   }
 
   // Persist staySignedIn preference BEFORE creating the session so the storage adapter
@@ -543,26 +437,22 @@ export async function signInAdminWithPassword(
 
   if (error || !data.session) {
     const waitMs = recordFailedLoginAttempt();
-    await clearAdminAuthTokens('local');
+    await clearAdminAuthTokens('local', client);
     const baseMsg = 'Invalid credentials or unauthorized account.';
-    return {
-      stage: 'denied',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'enforced',
-      reason:
-        waitMs > 0
-          ? `${baseMsg} Too many attempts — locked for ${Math.ceil(waitMs / 1000)}s.`
-          : baseMsg,
-    };
+    return makeClosedResult(
+      'denied',
+      waitMs > 0
+        ? `${baseMsg} Too many attempts — locked for ${Math.ceil(waitMs / 1000)}s.`
+        : baseMsg
+    );
   }
 
   const authResult = await verifyAdminAuthorization(client, { checkInactivity: false });
-  if (authResult.stage === 'authorized' || authResult.stage === 'mfa_required') {
+  if (
+    authResult.stage === 'authorized' ||
+    authResult.stage === 'mfa_required' ||
+    authResult.stage === 'mfa_enrollment_required'
+  ) {
     resetAdminLoginThrottle();
     if (authResult.stage === 'authorized') {
       await recordAdminAuditEvent(client, 'admin_login_verified', {
@@ -587,17 +477,7 @@ export async function verifyAdminMfaChallenge(
   rawCode: string
 ): Promise<AdminAuthResult> {
   if (!client) {
-    return {
-      stage: 'unauthenticated',
-      session: null,
-      user: null,
-      assuranceLevel: null,
-      nextAssuranceLevel: null,
-      hasVerifiedMfa: false,
-      totpFactors: [],
-      enforcementMode: 'enforced',
-      reason: 'Admin client is unavailable.',
-    };
+    return makeClosedResult('denied', 'Admin client is unavailable.', 'unavailable');
   }
 
   const cleanCode = rawCode.replace(/\s+/g, '');
@@ -609,6 +489,7 @@ export async function verifyAdminMfaChallenge(
       assuranceLevel: 'aal1',
       nextAssuranceLevel: 'aal2',
       hasVerifiedMfa: true,
+      needsMfaEnrollment: false,
       totpFactors: [],
       enforcementMode: 'enforced',
       reason: 'Enter the 6-digit code from your authenticator app.',
@@ -629,6 +510,7 @@ export async function verifyAdminMfaChallenge(
       assuranceLevel: 'aal1',
       nextAssuranceLevel: 'aal2',
       hasVerifiedMfa: true,
+      needsMfaEnrollment: false,
       totpFactors: [],
       enforcementMode: 'enforced',
       reason: 'Invalid or expired authenticator code. Try the latest 6-digit code.',
@@ -665,7 +547,7 @@ export async function enrollAdminTotpMfa(
       await client.auth.mfa.unenroll({ factorId: stale.id }).catch(() => {});
     }
   } catch {
-    // proceed to enroll
+    // proceed to enroll attempt; Supabase Auth enforces session validity
   }
 
   const uniqueName = `${friendlyName} (${new Date().toISOString().slice(0, 10)})`;
@@ -747,13 +629,13 @@ export async function unenrollAdminTotpMfa(
     };
   }
 
-  await recordAdminAuditEvent(client, 'admin_mfa_unenrolled', { factor_id: factorId });
+  await recordAdminAuditEvent(client, 'admin_mfa_unenrolled', { factor_id: factorId }).catch(() => {});
   return { success: true, error: null };
 }
 
 /**
  * Pre-flight session check executed immediately before any sensitive admin write operation.
- * Ensures the session is non-anonymous, not expired, not idle-timed-out, and at AAL2 if MFA is enrolled.
+ * Ensures the session is non-anonymous, active in `admin_users`, not expired/idle, and at AAL2.
  */
 export async function assertActiveAdminSession(client: SupabaseClient | null): Promise<{
   ok: boolean;
@@ -763,7 +645,7 @@ export async function assertActiveAdminSession(client: SupabaseClient | null): P
   if (result.stage !== 'authorized') {
     return {
       ok: false,
-      reason: result.reason || 'Admin session expired or lacks authorization. Please re-authenticate.',
+      reason: result.reason || 'Admin session expired, missing 2FA (AAL2), or lacks authorization.',
     };
   }
   touchAdminActivity();
@@ -780,11 +662,11 @@ export async function signOutAdmin(
   if (client) {
     await recordAdminAuditEvent(client, 'admin_logout', { scope }).catch(() => {});
   }
-  await clearAdminAuthTokens(scope);
+  await clearAdminAuthTokens(scope, client);
 }
 
 /**
- * Records an admin security or configuration change in the server audit log (non-blocking).
+ * Records an admin security or configuration change in the server audit log (best-effort).
  */
 export async function recordAdminAuditEvent(
   client: SupabaseClient | null,
@@ -798,6 +680,6 @@ export async function recordAdminAuditEvent(
       p_details: details,
     });
   } catch {
-    // Ignore when audit RPC has not been applied yet
+    // Audit logging never unblocks primary UX if network is briefly offline
   }
 }

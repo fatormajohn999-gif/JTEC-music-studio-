@@ -91,7 +91,7 @@ type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
   const [session, setSession] = useState<any>(null);
-  const [authStage, setAuthStage] = useState<'login' | 'mfa_required' | 'authorized'>('login');
+  const [authStage, setAuthStage] = useState<'login' | 'mfa_enrollment_required' | 'mfa_required' | 'authorized'>('login');
   const [authResult, setAuthResult] = useState<AdminAuthResult | null>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DeveloperTab>('usage');
@@ -383,6 +383,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         if (res.user?.email) {
           setEmail(res.user.email);
         }
+      } else if (res.stage === 'mfa_enrollment_required') {
+        setSession(null);
+        setAuthStage('mfa_enrollment_required');
+        setAccessDenied(false);
+        setAuthErrorMessage(null);
+        if (res.user?.email) {
+          setEmail(res.user.email);
+        }
       } else if (res.stage === 'mfa_required') {
         setSession(null);
         setAuthStage('mfa_required');
@@ -508,6 +516,13 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         setAuthStage('authorized');
         setAccessDenied(false);
         setAuthErrorMessage(null);
+      } else if (res.stage === 'mfa_enrollment_required') {
+        setSession(null);
+        setAuthStage('mfa_enrollment_required');
+        setEnrollData(null);
+        setEnrollCode('');
+        setEnrollError(null);
+        setEnrollSuccess(null);
       } else if (res.stage === 'mfa_required') {
         setSession(null);
         setAuthStage('mfa_required');
@@ -1324,22 +1339,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     setShowSecurityModal(true);
                   }}
                   className={`min-h-[40px] px-3 py-2 rounded-xl border text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
-                    authResult?.enforcementMode === 'transition_missing_sql'
-                      ? 'bg-amber-950/50 hover:bg-amber-900/70 border-amber-500/40 text-amber-200'
-                      : authResult?.hasVerifiedMfa
+                    authResult?.hasVerifiedMfa
                       ? 'bg-emerald-950/50 hover:bg-emerald-900/60 border-emerald-500/40 text-emerald-200'
                       : 'bg-cyan-950/50 hover:bg-cyan-900/70 border-cyan-500/35 text-cyan-200'
                   }`}
                   title="Security, 2FA & Active Session Settings"
                 >
                   <KeyRound className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden sm:inline">
-                    {authResult?.enforcementMode === 'transition_missing_sql'
-                      ? 'Security (SQL Needed)'
-                      : authResult?.hasVerifiedMfa
-                      ? '2FA Active (AAL2)'
-                      : 'Setup 2FA'}
-                  </span>
+                  <span className="hidden sm:inline">2FA Active (AAL2)</span>
                   <span className="sm:hidden">2FA</span>
                 </button>
 
@@ -1436,6 +1443,126 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 )}
               </button>
             </form>
+
+            <button
+              type="button"
+              onClick={() => handleSignOut('local')}
+              className="w-full min-h-[40px] py-2 px-4 rounded-xl text-xs font-semibold bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition cursor-pointer"
+            >
+              Cancel &amp; Sign Out
+            </button>
+          </div>
+        </div>
+      ) : authStage === 'mfa_enrollment_required' ? (
+        /* =========================================================================
+            STATE 1C: MANDATORY TOTP 2FA ENROLLMENT GATE (AAL1 BLOCKED)
+           ========================================================================= */
+        <div className="flex-1 overflow-y-auto flex items-center justify-center p-4 sm:p-6">
+          <div className="max-w-lg w-full rounded-2xl border border-slate-800 bg-slate-900/95 p-5 sm:p-7 shadow-xl space-y-5">
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-slate-950 border border-amber-500/40 text-amber-400 mb-1">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <h3 className="text-lg font-bold text-white tracking-tight">Mandatory 2FA Setup Required</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Every JTEC administrator (<span className="text-slate-200 font-mono">{authResult?.user?.email || email}</span>) must enroll a TOTP authenticator app before accessing device telemetry, version controls, or audit logs.
+              </p>
+            </div>
+
+            {enrollError && (
+              <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{enrollError}</span>
+              </div>
+            )}
+
+            {!enrollData ? (
+              <button
+                type="button"
+                onClick={handleStartTotpEnroll}
+                disabled={isStartingEnroll}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl font-bold text-xs bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isStartingEnroll ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Generating Authenticator QR...</span>
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="w-4 h-4" />
+                    <span>Set Up Authenticator App (TOTP)</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <form onSubmit={handleConfirmTotpEnroll} className="space-y-4">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Scan this QR code with Google Authenticator, 1Password, or Authy (or copy the secret key), then enter the 6-digit code to activate AAL2 access.
+                </p>
+
+                {enrollData.qrImageSrc && (
+                  <div className="flex justify-center p-3 rounded-xl bg-white w-fit mx-auto">
+                    <img
+                      src={enrollData.qrImageSrc}
+                      alt="Authenticator QR Code"
+                      className="w-40 h-40 object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-950 border border-slate-800">
+                  <code className="text-[11px] font-mono text-cyan-300 break-all flex-1 select-all">
+                    {enrollData.secret}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(enrollData.secret);
+                      setCopiedSecret(true);
+                      setTimeout(() => setCopiedSecret(false), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{copiedSecret ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 block">6-Digit Authenticator Code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={7}
+                    value={enrollCode}
+                    onChange={(e) => setEnrollCode(e.target.value.replace(/[^\d\s]/g, ''))}
+                    placeholder="000000"
+                    required
+                    className="w-full min-h-[46px] px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-center font-mono text-lg tracking-[0.35em] placeholder:text-slate-600 focus:border-emerald-400 focus:outline-none transition"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isConfirmingEnroll}
+                  className="w-full min-h-[44px] py-2.5 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isConfirmingEnroll ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verifying &amp; Activating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Verify &amp; Unlock Portal</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
 
             <button
               type="button"
@@ -1550,27 +1677,6 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             STATE 2: AUTHENTICATED TABS
            ========================================================================= */
         <div className="flex-1 flex flex-col min-h-0">
-          {authResult?.enforcementMode === 'transition_missing_sql' && (
-            <div className="px-3.5 sm:px-6 py-2.5 bg-amber-950/60 border-b border-amber-500/35 text-xs text-amber-200 shrink-0">
-              <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>
-                    Database security migration <code className="font-mono text-amber-100">001_secure_admin_auth.sql</code> is pending on{' '}
-                    <code className="font-mono text-amber-100">jtec_main</code>. Run it in Supabase SQL Editor to activate server RLS &amp; AAL2 enforcement.
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowSecurityModal(true)}
-                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
-                >
-                  View Security Setup
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Tab Navigation */}
           <nav className="border-b border-slate-800 bg-slate-950/80 shrink-0" aria-label="Developer Portal sections">
             <div className="max-w-6xl mx-auto px-3 sm:px-6 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
@@ -3527,12 +3633,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 <span className="text-[11px] text-slate-400 block">Server Authorization</span>
                 <span
                   className={`font-semibold block ${
-                    authResult?.enforcementMode === 'enforced' ? 'text-emerald-300' : 'text-amber-300'
+                    authResult?.enforcementMode === 'enforced' ? 'text-emerald-300' : 'text-rose-300'
                   }`}
                 >
                   {authResult?.enforcementMode === 'enforced'
-                    ? 'Active (verify_admin_access + RLS)'
-                    : 'Transition Mode (Run SQL Migration)'}
+                    ? 'Active (admin_users + AAL2 RLS)'
+                    : 'Unavailable (SQL Migration Required)'}
                 </span>
               </div>
 
@@ -3540,7 +3646,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 <span className="text-[11px] text-slate-400 block">Session Assurance Level</span>
                 <span className="font-mono font-semibold text-cyan-300 uppercase block">
                   {authResult?.assuranceLevel || 'aal1'}{' '}
-                  {authResult?.hasVerifiedMfa ? '(2FA Protected)' : '(No 2FA Enrolled)'}
+                  {authResult?.hasVerifiedMfa ? '(2FA Protected)' : '(2FA Required)'}
                 </span>
               </div>
             </div>
