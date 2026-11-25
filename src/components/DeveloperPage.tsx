@@ -5,19 +5,33 @@ import {
   Clock, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
   Ban, Unlock, Radio, Activity, LogOut,
-  HeartPulse, Database, FileText, Trash2, Filter
+  HeartPulse, Database, FileText, Trash2, Filter,
+  KeyRound, ShieldAlert, Copy
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
   SupabaseService, 
   CLOUD_CATEGORIES, 
   SourceDiagnosticResult,
-  getAdminLastOpened,
   setAdminLastOpened,
   getAdminStaySignedIn,
-  setAdminStaySignedIn,
-  clearAdminAuthTokens
+  sanitizeSecretText
 } from '../services/supabase';
+import {
+  AdminAuthResult,
+  TotpEnrollmentData,
+  verifyAdminAuthorization,
+  signInAdminWithPassword,
+  verifyAdminMfaChallenge,
+  enrollAdminTotpMfa,
+  confirmAdminTotpEnrollment,
+  unenrollAdminTotpMfa,
+  assertActiveAdminSession,
+  signOutAdmin,
+  recordAdminAuditEvent,
+  touchAdminActivity,
+  getAdminLoginCooldownRemainingMs,
+} from '../services/adminAuth';
 import { Device, DeviceInfo } from '@capacitor/device';
 import { getCurrentAppVersion, NativeUpdateService } from '../services/nativeUpdate';
 import { registerBackHandler } from '../services/navigation';
@@ -77,9 +91,12 @@ type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
   const [session, setSession] = useState<any>(null);
+  const [authStage, setAuthStage] = useState<'login' | 'mfa_required' | 'authorized'>('login');
+  const [authResult, setAuthResult] = useState<AdminAuthResult | null>(null);
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DeveloperTab>('usage');
 
-  // Sign-in states
+  // Sign-in & 2FA MFA states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -88,6 +105,20 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const staySignedInRef = useRef(staySignedIn);
   staySignedInRef.current = staySignedIn;
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaError, setMfaError] = useState<string | null>(null);
+  const [isVerifyingMfa, setIsVerifyingMfa] = useState(false);
+
+  // Security & 2FA enrollment modal states
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [enrollData, setEnrollData] = useState<TotpEnrollmentData | null>(null);
+  const [enrollCode, setEnrollCode] = useState('');
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [enrollSuccess, setEnrollSuccess] = useState<string | null>(null);
+  const [isStartingEnroll, setIsStartingEnroll] = useState(false);
+  const [isConfirmingEnroll, setIsConfirmingEnroll] = useState(false);
+  const [isUnenrollingId, setIsUnenrollingId] = useState<string | null>(null);
+  const [copiedSecret, setCopiedSecret] = useState(false);
 
   // App version & build information
   const [appVersionInfo, setAppVersionInfo] = useState<{ version: string; build: number }>({
@@ -301,9 +332,35 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     loadPhoneReports();
   }, [loadLatestReleaseData, loadPhoneReports]);
 
-  // Admin session check & silent token refresh (Requirement 3 & 5)
+  const clearSensitivePortalState = useCallback(() => {
+    setSession(null);
+    setAuthStage('login');
+    setAuthResult(null);
+    setPassword('');
+    setMfaCode('');
+    setMfaError(null);
+    setInstalls([]);
+    setAppConfig(null);
+    setPartyActivity(null);
+    setConnectionResults([]);
+    setEditingManualBuild('');
+    setEditingMessage('');
+    setEditingNotes('');
+    setEditingApkUrl('');
+    setEnrollData(null);
+    setEnrollCode('');
+    setEnrollError(null);
+    setEnrollSuccess(null);
+    setShowSecurityModal(false);
+    setBlockConfirmTarget(null);
+    setShowUnblockAllConfirm(false);
+    setShowRequiredUpdatePreview(false);
+  }, []);
+
+  // Server-verified admin session & MFA check
   const verifySession = useCallback(async () => {
     if (!adminClient) {
+      clearSensitivePortalState();
       setIsCheckingSession(false);
       return;
     }
@@ -311,82 +368,47 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     setIsCheckingSession(true);
 
     try {
-      // 1. Load stay-signed-in preference (default true)
       const savedStay = await getAdminStaySignedIn();
       setStaySignedIn(savedStay);
       staySignedInRef.current = savedStay;
 
-      // 2. Check 30-day inactivity expiration (Requirement 5)
-      const lastOpened = await getAdminLastOpened();
-      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-      if (lastOpened && Date.now() - lastOpened > THIRTY_DAYS_MS) {
-        console.info('[DeveloperPage] Admin session expired after 30 days of inactivity.');
-        await clearAdminAuthTokens();
+      const res = await verifyAdminAuthorization(adminClient, { checkInactivity: false });
+      setAuthResult(res);
+
+      if (res.stage === 'authorized' && res.session) {
+        setSession(res.session);
+        setAuthStage('authorized');
+        setAccessDenied(false);
+        setAuthErrorMessage(null);
+        if (res.user?.email) {
+          setEmail(res.user.email);
+        }
+      } else if (res.stage === 'mfa_required') {
         setSession(null);
-        setIsCheckingSession(false);
-        return;
-      }
-
-      // 3. Call getSession() first (Requirement 3)
-      const { data: sessionData, error: sessionErr } = await adminClient.auth.getSession();
-      if (sessionErr || !sessionData?.session) {
-        setSession(null);
-        setIsCheckingSession(false);
-        return;
-      }
-
-      let activeSession = sessionData.session;
-
-      // 4. If access token has expired (or expiring in <=60s), refresh silently
-      const expiresAtMs = activeSession.expires_at ? activeSession.expires_at * 1000 : 0;
-      if (expiresAtMs > 0 && expiresAtMs <= Date.now() + 60000) {
-        try {
-          const { data: refreshData, error: refreshErr } = await adminClient.auth.refreshSession();
-          if (refreshErr || !refreshData.session) {
-            console.warn('[DeveloperPage] Silent token refresh failed:', refreshErr);
-            await clearAdminAuthTokens();
-            setSession(null);
-            setIsCheckingSession(false);
-            return;
-          }
-          activeSession = refreshData.session;
-        } catch (err) {
-          console.warn('[DeveloperPage] Silent token refresh exception:', err);
-          await clearAdminAuthTokens();
-          setSession(null);
-          setIsCheckingSession(false);
-          return;
+        setAuthStage('mfa_required');
+        setAccessDenied(false);
+        setAuthErrorMessage(null);
+        if (res.user?.email) {
+          setEmail(res.user.email);
+        }
+      } else {
+        clearSensitivePortalState();
+        if (res.stage === 'denied' || res.reason) {
+          setAccessDenied(true);
+          setAuthErrorMessage(res.reason || 'Access denied. Admin authorization required.');
+        } else {
+          setAccessDenied(false);
+          setAuthErrorMessage(null);
         }
       }
-
-      // 5. Verify admin permission on app_config
-      const { error: testReadError } = await adminClient
-        .from('app_config')
-        .select('id')
-        .limit(1);
-
-      if (testReadError && testReadError.code === '42501') {
-        console.warn('[DeveloperPage] Not authorized for admin tables (42501)');
-        await clearAdminAuthTokens();
-        setSession(null);
-        setAccessDenied(true);
-        setIsCheckingSession(false);
-        return;
-      }
-
-      // 6. Valid admin session! Update last opened timestamp and activate session
-      await setAdminLastOpened(Date.now());
-      setSession(activeSession);
-      if (activeSession.user?.email) {
-        setEmail(activeSession.user.email);
-      }
     } catch (err) {
-      console.warn('[DeveloperPage] Session verification error:', err);
-      setSession(null);
+      clearSensitivePortalState();
+      setAccessDenied(true);
+      setAuthErrorMessage(sanitizeSecretText(err) || 'Session verification error.');
     } finally {
       setIsCheckingSession(false);
     }
-  }, [adminClient]);
+  }, [adminClient, clearSensitivePortalState]);
 
   useEffect(() => {
     if (isOpen) {
@@ -394,33 +416,55 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     }
   }, [isOpen, verifySession]);
 
-  // Handle Close: does NOT sign admin out if staySignedIn is active (Requirement 1 & 4)
+  // Enforce 30-minute idle timeout while portal is open & authorized
+  useEffect(() => {
+    if (!isOpen || authStage !== 'authorized' || !session) return;
+
+    const handleActivity = () => touchAdminActivity();
+    window.addEventListener('pointerdown', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('scroll', handleActivity, { passive: true });
+
+    const idleCheckTimer = setInterval(async () => {
+      const check = await assertActiveAdminSession(adminClient);
+      if (!check.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(check.reason || 'Admin session expired due to inactivity. Please sign in again.');
+      }
+    }, 60 * 1000);
+
+    return () => {
+      window.removeEventListener('pointerdown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      clearInterval(idleCheckTimer);
+    };
+  }, [isOpen, authStage, session, adminClient, clearSensitivePortalState]);
+
+  // Handle Close: clears tokens immediately if staySignedIn is off or MFA is unfinished
   const handleClose = useCallback(async () => {
-    if (!staySignedInRef.current) {
-      try {
-        await clearAdminAuthTokens();
-      } catch {}
-      setSession(null);
+    if (!staySignedInRef.current || authStage !== 'authorized') {
+      await signOutAdmin(adminClient, 'local').catch(() => {});
+      clearSensitivePortalState();
     } else if (session) {
-      try {
-        await setAdminLastOpened(Date.now());
-      } catch {}
+      await setAdminLastOpened(Date.now()).catch(() => {});
     }
     setPassword('');
     setAccessDenied(false);
+    setAuthErrorMessage(null);
+    setShowSecurityModal(false);
     onClose();
-  }, [session, onClose]);
+  }, [adminClient, authStage, session, clearSensitivePortalState, onClose]);
 
-  // Handle explicit Sign out (Requirement 5)
-  const handleSignOut = useCallback(async () => {
-    try {
-      await clearAdminAuthTokens();
-    } catch {}
-    setSession(null);
-    setPassword('');
+  // Handle explicit Sign out (global server revocation + local/session wipe)
+  const handleSignOut = useCallback(async (scope: 'global' | 'local' = 'global') => {
+    await signOutAdmin(adminClient, scope).catch(() => {});
+    clearSensitivePortalState();
     setAccessDenied(false);
+    setAuthErrorMessage(null);
     setActiveTab('usage');
-  }, []);
+  }, [adminClient, clearSensitivePortalState]);
 
   // Register hardware / system back button handler while developer page is open
   useEffect(() => {
@@ -435,57 +479,138 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   // Admin Sign-in handler
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adminClient) {
+    if (!adminClient || !email.trim() || !password) {
       setAccessDenied(true);
+      setAuthErrorMessage('Please enter a valid admin email and password.');
       return;
     }
-    if (!email.trim() || !password) {
+
+    const cooldownMs = getAdminLoginCooldownRemainingMs();
+    if (cooldownMs > 0) {
       setAccessDenied(true);
+      setAuthErrorMessage(`Too many failed attempts. Please wait ${Math.ceil(cooldownMs / 1000)}s.`);
       return;
     }
 
     setIsSigningIn(true);
     setAccessDenied(false);
+    setAuthErrorMessage(null);
 
     try {
-      const { data, error } = await adminClient.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-
-      // Clear password from memory immediately - NEVER store password anywhere!
+      const submittedPassword = password;
       setPassword('');
 
-      if (error || !data.session) {
+      const res = await signInAdminWithPassword(adminClient, email.trim(), submittedPassword, staySignedIn);
+      setAuthResult(res);
+
+      if (res.stage === 'authorized' && res.session) {
+        setSession(res.session);
+        setAuthStage('authorized');
+        setAccessDenied(false);
+        setAuthErrorMessage(null);
+      } else if (res.stage === 'mfa_required') {
+        setSession(null);
+        setAuthStage('mfa_required');
+        setMfaCode('');
+        setMfaError(null);
+      } else {
+        clearSensitivePortalState();
         setAccessDenied(true);
-        return;
+        setAuthErrorMessage(res.reason || 'Access denied. Check your email, password, or admin permissions.');
       }
-
-      // Verify permission to query app_config
-      const { error: testReadError } = await adminClient
-        .from('app_config')
-        .select('id')
-        .limit(1);
-
-      if (testReadError && testReadError.code === '42501') {
-        await clearAdminAuthTokens();
-        setAccessDenied(true);
-        return;
-      }
-
-      // Save stay-signed-in preference
-      await setAdminStaySignedIn(staySignedIn);
-      if (staySignedIn) {
-        await setAdminLastOpened(Date.now());
-      }
-
-      setSession(data.session);
-    } catch {
+    } catch (err) {
       setPassword('');
+      clearSensitivePortalState();
       setAccessDenied(true);
+      setAuthErrorMessage(sanitizeSecretText(err) || 'Authentication failed.');
     } finally {
       setIsSigningIn(false);
     }
+  };
+
+  // Second-factor (TOTP MFA) challenge handler
+  const handleVerifyMfa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const factorId = authResult?.totpFactors?.[0]?.id;
+    if (!adminClient || !factorId) {
+      setMfaError('No verified authenticator factor found. Sign in again.');
+      return;
+    }
+
+    setIsVerifyingMfa(true);
+    setMfaError(null);
+
+    try {
+      const res = await verifyAdminMfaChallenge(adminClient, factorId, mfaCode);
+      setMfaCode('');
+      setAuthResult(res);
+
+      if (res.stage === 'authorized' && res.session) {
+        setSession(res.session);
+        setAuthStage('authorized');
+        setMfaError(null);
+      } else if (res.stage === 'mfa_required') {
+        setMfaError(res.reason || 'Invalid or expired authenticator code.');
+      } else {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(res.reason || 'Access denied.');
+      }
+    } catch (err) {
+      setMfaCode('');
+      setMfaError(sanitizeSecretText(err) || 'Could not verify 2FA code.');
+    } finally {
+      setIsVerifyingMfa(false);
+    }
+  };
+
+  // Start TOTP 2FA enrollment inside Security modal
+  const handleStartTotpEnroll = async () => {
+    setIsStartingEnroll(true);
+    setEnrollError(null);
+    setEnrollSuccess(null);
+    const { data, error } = await enrollAdminTotpMfa(adminClient);
+    setIsStartingEnroll(false);
+    if (error || !data) {
+      setEnrollError(error || 'Could not initialize 2FA setup.');
+      return;
+    }
+    setEnrollData(data);
+    setEnrollCode('');
+  };
+
+  const handleConfirmTotpEnroll = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!enrollData) return;
+    setIsConfirmingEnroll(true);
+    setEnrollError(null);
+
+    const { success, error } = await confirmAdminTotpEnrollment(adminClient, enrollData.factorId, enrollCode);
+    setIsConfirmingEnroll(false);
+
+    if (!success) {
+      setEnrollError(error || 'Verification failed.');
+      return;
+    }
+
+    setEnrollCode('');
+    setEnrollData(null);
+    setEnrollSuccess('Two-factor authentication (TOTP) is now enabled and active (AAL2).');
+    await verifySession();
+  };
+
+  const handleUnenrollFactor = async (factorId: string) => {
+    setIsUnenrollingId(factorId);
+    setEnrollError(null);
+    setEnrollSuccess(null);
+    const { success, error } = await unenrollAdminTotpMfa(adminClient, factorId);
+    setIsUnenrollingId(null);
+    if (!success) {
+      setEnrollError(error || 'Could not remove authenticator factor.');
+      return;
+    }
+    setEnrollSuccess('Authenticator factor removed.');
+    await verifySession();
   };
 
   // Load real usage data from app_installs
@@ -615,7 +740,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     return { isOnline: false, label, exactTime };
   }, []);
 
-  // Save Owner Label with row-change verification and error reporting
+  // Save Owner Label with pre-flight session check, row-change verification, and audit logging
   const handleSaveOwnerLabel = async (installId: string) => {
     if (!adminClient || !session) return;
     setIsSavingOwnerLabel(true);
@@ -623,6 +748,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     const cleanLabel = editingOwnerLabelInput.trim().slice(0, 60);
 
     try {
+      const authCheck = await assertActiveAdminSession(adminClient);
+      if (!authCheck.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(authCheck.reason || 'Admin session expired.');
+        return;
+      }
+
       const { data, error } = await adminClient
         .from('app_installs')
         .update({ owner_label: cleanLabel || null })
@@ -637,6 +770,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         throw new Error('Update did not change any row. Check permissions or ID.');
       }
 
+      await recordAdminAuditEvent(adminClient, 'owner_label_updated', {
+        install_id: installId,
+        has_label: Boolean(cleanLabel),
+      });
+
       setInstalls((prev) =>
         prev.map((item) =>
           item.install_id === installId
@@ -647,7 +785,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       setEditingOwnerLabelId(null);
       setEditingOwnerLabelInput('');
     } catch (err: any) {
-      setOwnerLabelError(`Failed to update owner label: ${err?.message || 'Unknown error'}`);
+      setOwnerLabelError(`Failed to update owner label: ${sanitizeSecretText(err?.message) || 'Unknown error'}`);
     } finally {
       setIsSavingOwnerLabel(false);
     }
@@ -672,6 +810,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     setBlockActionMessage(null);
 
     try {
+      const authCheck = await assertActiveAdminSession(adminClient);
+      if (!authCheck.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(authCheck.reason || 'Admin session expired.');
+        return;
+      }
+
       // 1. Update app_config (id = 1)
       const { data, error } = await adminClient
         .from('app_config')
@@ -702,6 +848,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         throw new Error(`Verification mismatch: database returned min_build = ${readBack.min_build}, expected ${targetMinBuild}.`);
       }
 
+      await recordAdminAuditEvent(adminClient, 'min_build_blocked', {
+        blocked_up_to: targetRowBuild,
+        min_build: targetMinBuild,
+      });
+
       // 3. Update local state and show success message
       setAppConfig(readBack as AppConfigRow);
       setEditingManualBuild(String(readBack.min_build));
@@ -714,7 +865,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     } catch (err: any) {
       setBlockActionMessage({
         type: 'error',
-        text: `Error updating minimum build: ${err?.message || 'Unknown error'}`,
+        text: `Error updating minimum build: ${sanitizeSecretText(err?.message) || 'Unknown error'}`,
       });
     } finally {
       setIsBlockingVersion(false);
@@ -728,6 +879,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     setBlockActionMessage(null);
 
     try {
+      const authCheck = await assertActiveAdminSession(adminClient);
+      if (!authCheck.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(authCheck.reason || 'Admin session expired.');
+        return;
+      }
+
       const { data, error } = await adminClient
         .from('app_config')
         .update({ min_build: 0 })
@@ -756,6 +915,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         throw new Error(`Verification mismatch: database min_build is ${readBack.min_build}, expected 0.`);
       }
 
+      await recordAdminAuditEvent(adminClient, 'min_build_unblocked_all', { min_build: 0 });
+
       setAppConfig(readBack as AppConfigRow);
       setEditingManualBuild('0');
       setBlockActionMessage({
@@ -767,7 +928,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     } catch (err: any) {
       setBlockActionMessage({
         type: 'error',
-        text: `Error unblocking builds: ${err?.message || 'Unknown error'}`,
+        text: `Error unblocking builds: ${sanitizeSecretText(err?.message) || 'Unknown error'}`,
       });
     } finally {
       setIsUnblockingAll(false);
@@ -793,6 +954,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     setSaveSuccessMsg(null);
 
     try {
+      const authCheck = await assertActiveAdminSession(adminClient);
+      if (!authCheck.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(authCheck.reason || 'Admin session expired.');
+        return;
+      }
+
       const { data, error } = await adminClient
         .from('app_config')
         .update({ min_build: parsedBuild })
@@ -813,30 +982,55 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         throw new Error(`Verification mismatch: database has min_build = ${readBack.min_build}, expected ${parsedBuild}.`);
       }
 
+      await recordAdminAuditEvent(adminClient, 'min_build_updated', { min_build: parsedBuild });
+
       setAppConfig(readBack as AppConfigRow);
       setSaveSuccessMsg(`Saved: minimum build updated to ${parsedBuild}.`);
       refreshDiagnostics();
     } catch (err: any) {
-      setSaveErrorMsg(err?.message || 'Failed to update minimum build.');
+      setSaveErrorMsg(sanitizeSecretText(err?.message) || 'Failed to update minimum build.');
     } finally {
       setIsSavingManualBuild(false);
     }
   };
 
-  // Save Message, Notes, and APK URL in Minimum Version tab
+  // Save Message, Notes, and APK URL in Minimum Version tab (with HTTPS validation)
   const handleSaveConfigText = async () => {
     if (!adminClient || !session) return;
+
+    const cleanApkUrl = editingApkUrl.trim();
+    if (cleanApkUrl) {
+      try {
+        const parsed = new URL(cleanApkUrl);
+        if (parsed.protocol !== 'https:') {
+          setSaveErrorMsg('Direct APK URL must use a valid https:// address.');
+          return;
+        }
+      } catch {
+        setSaveErrorMsg('Direct APK URL is not a valid https:// URL.');
+        return;
+      }
+    }
+
     setIsSavingConfig(true);
     setSaveErrorMsg(null);
     setSaveSuccessMsg(null);
 
     try {
+      const authCheck = await assertActiveAdminSession(adminClient);
+      if (!authCheck.ok) {
+        clearSensitivePortalState();
+        setAccessDenied(true);
+        setAuthErrorMessage(authCheck.reason || 'Admin session expired.');
+        return;
+      }
+
       const { data, error } = await adminClient
         .from('app_config')
         .update({
           message: editingMessage.trim() || 'An update is required to continue using JTEC MUSIC.',
           notes: editingNotes.trim() || null,
-          apk_url: editingApkUrl.trim() || null,
+          apk_url: cleanApkUrl || null,
         })
         .eq('id', 1)
         .select();
@@ -852,10 +1046,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
       if (readError || !readBack) throw new Error(readError?.message || 'Failed to read back from database.');
 
+      await recordAdminAuditEvent(adminClient, 'app_config_text_updated', {
+        has_apk_url: Boolean(cleanApkUrl),
+      });
+
       setAppConfig(readBack as AppConfigRow);
       setSaveSuccessMsg('Configuration text and release notes saved successfully.');
     } catch (err: any) {
-      setSaveErrorMsg(err?.message || 'Failed to save configuration.');
+      setSaveErrorMsg(sanitizeSecretText(err?.message) || 'Failed to save configuration.');
     } finally {
       setIsSavingConfig(false);
     }
@@ -1116,16 +1314,45 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
           </div>
 
           <div className="flex items-center gap-2 shrink-0 ml-auto">
-            {session && (
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-95"
-                title="Sign out and clear session"
-              >
-                <LogOut className="w-3.5 h-3.5 shrink-0" />
-                <span>Sign Out</span>
-              </button>
+            {authStage === 'authorized' && session && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEnrollError(null);
+                    setEnrollSuccess(null);
+                    setShowSecurityModal(true);
+                  }}
+                  className={`min-h-[40px] px-3 py-2 rounded-xl border text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
+                    authResult?.enforcementMode === 'transition_missing_sql'
+                      ? 'bg-amber-950/50 hover:bg-amber-900/70 border-amber-500/40 text-amber-200'
+                      : authResult?.hasVerifiedMfa
+                      ? 'bg-emerald-950/50 hover:bg-emerald-900/60 border-emerald-500/40 text-emerald-200'
+                      : 'bg-cyan-950/50 hover:bg-cyan-900/70 border-cyan-500/35 text-cyan-200'
+                  }`}
+                  title="Security, 2FA & Active Session Settings"
+                >
+                  <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">
+                    {authResult?.enforcementMode === 'transition_missing_sql'
+                      ? 'Security (SQL Needed)'
+                      : authResult?.hasVerifiedMfa
+                      ? '2FA Active (AAL2)'
+                      : 'Setup 2FA'}
+                  </span>
+                  <span className="sm:hidden">2FA</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSignOut('global')}
+                  className="min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-95"
+                  title="Sign out from all devices and clear session"
+                >
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span>Sign Out</span>
+                </button>
+              </>
             )}
 
             <button
@@ -1147,11 +1374,79 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
           <div className="flex flex-col items-center gap-3 text-center">
             <RefreshCw className="w-7 h-7 text-cyan-400 animate-spin" />
             <span className="text-xs text-slate-400 font-medium tracking-wide">
-              Checking developer credentials...
+              Verifying server admin credentials &amp; assurance level...
             </span>
           </div>
         </div>
-      ) : !session ? (
+      ) : authStage === 'mfa_required' ? (
+        /* =========================================================================
+            STATE 1B: 2FA / TOTP AUTHENTICATOR CHALLENGE
+           ========================================================================= */
+        <div className="flex-1 overflow-y-auto flex items-center justify-center p-4 sm:p-6">
+          <div className="max-w-md w-full rounded-2xl border border-slate-800 bg-slate-900/95 p-5 sm:p-7 shadow-xl space-y-5">
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-slate-950 border border-emerald-500/40 text-emerald-400 mb-1">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <h3 className="text-lg font-bold text-white tracking-tight">Two-Factor Verification</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Enter the 6-digit verification code from your authenticator app for{' '}
+                <span className="text-slate-200 font-mono">{authResult?.user?.email || email}</span>.
+              </p>
+            </div>
+
+            {mfaError && (
+              <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{mfaError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleVerifyMfa} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300 block">Authenticator Code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={7}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/[^\d\s]/g, ''))}
+                  placeholder="000000"
+                  required
+                  className="w-full min-h-[46px] px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-center font-mono text-lg tracking-[0.35em] placeholder:text-slate-600 focus:border-emerald-400 focus:outline-none transition"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isVerifyingMfa}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isVerifyingMfa ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verifying 2FA...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Verify &amp; Unlock Portal</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              onClick={() => handleSignOut('local')}
+              className="w-full min-h-[40px] py-2 px-4 rounded-xl text-xs font-semibold bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition cursor-pointer"
+            >
+              Cancel &amp; Sign Out
+            </button>
+          </div>
+        </div>
+      ) : authStage !== 'authorized' || !session ? (
         /* =========================================================================
             STATE 1: ADMIN SIGN-IN SCREEN
            ========================================================================= */
@@ -1163,14 +1458,14 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               </div>
               <h3 className="text-lg font-bold text-white tracking-tight">Developer Sign In</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Sign in with your JTEC admin credentials to access telemetry, version control, and Party activity.
+                Sign in with your authorized JTEC administrator account. Anonymous or non-admin accounts are rejected by server policy.
               </p>
             </div>
 
             {accessDenied && (
               <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>Access denied. Check your email, password, or admin permissions.</span>
+                <span>{authErrorMessage || 'Access denied. Check your email, password, or admin permissions.'}</span>
               </div>
             )}
 
@@ -1205,7 +1500,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               <div className="flex items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
                 <div className="space-y-0.5 min-w-0">
                   <span className="text-xs font-semibold text-white block">Stay signed in on this device</span>
-                  <span className="text-[11px] text-slate-400 block">Survives app restarts &amp; updates</span>
+                  <span className="text-[11px] text-slate-400 block">Uses session storage when off; 30m idle lock active</span>
                 </div>
                 <button
                   type="button"
@@ -1245,8 +1540,8 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
 
             <div className="pt-1 text-center text-[11px] text-slate-400">
               {staySignedIn
-                ? 'Session tokens securely saved on this device. Password is never stored.'
-                : 'Session will clear when the page closes. Password is never stored.'}
+                ? 'Session expires after 7 days max or 30m portal inactivity. Password is never stored.'
+                : 'Session stored in tab sessionStorage and clears on close. Password is never stored.'}
             </div>
           </div>
         </div>
@@ -1255,6 +1550,27 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             STATE 2: AUTHENTICATED TABS
            ========================================================================= */
         <div className="flex-1 flex flex-col min-h-0">
+          {authResult?.enforcementMode === 'transition_missing_sql' && (
+            <div className="px-3.5 sm:px-6 py-2.5 bg-amber-950/60 border-b border-amber-500/35 text-xs text-amber-200 shrink-0">
+              <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    Database security migration <code className="font-mono text-amber-100">001_secure_admin_auth.sql</code> is pending on{' '}
+                    <code className="font-mono text-amber-100">jtec_main</code>. Run it in Supabase SQL Editor to activate server RLS &amp; AAL2 enforcement.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSecurityModal(true)}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  View Security Setup
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Tab Navigation */}
           <nav className="border-b border-slate-800 bg-slate-950/80 shrink-0" aria-label="Developer Portal sections">
             <div className="max-w-6xl mx-auto px-3 sm:px-6 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
@@ -3177,6 +3493,206 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
           isPreview={true}
           onClosePreview={() => setShowRequiredUpdatePreview(false)}
         />
+      )}
+
+      {/* Admin Security, 2FA Enrollment & Session Management Modal */}
+      {showSecurityModal && authStage === 'authorized' && session && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-lg w-full max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 sm:p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/35 flex items-center justify-center text-cyan-300 shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-white">Admin Security &amp; 2FA</h3>
+                  <p className="text-xs font-mono text-slate-400 truncate">
+                    {authResult?.user?.email || email}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowSecurityModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="Close security modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block">Server Authorization</span>
+                <span
+                  className={`font-semibold block ${
+                    authResult?.enforcementMode === 'enforced' ? 'text-emerald-300' : 'text-amber-300'
+                  }`}
+                >
+                  {authResult?.enforcementMode === 'enforced'
+                    ? 'Active (verify_admin_access + RLS)'
+                    : 'Transition Mode (Run SQL Migration)'}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block">Session Assurance Level</span>
+                <span className="font-mono font-semibold text-cyan-300 uppercase block">
+                  {authResult?.assuranceLevel || 'aal1'}{' '}
+                  {authResult?.hasVerifiedMfa ? '(2FA Protected)' : '(No 2FA Enrolled)'}
+                </span>
+              </div>
+            </div>
+
+            {enrollError && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{enrollError}</span>
+              </div>
+            )}
+
+            {enrollSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/35 text-xs text-emerald-200 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <span>{enrollSuccess}</span>
+              </div>
+            )}
+
+            {/* Enrolled Factors */}
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-white">Authenticator App (TOTP 2FA)</span>
+                {!enrollData && (
+                  <button
+                    type="button"
+                    onClick={handleStartTotpEnroll}
+                    disabled={isStartingEnroll}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[11px] transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isStartingEnroll ? 'Starting...' : 'Enroll Authenticator'}
+                  </button>
+                )}
+              </div>
+
+              {authResult?.totpFactors && authResult.totpFactors.length > 0 ? (
+                <div className="space-y-2">
+                  {authResult.totpFactors.map((factor) => (
+                    <div
+                      key={factor.id}
+                      className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <span className="font-semibold text-emerald-300 block truncate">
+                          {factor.friendly_name || 'TOTP Authenticator'}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">Status: verified</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUnenrollFactor(factor.id)}
+                        disabled={isUnenrollingId === factor.id}
+                        className="px-2.5 py-1 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/35 text-rose-200 text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        {isUnenrollingId === factor.id ? 'Removing...' : 'Remove'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  No verified authenticator enrolled yet. Enroll Google Authenticator, 1Password, or Authy for AAL2 admin protection.
+                </p>
+              )}
+
+              {/* Enrollment QR & Secret Step */}
+              {enrollData && (
+                <form onSubmit={handleConfirmTotpEnroll} className="pt-3 border-t border-slate-800 space-y-3">
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Scan this QR code with your authenticator app or copy the manual setup secret, then enter the generated 6-digit code below.
+                  </p>
+
+                  {enrollData.qrImageSrc && (
+                    <div className="flex justify-center p-3 rounded-xl bg-white w-fit mx-auto">
+                      <img
+                        src={enrollData.qrImageSrc}
+                        alt="Authenticator QR Code"
+                        className="w-40 h-40 object-contain"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-950 border border-slate-800">
+                    <code className="text-[11px] font-mono text-cyan-300 break-all flex-1 select-all">
+                      {enrollData.secret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(enrollData.secret);
+                        setCopiedSecret(true);
+                        setTimeout(() => setCopiedSecret(false), 2000);
+                      }}
+                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedSecret ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={7}
+                      value={enrollCode}
+                      onChange={(e) => setEnrollCode(e.target.value.replace(/[^\d\s]/g, ''))}
+                      placeholder="6-digit code"
+                      required
+                      className="flex-1 min-w-[140px] min-h-[40px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-sm text-center tracking-widest focus:border-emerald-400 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isConfirmingEnroll}
+                      className="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer disabled:opacity-50"
+                    >
+                      {isConfirmingEnroll ? 'Verifying...' : 'Confirm 2FA'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEnrollData(null);
+                        setEnrollCode('');
+                      }}
+                      className="min-h-[40px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handleSignOut('global')}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/35 text-rose-200 font-bold text-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out All Devices</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => verifySession()}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Re-verify Server Session
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

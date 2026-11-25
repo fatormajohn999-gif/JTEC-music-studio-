@@ -114,27 +114,53 @@ const createAdminAuthStorageAdapter = () => {
     };
   }
 
-  // Web fallback: localStorage
+  // Web fallback: route to sessionStorage when staySignedIn === false so tokens expire when tab closes
+  const getWebStorage = (): Storage => {
+    try {
+      const stay = window.localStorage.getItem('jtec-admin-stay-signed-in');
+      if (stay === 'false' && typeof window.sessionStorage !== 'undefined') {
+        return window.sessionStorage;
+      }
+    } catch {
+      // fall through to localStorage
+    }
+    return window.localStorage;
+  };
+
   return {
     getItem: (key: string): string | null => {
       try {
-        return window.localStorage.getItem(key);
+        const primary = getWebStorage().getItem(key);
+        if (primary !== null) return primary;
+        // Clean fallback only when staySignedIn !== 'false'
+        if (window.localStorage.getItem('jtec-admin-stay-signed-in') !== 'false') {
+          return window.sessionStorage.getItem(key);
+        }
+        return null;
       } catch {
         return null;
       }
     },
     setItem: (key: string, value: string): void => {
       try {
-        window.localStorage.setItem(key, value);
+        const target = getWebStorage();
+        target.setItem(key, value);
+        // If using sessionStorage, ensure no duplicate copy stays in localStorage
+        if (target === window.sessionStorage) {
+          window.localStorage.removeItem(key);
+        } else {
+          window.sessionStorage.removeItem(key);
+        }
       } catch (err) {
-        console.warn('[AdminAuthStorage] localStorage.setItem error:', err);
+        console.warn('[AdminAuthStorage] storage.setItem error:', err);
       }
     },
     removeItem: (key: string): void => {
       try {
         window.localStorage.removeItem(key);
+        window.sessionStorage.removeItem(key);
       } catch (err) {
-        console.warn('[AdminAuthStorage] localStorage.removeItem error:', err);
+        console.warn('[AdminAuthStorage] storage.removeItem error:', err);
       }
     },
   };
@@ -215,10 +241,10 @@ export async function setAdminStaySignedIn(enabled: boolean): Promise<void> {
   } catch {}
 }
 
-export async function clearAdminAuthTokens(): Promise<void> {
+export async function clearAdminAuthTokens(scope: 'global' | 'local' = 'local'): Promise<void> {
   try {
     if (jtecAdminClient) {
-      await jtecAdminClient.auth.signOut();
+      await jtecAdminClient.auth.signOut({ scope });
     }
   } catch {}
   const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
@@ -229,6 +255,9 @@ export async function clearAdminAuthTokens(): Promise<void> {
     } else {
       localStorage.removeItem('jtec-admin-auth');
       localStorage.removeItem('jtec-admin-last-opened');
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('jtec-admin-auth');
+      }
     }
   } catch {}
 }
@@ -402,71 +431,43 @@ export const SupabaseService = {
     let envBucket = '';
     let envTable = '';
 
-    const dynamicEnv = (import.meta.env as Record<string, string | undefined>) || {};
-
     if (categoryKey === 'nasheed') {
       envUrl = (import.meta.env.VITE_SUPABASE_NASHEED_URL ||
                 import.meta.env.VITE_NASHEED_SUPABASE_URL ||
-                import.meta.env.VITE_NASHEED_URL ||
-                dynamicEnv.SUPABASE_NASHEED_URL ||
-                dynamicEnv.NASHEED_SUPABASE_URL ||
-                dynamicEnv.NASHEED_URL || '').trim();
+                import.meta.env.VITE_NASHEED_URL || '').trim();
 
       envKey = (import.meta.env.VITE_SUPABASE_NASHEED_ANON_KEY ||
                 import.meta.env.VITE_NASHEED_SUPABASE_ANON_KEY ||
                 import.meta.env.VITE_NASHEED_ANON_KEY ||
-                import.meta.env.VITE_NASHEED_KEY ||
-                dynamicEnv.SUPABASE_NASHEED_ANON_KEY ||
-                dynamicEnv.NASHEED_SUPABASE_ANON_KEY ||
-                dynamicEnv.NASHEED_ANON_KEY ||
-                dynamicEnv.NASHEED_KEY || '').trim();
+                import.meta.env.VITE_NASHEED_KEY || '').trim();
 
-      envBucket = (import.meta.env.VITE_SUPABASE_NASHEED_BUCKET ||
-                   dynamicEnv.SUPABASE_NASHEED_BUCKET ||
-                   dynamicEnv.NASHEED_BUCKET || '').trim();
+      envBucket = (import.meta.env.VITE_SUPABASE_NASHEED_BUCKET || '').trim();
 
-      envTable = (import.meta.env.VITE_SUPABASE_NASHEED_TABLE ||
-                  dynamicEnv.SUPABASE_NASHEED_TABLE ||
-                  dynamicEnv.NASHEED_TABLE || '').trim();
+      envTable = (import.meta.env.VITE_SUPABASE_NASHEED_TABLE || '').trim();
     } else if (categoryKey === 'love_chill') {
       envUrl = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_URL ||
                 import.meta.env.VITE_LOVE_CHILL_SUPABASE_URL ||
                 import.meta.env.VITE_LOVE_CHILL_URL ||
                 import.meta.env.VITE_SUPABASE_LOVE_URL ||
-                import.meta.env.VITE_LOVE_URL ||
-                dynamicEnv.SUPABASE_LOVE_CHILL_URL ||
-                dynamicEnv.LOVE_CHILL_SUPABASE_URL ||
-                dynamicEnv.LOVE_CHILL_URL || '').trim();
+                import.meta.env.VITE_LOVE_URL || '').trim();
 
       envKey = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_ANON_KEY ||
                 import.meta.env.VITE_LOVE_CHILL_SUPABASE_ANON_KEY ||
                 import.meta.env.VITE_LOVE_CHILL_ANON_KEY ||
                 import.meta.env.VITE_LOVE_CHILL_KEY ||
                 import.meta.env.VITE_SUPABASE_LOVE_ANON_KEY ||
-                import.meta.env.VITE_LOVE_ANON_KEY ||
-                dynamicEnv.SUPABASE_LOVE_CHILL_ANON_KEY ||
-                dynamicEnv.LOVE_CHILL_SUPABASE_ANON_KEY ||
-                dynamicEnv.LOVE_CHILL_ANON_KEY ||
-                dynamicEnv.LOVE_CHILL_KEY || '').trim();
+                import.meta.env.VITE_LOVE_ANON_KEY || '').trim();
 
-      envBucket = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_BUCKET ||
-                   dynamicEnv.SUPABASE_LOVE_CHILL_BUCKET ||
-                   dynamicEnv.LOVE_CHILL_BUCKET || '').trim();
+      envBucket = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_BUCKET || '').trim();
 
-      envTable = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_TABLE ||
-                  dynamicEnv.SUPABASE_LOVE_CHILL_TABLE ||
-                  dynamicEnv.LOVE_CHILL_TABLE || '').trim();
+      envTable = (import.meta.env.VITE_SUPABASE_LOVE_CHILL_TABLE || '').trim();
     } else if (categoryKey === 'jtec_main') {
       envUrl = (import.meta.env.VITE_SUPABASE_JTEC_MAIN_URL ||
                 import.meta.env.VITE_SUPABASE_JTEC_URL ||
                 import.meta.env.VITE_JTEC_SUPABASE_URL ||
                 import.meta.env.VITE_JTEC_MAIN_URL ||
                 import.meta.env.VITE_JTEC_URL ||
-                import.meta.env.VITE_SUPABASE_URL ||
-                dynamicEnv.SUPABASE_JTEC_MAIN_URL ||
-                dynamicEnv.SUPABASE_JTEC_URL ||
-                dynamicEnv.SUPABASE_URL ||
-                dynamicEnv.JTEC_URL || '').trim();
+                import.meta.env.VITE_SUPABASE_URL || '').trim();
 
       envKey = (import.meta.env.VITE_SUPABASE_JTEC_MAIN_ANON_KEY ||
                 import.meta.env.VITE_SUPABASE_JTEC_ANON_KEY ||
@@ -474,19 +475,13 @@ export const SupabaseService = {
                 import.meta.env.VITE_JTEC_MAIN_ANON_KEY ||
                 import.meta.env.VITE_JTEC_ANON_KEY ||
                 import.meta.env.VITE_JTEC_KEY ||
-                import.meta.env.VITE_SUPABASE_ANON_KEY ||
-                dynamicEnv.SUPABASE_JTEC_MAIN_ANON_KEY ||
-                dynamicEnv.SUPABASE_JTEC_ANON_KEY ||
-                dynamicEnv.SUPABASE_ANON_KEY ||
-                dynamicEnv.JTEC_KEY || '').trim();
+                import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
       envBucket = (import.meta.env.VITE_SUPABASE_JTEC_BUCKET ||
-                   import.meta.env.VITE_SUPABASE_BUCKET ||
-                   dynamicEnv.SUPABASE_BUCKET || '').trim();
+                   import.meta.env.VITE_SUPABASE_BUCKET || '').trim();
 
       envTable = (import.meta.env.VITE_SUPABASE_JTEC_TABLE ||
-                  import.meta.env.VITE_SUPABASE_TABLE ||
-                  dynamicEnv.SUPABASE_TABLE || '').trim();
+                  import.meta.env.VITE_SUPABASE_TABLE || '').trim();
     }
 
     const finalUrl = normalizeSupabaseUrl(envUrl);
@@ -1344,16 +1339,32 @@ export const SupabaseService = {
     return updated;
   },
   async deleteSongFromCloud(song: CloudSong): Promise<void> {
-    const client = this.getClientForCategory('jtec_main');
-    if (!client) throw new Error('Supabase is not configured.');
+    const adminClient = getJtecAdminClient();
+    if (!adminClient) throw new Error('Supabase admin client is not configured.');
+
+    // Enforce authenticated, non-anonymous, server-verified admin session before cloud mutations
+    const { assertActiveAdminSession, recordAdminAuditEvent } = await import('./adminAuth');
+    const authCheck = await assertActiveAdminSession(adminClient);
+    if (!authCheck.ok) {
+      throw new Error(authCheck.reason || 'Admin authentication is required to delete cloud songs.');
+    }
+
     if (song.file_path) {
-      try {
-        await client.storage.from(BUCKET_MUSIC).remove([song.file_path]);
-      } catch {
-        // ignore
+      const { error: storageErr } = await adminClient.storage.from(BUCKET_MUSIC).remove([song.file_path]);
+      if (storageErr) {
+        console.warn('[SupabaseService] Storage delete warning:', sanitizeSecretText(storageErr.message));
       }
     }
-    await client.from('songs').delete().eq('id', song.id);
+
+    const { error: dbErr } = await adminClient.from('songs').delete().eq('id', song.id);
+    if (dbErr) {
+      throw new Error(sanitizeSecretText(dbErr.message) || 'Permission denied deleting song from cloud.');
+    }
+
+    await recordAdminAuditEvent(adminClient, 'song_deleted', {
+      song_id: song.id,
+      file_path: song.file_path || null,
+    });
   },
   async checkDuplicate(..._args: any[]): Promise<CloudSong | null> {
     return null;

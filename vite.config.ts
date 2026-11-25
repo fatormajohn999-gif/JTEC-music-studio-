@@ -11,7 +11,7 @@ export default defineConfig({
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
-  envPrefix: ['VITE_', 'SUPABASE_', 'NASHEED_', 'LOVE_CHILL_', 'LOVE_', 'JTEC_'],
+  envPrefix: ['VITE_'],
   server: {
     port: 3000,
     host: '0.0.0.0',
