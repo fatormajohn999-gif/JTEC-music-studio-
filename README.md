@@ -6,23 +6,20 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 
 ## 1. Documentation Index
 
-- **[`docs/SECURITY.md`](docs/SECURITY.md)** — Admin authentication, `public.admin_users` authority, mandatory TOTP 2FA (`aal2`), fail-closed guarantees, RLS & `SECURITY DEFINER` design, immutable audit trail, and JTEC Party isolation.
-- **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** — Chronological record of security fixes, build/workflow fixes, and modified files.
-- **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** — Common error resolution (missing RPCs, 2FA setup/recovery, deactivated admin, GitHub Pages artifacts, Party connectivity) and safe rollback steps.
+- **[`docs/SECURITY.md`](docs/SECURITY.md)** — Security status (active code controls vs. unactivated DB migration), `admin_users` authority, mandatory TOTP 2FA (`aal2`), `ping_install`/`touch_install` RLS compatibility, exact SQL migration order, verification, and rollback.
+- **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** — Chronological record of security, telemetry, CI workflow, and documentation changes.
+- **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** — Diagnostics for missing RPCs, mandatory 2FA, telemetry RLS compatibility, GitHub Actions/Pages builds, Party connectivity, and rollback steps.
 
 ---
 
-## 2. What JTEC Music Does
+## 2. Security Status: Active Code Controls vs. Pending Database Activation
 
-- **Multi-Source Music Playback**: Plays local audio imports (MP3, WAV, M4A, AAC, OGG, FLAC, WebM) stored on-device as well as curated streaming libraries (**JTEC Music Main**, **Nasheed**, **Love & Chill**, and **Jamendo**).
-- **Web Audio Engine & DSP Effects**: Real-time 10-band equalizer, bass/super-bass shaping, spatial/reverb effects, gapless-style transitions, and audio-reactive canvas visualizers.
-- **Offline Caching & PWA Auto-Updates**: Service worker caching with automatic background updates on Web when no music is playing.
-- **Native Android Integration**:
-  - Background media notification & lock screen controls (`@jofr/capacitor-media-session`) with square artwork (`src/services/mediaSession.ts`).
-  - Native Android home screen music widget synced directly to the single audio engine (`src/services/widgetBridge.ts`).
-  - Android-only minimum-version enforcement (`app_config.min_build`) and self-updating APK release checker (`src/services/nativeUpdate.ts`). Web/iOS builds are never blocked.
-- **JTEC Party**: Live synchronized listening rooms where hosts broadcast track/playback state and guests listen in real time using isolated anonymous Supabase sessions.
-- **Developer Portal (`src/components/DeveloperPage.tsx`)**: Fail-closed, mandatory-2FA (`aal2`) admin dashboard for device telemetry (`app_installs`), Android minimum build enforcement (`app_config`), Supabase health monitoring & device logs, cloud source connectivity checks, and live JTEC Party activity.
+| Protection Layer | Current Status | Details |
+|---|---|---|
+| **Application & CI Controls** (`src/services/adminAuth.ts`, `DeveloperPage.tsx`, `vite.config.ts`, `.github/workflows/*`) | **Active in Code** | Fail-closed RPC & MFA verification, mandatory TOTP UI gate (`aal2` required), anonymous user rejection, session inactivity locks, `VITE_`-only env bundling, isolated `jtec-party` client, and CI gates (`bun 1.4.4` -> `npm test` -> `npm run lint` -> `npm run build`). |
+| **Database & Supabase Auth Controls** (`supabase/migrations/001_secure_admin_auth.sql`) | **Pending Manual Activation on `jtec_main`** | `public.admin_users`, `public.admin_audit_logs`, `verify_admin_access()`, `is_jtec_admin_aal2()`, forced RLS on `app_installs` with hardened `ping_install()`/`touch_install()`, `storage.objects` (`music`) restrictive guards, and Supabase Dashboard TOTP settings are **not yet executed on the live `jtec_main` database**. |
+
+> Because the frontend fails closed when `verify_admin_access()` is missing, the Developer Portal stays locked until an authorized owner executes the SQL migration and enables TOTP in the `jtec_main` Supabase Dashboard (see [`docs/SECURITY.md`](docs/SECURITY.md)).
 
 ---
 
@@ -30,12 +27,12 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 
 ```text
 ├── .github/workflows/
-│   ├── deploy.yml              # GitHub Pages build + deploy (2 jobs: build -> deploy)
-│   ├── android-build.yml       # Capacitor sync, Gradle release APK build & signing
+│   ├── deploy.yml              # CI gate (Bun 1.4.4 -> tests -> lint -> Vite build) + GitHub Pages deploy
+│   ├── android-build.yml       # CI gate (Bun 1.4.4 -> tests -> lint -> build) + Capacitor Android release APK
 │   └── release-apk.yml         # Publishes GitHub Release (JTEC-MUSIC.apk + latest.json)
 ├── android/                    # Native Capacitor Android project (compileSdk 35, AGP 8.7.2, Java)
 ├── docs/
-│   ├── SECURITY.md             # Security architecture & Supabase setup guide
+│   ├── SECURITY.md             # Code vs. DB status, migration order, TOTP setup, verification & rollback
 │   ├── CHANGELOG.md            # Chronological change log
 │   └── TROUBLESHOOTING.md      # Diagnostics, recovery & rollback runbook
 ├── public/                     # Static PWA manifest, service worker (sw.js), icons & images
@@ -47,7 +44,12 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 │   ├── party/                  # JTEC Party service & isolated Party Supabase backend
 │   ├── screens/                # Library, Explore, Equalizer, Settings, Party screens
 │   └── services/               # audioEngine, supabase, adminAuth, appConfig, healthMonitor, mediaSession, widgetBridge
-├── supabase/migrations/        # 001_secure_admin_auth.sql for jtec_main admin auth & RLS
+├── supabase/
+│   ├── checks/
+│   │   ├── 000_pre_migration_audit.sql   # Read-only pre-flight check for jtec_main
+│   │   └── 002_post_migration_verify.sql # Read-only post-migration verification for jtec_main
+│   └── migrations/
+│       └── 001_secure_admin_auth.sql     # Atomic admin auth, mandatory AAL2, RLS & telemetry hardening
 ├── vite.config.ts              # Vite config (base: './', envPrefix: ['VITE_'])
 └── capacitor.config.ts         # Capacitor config (appId: com.jtecmusic.app, webDir: dist)
 ```
@@ -58,7 +60,7 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 
 | Logical Project | Purpose | Auth Model | Env Prefix / Config |
 |---|---|---|---|
-| **JTEC Main (`jtec_main`)** | Mainstream song catalog (`songs` + `music` bucket), `app_config` (`id=1`), `app_installs` telemetry, Admin Auth & immutable audit logs (`admin_users`, `admin_audit_logs`) | Public anon read for `songs` & `app_config (id=1)`; **authoritative `admin_users` + mandatory TOTP MFA (`aal2`)** for telemetry, config mutations, and song deletes | `VITE_SUPABASE_JTEC_*` / `VITE_SUPABASE_URL` |
+| **JTEC Main (`jtec_main`)** | Mainstream song catalog (`songs` + `music` bucket), `app_config` (`id=1`), `app_installs` telemetry, Admin Auth & immutable audit logs | Public anon read for `songs` & `app_config (id=1)`; anon/auth device pings solely via hardened `ping_install`/`touch_install` RPCs; **authoritative `admin_users` + mandatory TOTP MFA (`aal2`)** for admin portal & mutations | `VITE_SUPABASE_JTEC_*` / `VITE_SUPABASE_URL` |
 | **Nasheed** | Dedicated Nasheed & spiritual vocal catalog (`songs` + `music` bucket) | Public anon read (`persistSession: false`) | `VITE_SUPABASE_NASHEED_*` |
 | **Love & Chill** | Dedicated melodic & chill catalog (`songs` + `music` bucket) | Public anon read (`persistSession: false`) | `VITE_SUPABASE_LOVE_CHILL_*` |
 | **JTEC Party (`jtec-party`, ID `dihyzyqhppmqtkheqpbs`)** | Isolated real-time Party rooms, broadcast playback sync, presence, and live listener stats | Anonymous Party user sign-in (`jtec_party_supabase_auth_token`). Never falls back to `jtec_main` and never receives admin privileges | `VITE_PARTY_SUPABASE_URL` & `VITE_PARTY_SUPABASE_ANON_KEY` |
@@ -82,11 +84,11 @@ JTEC MUSIC is a high-performance music player built with **React 18**, **TypeScr
 
 ---
 
-## 6. Local Commands
+## 6. Local & CI Commands
 
 ```bash
 npm install --legacy-peer-deps   # Install workspace dependencies
-npm test                         # Run automated admin security tests
+npm test                         # Run admin security + telemetry compatibility tests (requires Bun 1.4.4)
 npm run lint                     # Run TypeScript type check (tsc --noEmit)
 npm run build                    # Build static production bundle into ./dist
 npm run dev                      # Start Vite dev server on port 3000

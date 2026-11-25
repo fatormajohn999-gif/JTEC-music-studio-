@@ -29,7 +29,15 @@
 --    - Forced RLS; no client INSERT/UPDATE/DELETE/TRUNCATE grants; explicit
 --      restrictive deny-all UPDATE/DELETE policies; writes allowed solely via
 --      `public.log_admin_action()` using transaction-local GUC guard.
+-- 6. Telemetry RPC (`ping_install` / `touch_install`) safety & RLS compatibility:
+--    - Dynamically inspects existing `ping_install` and `touch_install` overloads
+--      without altering their internal column mappings.
+--    - Enforces `SECURITY DEFINER`, safe `set search_path = pg_catalog, public, extensions`,
+--      `BYPASSRLS` owner verification (`postgres`), and minimal grants (`anon`, `authenticated`).
+--    - Wrapped in an atomic `BEGIN; ... COMMIT;` transaction so any failure rolls back.
 -- ==============================================================================
+
+begin;
 
 -- 1. Authorized Admins Table (authoritative source; zero client writes)
 create table if not exists public.admin_users (
@@ -412,8 +420,79 @@ create policy "Admin delete app_config"
   to authenticated
   using (public.is_jtec_admin_aal2());
 
--- 10. Lock down `public.app_installs` (Admin AAL2 ONLY for SELECT/UPDATE/DELETE;
---     client telemetry writes happen solely via SECURITY DEFINER ping_install / touch_install RPCs)
+-- 10. Harden existing telemetry RPCs (`ping_install`, `touch_install`) BEFORE forcing RLS
+--     on `public.app_installs` so device telemetry keeps working without direct table writes.
+do $$
+declare
+  v_fn record;
+  v_ping_count integer := 0;
+  v_touch_count integer := 0;
+begin
+  for v_fn in
+    select p.oid,
+           p.proname,
+           pg_catalog.pg_get_function_identity_arguments(p.oid) as identity_args,
+           p.prosecdef,
+           r.rolname as owner_name,
+           r.rolsuper,
+           r.rolbypassrls
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    join pg_catalog.pg_roles r on r.oid = p.proowner
+    where n.nspname = 'public'
+      and p.proname in ('ping_install', 'touch_install')
+  loop
+    if v_fn.proname = 'ping_install' then
+      v_ping_count := v_ping_count + 1;
+    elsif v_fn.proname = 'touch_install' then
+      v_touch_count := v_touch_count + 1;
+    end if;
+
+    -- Under FORCE ROW LEVEL SECURITY, telemetry RPCs must run under a BYPASSRLS owner (e.g., postgres)
+    if not (v_fn.rolbypassrls or v_fn.rolsuper) then
+      if exists (
+        select 1 from pg_catalog.pg_roles where rolname = 'postgres' and (rolbypassrls or rolsuper)
+      ) then
+        execute pg_catalog.format(
+          'alter function public.%I(%s) owner to postgres',
+          v_fn.proname,
+          v_fn.identity_args
+        );
+      else
+        raise exception 'Telemetry RPC %.%(%) owner (%) lacks BYPASSRLS; cannot safely force RLS on public.app_installs',
+          'public', v_fn.proname, v_fn.identity_args, v_fn.owner_name;
+      end if;
+    end if;
+
+    -- Enforce SECURITY DEFINER and locked search_path (excluding pg_temp) while preserving signature/body
+    execute pg_catalog.format(
+      'alter function public.%I(%s) security definer set search_path = pg_catalog, public, extensions',
+      v_fn.proname,
+      v_fn.identity_args
+    );
+
+    -- Revoke PUBLIC default and grant only minimum required EXECUTE to anon and authenticated
+    execute pg_catalog.format(
+      'revoke all on function public.%I(%s) from public',
+      v_fn.proname,
+      v_fn.identity_args
+    );
+    execute pg_catalog.format(
+      'grant execute on function public.%I(%s) to anon, authenticated',
+      v_fn.proname,
+      v_fn.identity_args
+    );
+  end loop;
+
+  if pg_catalog.to_regclass('public.app_installs') is not null and (v_ping_count = 0 or v_touch_count = 0) then
+    raise exception 'Missing telemetry RPC(s) in public schema (ping_install count=%, touch_install count=%). Aborting before locking public.app_installs.',
+      v_ping_count, v_touch_count;
+  end if;
+end
+$$;
+
+-- 11. Lock down `public.app_installs` (Admin AAL2 ONLY for SELECT/UPDATE/DELETE;
+--     client telemetry writes happen solely via hardened SECURITY DEFINER ping_install / touch_install RPCs)
 alter table public.app_installs enable row level security;
 alter table public.app_installs force row level security;
 
@@ -518,3 +597,5 @@ create policy "Restrict authenticated deletes on music bucket"
   for delete
   to authenticated
   using (bucket_id <> 'music' or public.is_jtec_admin_aal2());
+
+commit;

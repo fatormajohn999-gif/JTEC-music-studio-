@@ -51,6 +51,8 @@ const mockSessionStorage = new MemoryStorage();
 (globalThis as any).window = {
   localStorage: mockLocalStorage,
   sessionStorage: mockSessionStorage,
+  addEventListener: () => {},
+  removeEventListener: () => {},
 };
 
 interface MockClientOptions {

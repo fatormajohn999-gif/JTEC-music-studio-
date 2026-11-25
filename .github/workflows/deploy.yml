@@ -29,8 +29,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
+
+      - name: Run Admin Security & Telemetry Tests
+        run: npm test
+
+      - name: Run TypeScript Lint
+        run: npm run lint
 
       - name: Setup GitHub Pages
         id: pages
