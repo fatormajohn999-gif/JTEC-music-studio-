@@ -6,7 +6,7 @@ import {
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
   Ban, Unlock, Radio, Activity, LogOut,
   HeartPulse, Database, FileText, Trash2, Filter,
-  KeyRound, ShieldAlert, Copy
+  KeyRound, ShieldAlert, Copy, Music
 } from 'lucide-react';
 import { 
   getJtecAdminClient, 
@@ -55,6 +55,7 @@ import { HealthMonitorService, HealthStatus, OverallHealthStatus, MonitoredProje
 import { fetchPartyAdminTelemetry, PartyActivitySnapshot } from '../services/partyAdminTelemetry';
 import { VersionsBuildsCard } from './developer/VersionsBuildsCard';
 import { PartyActivityPanel } from './developer/PartyActivityPanel';
+import { MusicManagerPanel } from './developer/MusicManagerPanel';
 
 export interface AppInstallRow {
   install_id: string;
@@ -86,7 +87,7 @@ interface DeveloperPageProps {
   onClose: () => void;
 }
 
-type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_activity';
+type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_activity' | 'music_manager';
 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
@@ -1763,6 +1764,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 <Radio className="w-3.5 h-3.5 shrink-0" />
                 <span>Party Users &amp; Activity</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('music_manager')}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'music_manager'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Music className="w-3.5 h-3.5 shrink-0" />
+                <span>Music Manager</span>
+              </button>
             </div>
           </nav>
 
@@ -3398,6 +3412,17 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 isLoading={isLoadingPartyActivity}
                 onRefresh={loadPartyActivity}
                 formatTimestamp={formatTimestamp}
+              />
+            )}
+
+            {activeTab === 'music_manager' && (
+              <MusicManagerPanel
+                adminClient={adminClient}
+                onUnauthorized={() => {
+                  clearSensitivePortalState();
+                  setAccessDenied(true);
+                  setAuthErrorMessage('Admin session expired or missing 2FA (AAL2). Please sign in again.');
+                }}
               />
             )}
           </div>
