@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   X, RefreshCw, Shield, ShieldCheck, Lock, 
-  Users, Smartphone, Globe, AlertCircle, CheckCircle2, 
-  Clock, Sparkles, AlertTriangle, Layers, 
+  Users, Smartphone, AlertCircle, CheckCircle2, 
+  Clock, Layers, 
   Wifi, Terminal, Search, ArrowUpDown, Edit2, Check, Eye,
-  Ban, Unlock, HelpCircle, ChevronRight, Radio, Bot, Sliders,
-  SkipForward, UserMinus, UserPlus, Activity, LogOut,
+  Ban, Unlock, Radio, Activity, LogOut,
   HeartPulse, Database, FileText, Trash2, Filter
 } from 'lucide-react';
 import { 
@@ -35,11 +34,13 @@ import {
   getLastPingDiagnosticInfo,
   PingDiagnosticInfo
 } from '../services/appConfig';
-import { MockPartyBackend } from '../party/MockPartyBackend';
-import { getPartyBackend, getPartyBackendStatus } from '../party/backend';
+import { getPartyBackendStatus } from '../party/backend';
 import { PartyService } from '../party/PartyService';
 import { AppLogger, LogSeverity, LogProjectScope } from '../services/appLogger';
 import { HealthMonitorService, HealthStatus, OverallHealthStatus, MonitoredProjectId } from '../services/healthMonitor';
+import { fetchPartyAdminTelemetry, PartyActivitySnapshot } from '../services/partyAdminTelemetry';
+import { VersionsBuildsCard } from './developer/VersionsBuildsCard';
+import { PartyActivityPanel } from './developer/PartyActivityPanel';
 
 export interface AppInstallRow {
   install_id: string;
@@ -71,7 +72,7 @@ interface DeveloperPageProps {
   onClose: () => void;
 }
 
-type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_demo';
+type DeveloperTab = 'health_logs' | 'usage' | 'min_version' | 'update_status' | 'connection' | 'party_activity';
 
 export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose }) => {
   const [adminClient] = useState(() => getJtecAdminClient());
@@ -145,13 +146,10 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [connectionResults, setConnectionResults] = useState<SourceDiagnosticResult[]>([]);
   const [isRunningConnectionTest, setIsRunningConnectionTest] = useState(false);
 
-  // Party Demo & Network Simulation states (Requirement 11)
-  const [botLatency, setBotLatency] = useState<number>(() => MockPartyBackend.transport.getConfig().latencyMs);
-  const [botJitter, setBotJitter] = useState<number>(() => MockPartyBackend.transport.getConfig().jitterMs);
-  const [botsActive, setBotsActive] = useState<boolean>(() => MockPartyBackend.areBotsActive());
-  const [botDisconnectCountdown, setBotDisconnectCountdown] = useState<number>(0);
-  const [partyActionFeedback, setPartyActionFeedback] = useState<string | null>(null);
+  // JTEC Party real users & activity telemetry (dedicated Party Supabase only)
   const [partyStatus, setPartyStatus] = useState(() => getPartyBackendStatus());
+  const [partyActivity, setPartyActivity] = useState<PartyActivitySnapshot | null>(null);
+  const [isLoadingPartyActivity, setIsLoadingPartyActivity] = useState(false);
 
   // Health & Structured Logs state (active only while Developer Portal is open & authenticated)
   const [overallHealth, setOverallHealth] = useState(() => HealthMonitorService.getOverallHealth());
@@ -166,6 +164,16 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   const [logProjectFilter, setLogProjectFilter] = useState<LogProjectScope | 'ALL'>('ALL');
   const [logDateFilter, setLogDateFilter] = useState<string>('ALL');
   const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
+
+  const loadPartyActivity = useCallback(async () => {
+    setIsLoadingPartyActivity(true);
+    try {
+      const snapshot = await fetchPartyAdminTelemetry();
+      setPartyActivity(snapshot);
+    } finally {
+      setIsLoadingPartyActivity(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isOpen || !session) return;
@@ -197,7 +205,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   }, [isOpen, session]);
 
   useEffect(() => {
-    if (isOpen && session && (activeTab === 'party_demo' || activeTab === 'health_logs')) {
+    if (isOpen && session && (activeTab === 'party_activity' || activeTab === 'health_logs')) {
       setPartyStatus(getPartyBackendStatus());
       setPartyDiagnostics(PartyService.getDiagnostics());
       const timer = setInterval(() => {
@@ -207,116 +215,6 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       return () => clearInterval(timer);
     }
   }, [isOpen, session, activeTab]);
-
-  const handleBotsJoinRoom = useCallback(() => {
-    MockPartyBackend.addBotsToCurrentRoom();
-    setBotsActive(true);
-    setPartyActionFeedback('Simulated bots (Aisha #4092, Marcus #8811, Devon #1304) have joined your room!');
-    setTimeout(() => setPartyActionFeedback(null), 4000);
-  }, []);
-
-  const handleLatencyChange = useCallback((val: number) => {
-    setBotLatency(val);
-    MockPartyBackend.transport.setConfig({ latencyMs: val });
-  }, []);
-
-  const handleJitterChange = useCallback((val: number) => {
-    setBotJitter(val);
-    MockPartyBackend.transport.setConfig({ jitterMs: val });
-  }, []);
-
-  const handleDisconnectBots15s = useCallback(() => {
-    MockPartyBackend.disconnectAllBotsFor15Seconds();
-    setBotDisconnectCountdown(15);
-    setPartyActionFeedback('All bots disconnected for 15s. They will reconnect automatically.');
-    const timer = setInterval(() => {
-      setBotDisconnectCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
-
-  // Bot Demo Actions (Requirement 6)
-  const handleBotReaction = useCallback(() => {
-    const result = MockPartyBackend.botSendReaction();
-    if (result) {
-      setPartyActionFeedback(`${result.botName} sent ${result.emoji}!`);
-    } else {
-      setPartyActionFeedback('No active bots in room. Click "Bots join my room" first.');
-    }
-    setTimeout(() => setPartyActionFeedback(null), 3000);
-  }, []);
-
-  const handleBotVoteSkip = useCallback(() => {
-    const result = MockPartyBackend.botVoteToSkip();
-    if (result) {
-      setPartyActionFeedback(`${result.botName} cast a vote to skip the current song.`);
-    } else {
-      setPartyActionFeedback('No active bots available to vote.');
-    }
-    setTimeout(() => setPartyActionFeedback(null), 3000);
-  }, []);
-
-  const handleBotLeaves = useCallback(() => {
-    const result = MockPartyBackend.botLeaveRoom();
-    if (result) {
-      setPartyActionFeedback(`${result.botName} left the party room.`);
-      setBotsActive(MockPartyBackend.areBotsActive());
-    } else {
-      setPartyActionFeedback('No active bots in the room to leave.');
-    }
-    setTimeout(() => setPartyActionFeedback(null), 3000);
-  }, []);
-
-  const handleBotHostSkips = useCallback(() => {
-    const track = MockPartyBackend.botHostSkipSong();
-    if (track) {
-      setPartyActionFeedback(`Host bot DJ Nova skipped to: "${track.title}"!`);
-    } else {
-      setPartyActionFeedback('Demo room hosted by bot is not currently active.');
-    }
-    setTimeout(() => setPartyActionFeedback(null), 3000);
-  }, []);
-
-  const handleToggleBotOnline = useCallback(async () => {
-    const backend = getPartyBackend();
-    if (backend.toggleBotOnline) {
-      await backend.toggleBotOnline();
-      setPartyActionFeedback('Simulated bot online/offline presence toggled.');
-      setTimeout(() => setPartyActionFeedback(null), 3500);
-    }
-  }, []);
-
-  const handleBotSendFriendRequest = useCallback(async () => {
-    const backend = getPartyBackend();
-    if (backend.simulateBotFriendRequest) {
-      const req = await backend.simulateBotFriendRequest();
-      setPartyActionFeedback(`A bot (${req.from.username} #${req.from.tag}) sent you a friend request!`);
-      setTimeout(() => setPartyActionFeedback(null), 3500);
-    }
-  }, []);
-
-  const handleBotInviteToParty = useCallback(async () => {
-    const backend = getPartyBackend();
-    if (backend.simulateBotInvite) {
-      const inv = await backend.simulateBotInvite();
-      setPartyActionFeedback(`A bot (${inv.from.username}) invited you to party room #${inv.roomCode}!`);
-      setTimeout(() => setPartyActionFeedback(null), 3500);
-    }
-  }, []);
-
-  const handleResetDemoData = useCallback(async () => {
-    const backend = getPartyBackend();
-    if (backend.resetDemoData) {
-      await backend.resetDemoData();
-      setPartyActionFeedback('Reset demo party data: friends, requests, and invites restored to initial defaults.');
-      setTimeout(() => setPartyActionFeedback(null), 3500);
-    }
-  }, []);
 
   // Diagnostics
   const [minVersionDiag, setMinVersionDiag] = useState(() => getMinVersionDiagnosticInfo());
@@ -665,8 +563,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       if (activeTab === 'connection') {
         runConnectionTests();
       }
+      if (activeTab === 'party_activity') {
+        loadPartyActivity();
+      }
     }
-  }, [session, activeTab, loadUsageData, loadMinVersionConfig, runConnectionTests]);
+  }, [session, activeTab, loadUsageData, loadMinVersionConfig, runConnectionTests, loadPartyActivity]);
 
   // Automatic refresh every 30 seconds while the page is open
   useEffect(() => {
@@ -674,9 +575,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     const interval = setInterval(() => {
       loadUsageData();
       loadMinVersionConfig();
+      if (activeTab === 'party_activity') {
+        loadPartyActivity();
+      }
     }, 30000);
     return () => clearInterval(interval);
-  }, [isOpen, session, loadUsageData, loadMinVersionConfig]);
+  }, [isOpen, session, activeTab, loadUsageData, loadMinVersionConfig, loadPartyActivity]);
 
   // Helper to calculate status badge data
   const getDeviceStatus = useCallback((lastSeenStr: string | null) => {
@@ -1185,51 +1089,57 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#070a16] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-[#060913] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-200">
       {/* Top Header */}
-      <div className="px-4 sm:px-6 py-3.5 border-b border-cyan-500/20 bg-slate-950/80 backdrop-blur-md flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-            <Terminal className="w-4 h-4" />
+      <header className="px-3.5 sm:px-6 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-slate-800 bg-slate-950/95 backdrop-blur-md shrink-0">
+        <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-9 h-9 rounded-xl bg-slate-900 border border-cyan-500/35 flex items-center justify-center text-cyan-400 shrink-0">
+              <Terminal className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">
+                  Developer Portal
+                </h2>
+                {session && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-500/12 border border-emerald-500/35 text-emerald-300 whitespace-nowrap shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span>Admin Authenticated</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 font-mono tabular-nums truncate mt-0.5">
+                {isNativeAndroid() ? `v${appVersionInfo.version} · Build ${appVersionInfo.build}` : 'Web Build'} · {BUILD_DATE}
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-black text-white tracking-wider flex items-center gap-2">
-              <span>DEVELOPER PORTAL</span>
-              {session && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
-                  ADMIN AUTHENTICATED
-                </span>
-              )}
-            </h2>
-            <p className="text-[10px] text-slate-400 font-mono">
-              {isNativeAndroid() ? `Build ${appVersionInfo.build}` : 'Web version'} • {BUILD_DATE}
-            </p>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {session && (
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {session && (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/70 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 active:scale-95"
+                title="Sign out and clear session"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                <span>Sign Out</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={handleSignOut}
-              className="px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/80 border border-red-500/30 text-red-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer active:scale-95"
-              title="Sign out and clear session"
+              onClick={handleClose}
+              className="min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white transition cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+              aria-label="Close Developer Portal"
+              title="Close Developer Portal"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
+              <X className="w-4 h-4" />
             </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleClose}
-            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
-            aria-label="Close Developer Page"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          </div>
         </div>
-      </div>
+      </header>
 
       {/* Main Content Area */}
       {isCheckingSession ? (
@@ -1245,28 +1155,28 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         /* =========================================================================
             STATE 1: ADMIN SIGN-IN SCREEN
            ========================================================================= */
-        <div className="flex-1 overflow-y-auto flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-3xl border border-cyan-500/30 bg-slate-900/90 p-6 sm:p-8 shadow-2xl backdrop-blur-xl space-y-6">
+        <div className="flex-1 overflow-y-auto flex items-center justify-center p-4 sm:p-6">
+          <div className="max-w-md w-full rounded-2xl border border-slate-800 bg-slate-900/95 p-5 sm:p-7 shadow-xl space-y-5">
             <div className="text-center space-y-2">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 mb-1">
-                <Lock className="w-6 h-6" />
+              <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-slate-950 border border-cyan-500/35 text-cyan-400 mb-1">
+                <Lock className="w-5 h-5" />
               </div>
-              <h3 className="text-xl font-black text-white tracking-wide">Developer Sign In</h3>
-              <p className="text-xs text-slate-400">
-                Sign in with your JTEC admin credentials to access telemetry and version control.
+              <h3 className="text-lg font-bold text-white tracking-tight">Developer Sign In</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Sign in with your JTEC admin credentials to access telemetry, version control, and Party activity.
               </p>
             </div>
 
             {accessDenied && (
-              <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-500/40 text-xs text-red-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                 <span>Access denied. Check your email, password, or admin permissions.</span>
               </div>
             )}
 
             <form onSubmit={handleSignIn} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">Email</label>
+                <label className="text-xs font-semibold text-slate-300 block">Email</label>
                 <input
                   type="email"
                   value={email}
@@ -1274,12 +1184,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                   placeholder="admin@jtecmusic.com"
                   autoComplete="username"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">Password</label>
+                <label className="text-xs font-semibold text-slate-300 block">Password</label>
                 <input
                   type="password"
                   value={password}
@@ -1287,15 +1197,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                   placeholder="••••••••••••"
                   autoComplete="current-password"
                   required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none transition"
                 />
               </div>
 
-              {/* Stay signed in on this phone switch (Requirement 4) */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-white/5">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-white block">Stay signed in on this phone</span>
-                  <span className="text-[11px] text-slate-400 block">Survives app restarts & updates</span>
+              {/* Stay signed in on this phone switch */}
+              <div className="flex items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
+                <div className="space-y-0.5 min-w-0">
+                  <span className="text-xs font-semibold text-white block">Stay signed in on this device</span>
+                  <span className="text-[11px] text-slate-400 block">Survives app restarts &amp; updates</span>
                 </div>
                 <button
                   type="button"
@@ -1317,7 +1227,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               <button
                 type="submit"
                 disabled={isSigningIn}
-                className="w-full py-3 px-4 rounded-xl font-bold text-xs bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white shadow-lg shadow-cyan-500/25 active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl font-bold text-xs bg-cyan-500 hover:bg-cyan-400 text-slate-950 active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {isSigningIn ? (
                   <>
@@ -1333,7 +1243,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               </button>
             </form>
 
-            <div className="pt-2 text-center text-[11px] text-slate-500">
+            <div className="pt-1 text-center text-[11px] text-slate-400">
               {staySignedIn
                 ? 'Session tokens securely saved on this device. Password is never stored.'
                 : 'Session will clear when the page closes. Password is never stored.'}
@@ -1346,94 +1256,96 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
            ========================================================================= */
         <div className="flex-1 flex flex-col min-h-0">
           {/* Tab Navigation */}
-          <div className="px-4 sm:px-6 pt-3 border-b border-white/10 bg-slate-950/60 flex items-center gap-2 overflow-x-auto">
-            <button
-              type="button"
-              onClick={() => setActiveTab('usage')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'usage'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Usage Telemetry</span>
-            </button>
+          <nav className="border-b border-slate-800 bg-slate-950/80 shrink-0" aria-label="Developer Portal sections">
+            <div className="max-w-6xl mx-auto px-3 sm:px-6 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={() => setActiveTab('usage')}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'usage'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 shrink-0" />
+                <span>Usage Telemetry</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('health_logs')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'health_logs'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <HeartPulse className="w-3.5 h-3.5" />
-              <span>Health & Logs</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('health_logs')}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'health_logs'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <HeartPulse className="w-3.5 h-3.5 shrink-0" />
+                <span>Health &amp; Logs</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('min_version');
-                refreshDiagnostics();
-              }}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'min_version'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>Minimum Version</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('min_version');
+                  refreshDiagnostics();
+                }}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'min_version'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5 shrink-0" />
+                <span>Minimum Version</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('update_status');
-                refreshDiagnostics();
-              }}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'update_status'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>Update Status</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('update_status');
+                  refreshDiagnostics();
+                }}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'update_status'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5 shrink-0" />
+                <span>Update Status</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('connection')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'connection'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <Wifi className="w-3.5 h-3.5" />
-              <span>Connection Test</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('connection')}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'connection'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Wifi className="w-3.5 h-3.5 shrink-0" />
+                <span>Connection Test</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('party_demo')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap ${
-                activeTab === 'party_demo'
-                  ? 'border-cyan-400 text-cyan-300 bg-cyan-950/20'
-                  : 'border-transparent text-slate-400 hover:text-white'
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5" />
-              <span>Party Demo & Network</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('party_activity')}
+                className={`min-h-[44px] px-3.5 py-2.5 text-xs font-semibold transition flex items-center gap-2 border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeTab === 'party_activity'
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/8'
+                    : 'border-transparent text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5 shrink-0" />
+                <span>Party Users &amp; Activity</span>
+              </button>
+            </div>
+          </nav>
 
           {/* Tab Panels */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
             {/* =========================================================================
                 TAB 0: APPLICATION HEALTH, SUPABASE MONITORING & DEVICE LOGS
                ========================================================================= */}
@@ -1493,16 +1405,16 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               const selectedProjectErrorCount = selectedProjectAllLogs.filter((l) => l.severity === 'ERROR').length;
 
               return (
-                <div className="space-y-6 max-w-5xl mx-auto" data-log-revision={logRevision}>
+                <div className="space-y-6 max-w-6xl mx-auto" data-log-revision={logRevision}>
                   {/* Top Control Header */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-black text-white tracking-wide flex items-center gap-2">
-                        <HeartPulse className="w-5 h-5 text-cyan-400" />
-                        <span>System Health & Diagnostics</span>
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                        <HeartPulse className="w-5 h-5 text-cyan-400 shrink-0" />
+                        <span>System Health &amp; Diagnostics</span>
                       </h3>
-                      <p className="text-xs text-slate-400">
-                        Live health monitoring per Supabase project, JTEC Party diagnostics & local device logs
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Live health monitoring per Supabase project, JTEC Party diagnostics &amp; local device logs
                       </p>
                     </div>
 
@@ -1511,89 +1423,89 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         type="button"
                         onClick={() => HealthMonitorService.testPartyConnection()}
                         disabled={Boolean(partyHealthSnapshot?.isTesting)}
-                        className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        className="min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                       >
-                        <Radio className={`w-3.5 h-3.5 ${partyHealthSnapshot?.isTesting ? 'animate-spin' : ''}`} />
-                        <span>{partyHealthSnapshot?.isTesting ? 'Testing Party...' : 'Test JTEC Party Connection'}</span>
+                        <Radio className={`w-3.5 h-3.5 text-cyan-400 ${partyHealthSnapshot?.isTesting ? 'animate-spin' : ''}`} />
+                        <span>{partyHealthSnapshot?.isTesting ? 'Testing Party...' : 'Test JTEC Party'}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => HealthMonitorService.refreshAllHealthChecks()}
                         disabled={overallHealth.isRefreshingAll}
-                        className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 shadow-lg shadow-cyan-500/20"
+                        className="min-h-[40px] px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${overallHealth.isRefreshingAll ? 'animate-spin' : ''}`} />
-                        <span>{overallHealth.isRefreshingAll ? 'Testing All...' : 'Refresh All Health Checks'}</span>
+                        <span>{overallHealth.isRefreshingAll ? 'Testing All...' : 'Refresh All Checks'}</span>
                       </button>
                     </div>
                   </div>
 
-                  {/* CARD A: Overall Application Health */}
-                  <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                  {/* Overall Application Health */}
+                  <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-800/80">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-950 border border-cyan-500/35 flex items-center justify-center text-cyan-400 shrink-0">
                           <Activity className="w-4 h-4" />
                         </div>
-                        <div>
-                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Card A — Overall Application Health</h4>
-                          <p className="text-[11px] text-slate-400">Aggregated status from tested Supabase projects, network & device logs</p>
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-bold text-white">Overall Application Health</h4>
+                          <p className="text-xs text-slate-400 truncate">Aggregated status from tested Supabase projects, network &amp; device logs</p>
                         </div>
                       </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-black border ${statusBadgeStyle(overallHealth.status)}`}>
+                      <span className={`px-3 py-1 rounded-lg text-xs font-bold border whitespace-nowrap ${statusBadgeStyle(overallHealth.status)}`}>
                         {overallHealth.status}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">App Version & Build</span>
-                        <span className="font-mono font-bold text-white block">
-                          {isNativeAndroid() ? `v${appVersionInfo.version} (Build ${appVersionInfo.build})` : `Web • ${BUILD_DATE}`}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                      <div className="p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] font-medium text-slate-400 block">App Version &amp; Build</span>
+                        <span className="font-mono tabular-nums font-semibold text-white block break-words">
+                          {isNativeAndroid() ? `v${appVersionInfo.version} (Build ${appVersionInfo.build})` : `Web · ${BUILD_DATE}`}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Device Connection</span>
-                        <span className={`font-mono font-bold flex items-center gap-1.5 ${overallHealth.isOnline ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      <div className="p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] font-medium text-slate-400 block">Device Connection</span>
+                        <span className={`font-mono font-semibold flex items-center gap-1.5 ${overallHealth.isOnline ? 'text-emerald-300' : 'text-rose-300'}`}>
                           <span className={`w-2 h-2 rounded-full ${overallHealth.isOnline ? 'bg-emerald-400' : 'bg-rose-400'}`} />
                           <span>{overallHealth.isOnline ? 'Online' : 'Offline'}</span>
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Last Full Health Check</span>
-                        <span className="font-mono text-slate-200 block">
+                      <div className="p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] font-medium text-slate-400 block">Last Full Health Check</span>
+                        <span className="font-mono tabular-nums text-slate-200 block break-words">
                           {formatTimestamp(overallHealth.lastHealthCheckAt)}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Local Log Counts</span>
-                        <div className="font-mono text-[11px] flex items-center gap-2 flex-wrap">
-                          <span className="text-rose-300 font-bold">{logStats.error} Err</span>
-                          <span className="text-amber-300 font-bold">{logStats.warning} Warn</span>
-                          <span className="text-emerald-300 font-bold">{logStats.success} Ok</span>
+                      <div className="p-3.5 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] font-medium text-slate-400 block">Local Log Counts</span>
+                        <div className="font-mono tabular-nums text-xs flex items-center gap-2 flex-wrap">
+                          <span className="text-rose-300 font-semibold">{logStats.error} Err</span>
+                          <span className="text-amber-300 font-semibold">{logStats.warning} Warn</span>
+                          <span className="text-emerald-300 font-semibold">{logStats.success} Ok</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-white/10 text-xs">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                    <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+                      <span className="text-[11px] font-semibold text-slate-400 block mb-1">
                         Most Recent Application Error (This Device)
                       </span>
                       {logStats.latestError ? (
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/35 text-rose-300 font-mono text-[10px] shrink-0">
+                          <div className="flex items-start sm:items-center gap-2 min-w-0 flex-wrap">
+                            <span className="px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/35 text-rose-300 font-mono text-[11px] shrink-0">
                               {logStats.latestError.component}
                             </span>
                             <span className="text-rose-200 font-medium break-words">
                               {logStats.latestError.message}
                             </span>
                           </div>
-                          <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
                             {formatTimestamp(logStats.latestError.timestamp)}
                           </span>
                         </div>
@@ -1601,19 +1513,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         <span className="text-emerald-300/90 font-medium">No errors recorded on this device.</span>
                       )}
                     </div>
-                  </div>
+                  </section>
 
-                  {/* CARD B: Supabase Project Monitoring */}
+                  {/* Supabase Project Monitoring */}
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                       <div className="flex items-center gap-2">
-                        <Database className="w-4 h-4 text-cyan-400" />
-                        <h4 className="text-sm font-black text-white uppercase tracking-wider">
-                          Card B — Supabase Project Monitoring
+                        <Database className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <h4 className="text-sm font-bold text-white">
+                          Supabase Project Monitoring
                         </h4>
                       </div>
-                      <span className="text-[11px] text-slate-400">
-                        Configured projects start as <strong className="text-cyan-300">NOT TESTED</strong> until checked
+                      <span className="text-xs text-slate-400">
+                        Configured projects start as <strong className="text-cyan-300 font-mono">NOT TESTED</strong> until checked
                       </span>
                     </div>
 
@@ -1621,33 +1533,33 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       {projectSnapshots.map((proj) => (
                         <div
                           key={proj.id}
-                          className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 shadow-lg space-y-3.5"
+                          className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-5 space-y-3.5"
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h5 className="text-sm font-black text-white">{proj.name}</h5>
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                <h5 className="text-sm font-bold text-white">{proj.name}</h5>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border whitespace-nowrap ${
                                   proj.configStatus === 'CONFIGURED'
-                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                                    : 'bg-slate-800 border-white/15 text-slate-400'
+                                    ? 'bg-emerald-500/12 border-emerald-500/30 text-emerald-300'
+                                    : 'bg-slate-800 border-slate-700 text-slate-400'
                                 }`}>
                                   {proj.configStatus}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-slate-400 mt-0.5">{proj.subtitle}</p>
-                              <p className="text-[11px] font-mono text-cyan-300/90 mt-1">Host: {proj.maskedHost}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{proj.subtitle}</p>
+                              <p className="text-[11px] font-mono text-cyan-300/90 mt-1 truncate">Host: {proj.maskedHost}</p>
                             </div>
 
                             <div className="flex flex-col items-end gap-2 shrink-0">
-                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${statusBadgeStyle(proj.healthStatus)}`}>
+                              <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${statusBadgeStyle(proj.healthStatus)}`}>
                                 {proj.healthStatus}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => HealthMonitorService.testProjectHealth(proj.id)}
                                 disabled={proj.isTesting}
-                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                className="min-h-[34px] px-3 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
                               >
                                 <RefreshCw className={`w-3 h-3 ${proj.isTesting ? 'animate-spin text-cyan-400' : ''}`} />
                                 <span>{proj.isTesting ? 'Testing...' : 'Test'}</span>
@@ -1655,42 +1567,42 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-white/5">
-                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
-                              <span className="text-[9px] font-bold uppercase text-slate-500 block">DB Read Result</span>
-                              <span className="font-mono text-slate-200 break-words">{proj.dbReadResult}</span>
+                          <div className="grid grid-cols-2 gap-2.5 text-xs pt-2 border-t border-slate-800/80">
+                            <div className="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
+                              <span className="text-[10px] font-medium text-slate-400 block">DB Read Result</span>
+                              <span className="font-mono text-[11px] text-slate-200 break-words">{proj.dbReadResult}</span>
                             </div>
-                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
-                              <span className="text-[9px] font-bold uppercase text-slate-500 block">
+                            <div className="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
+                              <span className="text-[10px] font-medium text-slate-400 block">
                                 {proj.id === 'jtec_party' ? 'Realtime Status' : 'Storage Test'}
                               </span>
-                              <span className="font-mono text-slate-200 break-words">
+                              <span className="font-mono text-[11px] text-slate-200 break-words">
                                 {proj.id === 'jtec_party' ? proj.realtimeStatus : proj.storageTestResult}
                               </span>
                             </div>
-                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
-                              <span className="text-[9px] font-bold uppercase text-slate-500 block">Last Successful Check</span>
-                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastSuccessfulCheck)}</span>
+                            <div className="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
+                              <span className="text-[10px] font-medium text-slate-400 block">Last Successful Check</span>
+                              <span className="font-mono tabular-nums text-[11px] text-slate-300 break-words">{formatTimestamp(proj.lastSuccessfulCheck)}</span>
                             </div>
-                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5">
-                              <span className="text-[9px] font-bold uppercase text-slate-500 block">Last Failed Check</span>
-                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastFailedCheck)}</span>
+                            <div className="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800/80">
+                              <span className="text-[10px] font-medium text-slate-400 block">Last Failed Check</span>
+                              <span className="font-mono tabular-nums text-[11px] text-slate-300 break-words">{formatTimestamp(proj.lastFailedCheck)}</span>
                             </div>
                           </div>
 
                           <div className="space-y-1.5 text-[11px] pt-1">
                             <div className="flex items-center justify-between gap-2 text-slate-400">
-                              <span>Last Successful Op:</span>
+                              <span className="shrink-0">Last Successful Op:</span>
                               <span className="font-mono text-emerald-300 truncate max-w-[65%]" title={proj.lastSuccessfulOperation || ''}>
                                 {proj.lastSuccessfulOperation || 'None yet'}
                               </span>
                             </div>
                             <div className="flex items-center justify-between gap-2 text-slate-400">
-                              <span>Most Recent Event:</span>
-                              <span className="font-mono text-slate-300">{formatTimestamp(proj.lastEventTimestamp)}</span>
+                              <span className="shrink-0">Most Recent Event:</span>
+                              <span className="font-mono tabular-nums text-slate-300 truncate">{formatTimestamp(proj.lastEventTimestamp)}</span>
                             </div>
                             {proj.lastErrorMessage && (
-                              <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-200 text-[11px] font-mono break-words">
+                              <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-500/35 text-rose-200 text-[11px] font-mono break-words">
                                 Error: {proj.lastErrorMessage}
                               </div>
                             )}
@@ -1700,123 +1612,124 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     </div>
                   </div>
 
-                  {/* CARD C: Dedicated JTEC Party Monitoring */}
-                  <div className="rounded-3xl border border-purple-500/35 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                  {/* Dedicated JTEC Party Monitoring */}
+                  <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-800/80">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-950 border border-cyan-500/35 flex items-center justify-center text-cyan-400 shrink-0">
                           <Radio className="w-4 h-4" />
                         </div>
-                        <div>
-                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Card C — Dedicated JTEC Party Monitoring</h4>
-                          <p className="text-[11px] text-slate-400">
-                            Isolated project (<span className="font-mono text-purple-300">{partyDiagnostics.maskedHost}</span>) • Simulated bots excluded from real presence
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-bold text-white">Dedicated JTEC Party Monitoring</h4>
+                          <p className="text-xs text-slate-400 truncate">
+                            Isolated project (<span className="font-mono text-cyan-300">{partyDiagnostics.maskedHost}</span>) · Real-time presence &amp; channel sync
                           </p>
                         </div>
                       </div>
 
-                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${
+                      <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
                         partyDiagnostics.connectionStatus === 'SUBSCRIBED'
-                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                           : partyDiagnostics.connectionStatus === 'CHANNEL_ERROR' || partyDiagnostics.connectionStatus === 'TIMED_OUT'
-                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                          : 'bg-slate-800 border-white/15 text-slate-300'
+                          ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                          : 'bg-slate-950 border-slate-700 text-slate-300'
                       }`}>
                         Room RT: {partyDiagnostics.connectionStatus}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Party Config / Connection</span>
-                        <span className="font-mono font-bold text-slate-100 block">
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5 min-w-0">
+                        <span className="text-[11px] text-slate-400 block">Party Config / Host</span>
+                        <span className="font-mono font-semibold text-slate-100 block truncate">
                           {partyDiagnostics.isConfigured ? partyDiagnostics.maskedHost : 'NOT CONFIGURED'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Online Presence Channel</span>
-                        <span className="font-mono font-bold text-cyan-300 block">
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5">
+                        <span className="text-[11px] text-slate-400 block">Online Presence Channel</span>
+                        <span className="font-mono font-semibold text-cyan-300 block">
                           {partyStatus.onlineChannelState || 'DISCONNECTED'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Online Party Users</span>
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5 min-w-0">
+                        <span className="text-[11px] text-slate-400 block">Online Party Users</span>
                         {typeof partyStatus.onlineUsersCount === 'number' ? (
-                          <span className="font-mono font-black text-emerald-300 block">
+                          <span className="font-mono tabular-nums font-bold text-emerald-300 block">
                             {partyStatus.onlineUsersCount} online (Realtime)
                           </span>
                         ) : (
-                          <span className="font-mono text-[11px] text-amber-300 block" title={partyStatus.onlineUsersUnavailableReason || ''}>
+                          <span className="font-mono text-[11px] text-amber-300 block truncate" title={partyStatus.onlineUsersUnavailableReason || ''}>
                             Unavailable ({partyStatus.onlineUsersUnavailableReason || 'not subscribed'})
                           </span>
                         )}
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Room Channel & Code</span>
-                        <span className="font-mono font-bold text-white block">
-                          {partyDiagnostics.roomCode ? `${partyDiagnostics.roomCode} (${partyDiagnostics.connectionStatus})` : 'None'}
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5 min-w-0">
+                        <span className="text-[11px] text-slate-400 block">Room Channel &amp; Code</span>
+                        <span className="font-mono font-semibold text-white block truncate">
+                          {partyDiagnostics.roomCode && !partyDiagnostics.isBotDemoRoom
+                            ? `${partyDiagnostics.roomCode} (${partyDiagnostics.connectionStatus})`
+                            : 'None'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Host vs Guest Role</span>
-                        <span className="font-mono font-bold text-purple-300 uppercase block">
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5">
+                        <span className="text-[11px] text-slate-400 block">Host vs Guest Role</span>
+                        <span className="font-mono font-semibold text-cyan-300 uppercase block">
                           {partyDiagnostics.role || 'None'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Room Participants</span>
-                        <span className="font-mono text-white block">
-                          {partyDiagnostics.realParticipantsCount} real
-                          {partyDiagnostics.simulatedBotsCount > 0 ? ` + ${partyDiagnostics.simulatedBotsCount} bot(s)` : ''}
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5">
+                        <span className="text-[11px] text-slate-400 block">Room Participants</span>
+                        <span className="font-mono tabular-nums text-white block">
+                          {partyDiagnostics.realParticipantsCount} active
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Playback Sync & Latency</span>
-                        <span className="font-mono text-slate-200 block">
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5 min-w-0">
+                        <span className="text-[11px] text-slate-400 block">Playback Sync &amp; Latency</span>
+                        <span className="font-mono tabular-nums text-slate-200 block truncate">
                           {partyLiveState.roomCode
-                            ? `${partyLiveState.role === 'host' ? 'Host' : Math.abs(partyDiagnostics.currentDriftMs) < 150 ? 'Synced' : `Adjusting (${Math.round(partyDiagnostics.currentDriftMs)}ms)`} • ${partyDiagnostics.currentLatencyMs}ms`
+                            ? `${partyLiveState.role === 'host' ? 'Host' : Math.abs(partyDiagnostics.currentDriftMs) < 150 ? 'Synced' : `Adjusting (${Math.round(partyDiagnostics.currentDriftMs)}ms)`} · ${partyDiagnostics.currentLatencyMs}ms`
                             : 'Idle'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Reconnect Attempts</span>
-                        <span className="font-mono font-bold text-slate-200 block">
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-0.5">
+                        <span className="text-[11px] text-slate-400 block">Reconnect Attempts</span>
+                        <span className="font-mono tabular-nums font-semibold text-slate-200 block">
                           {partyDiagnostics.reconnectAttempts}
                         </span>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Last Successful Broadcast</span>
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] text-slate-400 block">Last Successful Broadcast</span>
                         <span className="font-mono text-[11px] text-emerald-300 block break-words">
                           {partyDiagnostics.lastSuccessfulBroadcastAt
-                            ? `${partyDiagnostics.lastSuccessfulBroadcastType || 'msg'} • ${formatTimestamp(partyDiagnostics.lastSuccessfulBroadcastAt)}`
+                            ? `${partyDiagnostics.lastSuccessfulBroadcastType || 'msg'} · ${formatTimestamp(partyDiagnostics.lastSuccessfulBroadcastAt)}`
                             : 'None'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Last Failed Broadcast</span>
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] text-slate-400 block">Last Failed Broadcast</span>
                         <span className={`font-mono text-[11px] block break-words ${partyDiagnostics.lastFailedBroadcastError ? 'text-rose-300' : 'text-slate-400'}`}>
                           {partyDiagnostics.lastFailedBroadcastError
-                            ? `${partyDiagnostics.lastFailedBroadcastError} • ${formatTimestamp(partyDiagnostics.lastFailedBroadcastAt)}`
+                            ? `${partyDiagnostics.lastFailedBroadcastError} · ${formatTimestamp(partyDiagnostics.lastFailedBroadcastAt)}`
                             : 'None'}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-950/70 border border-white/5 space-y-1">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Most Recent Party Error</span>
+                      <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                        <span className="text-[11px] text-slate-400 block">Most Recent Party Error</span>
                         <span className={`font-mono text-[11px] block break-words ${
                           partyDiagnostics.lastErrorMessage || partyStatus.lastError || partyHealthSnapshot?.lastErrorMessage
-                            ? 'text-rose-300 font-bold'
+                            ? 'text-rose-300 font-semibold'
                             : 'text-slate-400'
                         }`}>
                           {partyDiagnostics.lastErrorMessage ||
@@ -1826,29 +1739,29 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </section>
 
-                  {/* STRUCTURED APPLICATION LOGS & PER-SUPABASE PROJECT LOGS */}
-                  <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
+                  {/* Structured Application Logs */}
+                  <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-slate-800 border border-white/15 flex items-center justify-center text-cyan-400">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
                           <FileText className="w-4 h-4" />
                         </div>
-                        <div>
-                          <h4 className="text-sm font-black text-white uppercase tracking-wider">Application Logs</h4>
-                          <p className="text-[11px] text-amber-300/90 font-semibold">
-                            Logs collected on this device only • {logStats.total} stored entries
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-bold text-white">Application Logs</h4>
+                          <p className="text-xs text-slate-400">
+                            Device-local diagnostic stream · <span className="font-mono tabular-nums text-cyan-300">{logStats.total}</span> stored entries
                           </p>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
-                        <div className="inline-flex rounded-xl bg-slate-950 p-1 border border-white/10">
+                        <div className="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
                           <button
                             type="button"
                             onClick={() => setLogViewMode('all')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            className={`min-h-[32px] px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
                               logViewMode === 'all' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
                             }`}
                           >
@@ -1857,7 +1770,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                           <button
                             type="button"
                             onClick={() => setLogViewMode('by_project')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            className={`min-h-[32px] px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
                               logViewMode === 'by_project' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
                             }`}
                           >
@@ -1869,9 +1782,9 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                           type="button"
                           onClick={() => setShowClearLogsConfirm(true)}
                           disabled={logStats.total === 0}
-                          className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40"
+                          className="min-h-[40px] px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 whitespace-nowrap"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5 shrink-0" />
                           <span>Clear Logs</span>
                         </button>
                       </div>
@@ -1996,34 +1909,33 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </div>
                     )}
 
-                    {/* Logs List */}
-                    <div className="max-h-96 overflow-y-auto space-y-2 p-3 rounded-2xl bg-slate-950/85 border border-white/10">
+                    <div className="max-h-96 overflow-y-auto space-y-2 p-3 rounded-xl bg-slate-950/85 border border-slate-800">
                       {filteredDeviceLogs.length === 0 ? (
-                        <p className="text-xs text-slate-500 text-center py-8">
+                        <p className="text-xs text-slate-400 text-center py-8">
                           No log entries match the current filters on this device.
                         </p>
                       ) : (
                         filteredDeviceLogs.slice(0, 150).map((entry) => (
                           <div
                             key={entry.id}
-                            className="p-3 rounded-xl bg-slate-900/80 border border-white/5 space-y-1.5 text-xs"
+                            className="p-3 rounded-xl bg-slate-900/90 border border-slate-800/80 space-y-1.5 text-xs"
                           >
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${severityBadgeStyle(entry.severity)}`}>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${severityBadgeStyle(entry.severity)}`}>
                                   {entry.severity}
                                 </span>
-                                <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-slate-200 font-mono text-[10px]">
+                                <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[10px]">
                                   {entry.component}
                                 </span>
-                                <span className="px-1.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-200 font-mono text-[10px]">
+                                <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 font-mono text-[10px]">
                                   {entry.project}
                                 </span>
-                                <span className="text-[10px] font-mono text-slate-400">
+                                <span className="text-[11px] font-mono text-slate-400">
                                   {entry.event}
                                 </span>
                               </div>
-                              <span className="text-[10px] font-mono text-slate-500">
+                              <span className="text-[11px] font-mono tabular-nums text-slate-400">
                                 {new Date(entry.timestamp).toLocaleString()}
                               </span>
                             </div>
@@ -2031,7 +1943,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                             <p className="text-slate-100 leading-snug break-words">{entry.message}</p>
 
                             {entry.details && Object.keys(entry.details).length > 0 && (
-                              <p className="text-[10px] font-mono text-slate-400 break-all">
+                              <p className="text-[11px] font-mono text-slate-400 break-all">
                                 {JSON.stringify(entry.details)}
                               </p>
                             )}
@@ -2039,7 +1951,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         ))
                       )}
                     </div>
-                  </div>
+                  </section>
                 </div>
               );
             })()}
@@ -2048,12 +1960,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 TAB 1: USAGE TELEMETRY & DEVICES LIST
                ========================================================================= */}
             {activeTab === 'usage' && (
-              <div className="space-y-6 max-w-5xl mx-auto">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-white tracking-wide">Usage Telemetry</h3>
-                    <p className="text-xs text-slate-400">
-                      Real-time devices from <code className="text-cyan-300 font-mono">app_installs</code> • Auto-refreshes every 30s
+              <div className="space-y-6 max-w-6xl mx-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-white tracking-tight">Usage Telemetry</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Real-time devices from <code className="text-cyan-300 font-mono">app_installs</code> · Auto-refreshes every 30s
                     </p>
                   </div>
 
@@ -2064,7 +1976,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       loadMinVersionConfig();
                     }}
                     disabled={isLoadingUsage}
-                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer border border-slate-700/80 disabled:opacity-50 shrink-0 self-start sm:self-auto whitespace-nowrap"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoadingUsage ? 'animate-spin text-cyan-400' : ''}`} />
                     <span>Refresh</span>
@@ -2072,249 +1984,125 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 </div>
 
                 {usageError && (
-                  <div className="p-3.5 rounded-2xl bg-red-950/50 border border-red-500/40 text-xs text-red-200">
+                  <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200">
                     {usageError}
                   </div>
                 )}
 
                 {ownerLabelError && (
-                  <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
+                  <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>{ownerLabelError}</span>
                   </div>
                 )}
 
-                {/* Requirement 1: Totals at the top */}
+                {/* Totals KPI Strip */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  {/* Total Installs */}
-                  <div className="rounded-2xl border border-cyan-500/30 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">All Installs</span>
-                    <div className="my-1">
-                      <span className="text-2xl font-black text-white font-mono">{totalInstalls.toLocaleString()}</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">All Installs</span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-bold text-white font-mono tabular-nums">{totalInstalls.toLocaleString()}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">Total devices</span>
+                    <span className="text-[11px] text-slate-400">Total devices</span>
                   </div>
 
-                  {/* Online Now */}
-                  <div className="rounded-2xl border border-emerald-500/40 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Online Now</span>
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-400">Online Now</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
                     </div>
-                    <div className="my-1">
-                      <span className="text-2xl font-black text-emerald-400 font-mono">{onlineNowCount.toLocaleString()}</span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-bold text-emerald-300 font-mono tabular-nums">{onlineNowCount.toLocaleString()}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">Within 10 min</span>
+                    <span className="text-[11px] text-slate-400">Within 10 min</span>
                   </div>
 
-                  {/* Active 24 Hours */}
-                  <div className="rounded-2xl border border-purple-500/30 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active 24h</span>
-                    <div className="my-1">
-                      <span className="text-2xl font-black text-purple-300 font-mono">{active24hCount.toLocaleString()}</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Active 24h</span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-bold text-cyan-300 font-mono tabular-nums">{active24hCount.toLocaleString()}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">
-                      {totalInstalls > 0 ? `${((active24hCount / totalInstalls) * 100).toFixed(0)}% of total` : '0%'}
+                    <span className="text-[11px] text-slate-400 font-mono tabular-nums">
+                      {totalInstalls > 0 ? `${((active24hCount / totalInstalls) * 100).toFixed(0)}% of total` : '0% of total'}
                     </span>
                   </div>
 
-                  {/* Active 7 Days */}
-                  <div className="rounded-2xl border border-blue-500/30 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active 7d</span>
-                    <div className="my-1">
-                      <span className="text-2xl font-black text-blue-300 font-mono">{active7dCount.toLocaleString()}</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Active 7d</span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-bold text-sky-300 font-mono tabular-nums">{active7dCount.toLocaleString()}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">Past 7 days</span>
+                    <span className="text-[11px] text-slate-400">Past 7 days</span>
                   </div>
 
-                  {/* Android App vs Web */}
-                  <div className="rounded-2xl border border-teal-500/30 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Platform</span>
-                    <div className="my-1 text-sm font-bold font-mono">
-                      <span className="text-emerald-400">{androidAppCount} APK</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Platform</span>
+                    <div className="my-1.5 text-sm font-bold font-mono tabular-nums">
+                      <span className="text-emerald-300">{androidAppCount} APK</span>
                       <span className="text-slate-500 mx-1">/</span>
-                      <span className="text-cyan-400">{webAppCount} Web</span>
+                      <span className="text-cyan-300">{webAppCount} Web</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">Android vs Web</span>
+                    <span className="text-[11px] text-slate-400">Android vs Web</span>
                   </div>
 
-                  {/* Blocked vs Allowed */}
-                  <div className="rounded-2xl border border-rose-500/30 bg-slate-900/70 p-3.5 shadow-lg flex flex-col justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Access Status</span>
-                    <div className="my-1 text-sm font-bold font-mono">
-                      <span className="text-emerald-400">{allowedCount} Allowed</span>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Access Status</span>
+                    <div className="my-1.5 text-sm font-bold font-mono tabular-nums">
+                      <span className="text-emerald-300">{allowedCount} Ok</span>
                       <span className="text-slate-500 mx-1">/</span>
-                      <span className="text-rose-400">{blockedCount} Blocked</span>
+                      <span className="text-rose-300">{blockedCount} Blk</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[11px] text-slate-400 font-mono tabular-nums">
                       {currentMinBuild > 0 ? `Min build: ${currentMinBuild}` : 'No block active'}
                     </span>
                   </div>
                 </div>
 
-                {/* =========================================================================
-                    REQUIREMENT 2: VERSIONS TABLE
-                   ========================================================================= */}
-                <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                        <Layers className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-wider">Versions & Builds</h4>
-                        <p className="text-[11px] text-slate-400">
-                          Grouped by build number • Latest published: <strong className="text-cyan-300 font-mono">Build {latestBuild} ({latestVersionName || `v${appVersionInfo.version}`})</strong>
-                        </p>
-                      </div>
-                    </div>
+                {/* Versions & Builds (Responsive Desktop Table & Mobile Cards) */}
+                <VersionsBuildsCard
+                  versionsTable={versionsTable}
+                  latestBuild={latestBuild}
+                  latestVersionName={latestVersionName}
+                  currentAppVersion={appVersionInfo.version}
+                  blockActionMessage={blockActionMessage}
+                  onOpenUnblockAll={() => setShowUnblockAllConfirm(true)}
+                  onRequestBlockVersion={(target) => setBlockConfirmTarget(target)}
+                />
 
-                    <button
-                      type="button"
-                      onClick={() => setShowUnblockAllConfirm(true)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-white/10 flex items-center gap-1.5 transition cursor-pointer active:scale-95"
-                    >
-                      <Unlock className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Unblock all</span>
-                    </button>
-                  </div>
-
-                  {blockActionMessage && (
-                    <div className={`p-3 rounded-2xl text-xs flex items-center gap-2 ${
-                      blockActionMessage.type === 'success'
-                        ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-200'
-                        : 'bg-rose-950/60 border border-rose-500/40 text-rose-200'
-                    }`}>
-                      {blockActionMessage.type === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                      )}
-                      <span>{blockActionMessage.text}</span>
-                    </div>
-                  )}
-
-                  {/* Versions Table */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-white/10 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                          <th className="py-2.5 px-3">Version</th>
-                          <th className="py-2.5 px-3">Build</th>
-                          <th className="py-2.5 px-3">Devices</th>
-                          <th className="py-2.5 px-3">Share</th>
-                          <th className="py-2.5 px-3">Status</th>
-                          <th className="py-2.5 px-3 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5 font-mono">
-                        {versionsTable.map((row) => {
-                          const isLatest = row.status === 'Latest';
-                          const isBlocked = row.status === 'Blocked';
-                          const isWebRow = row.isWeb;
-
-                          return (
-                            <tr key={row.key} className="hover:bg-slate-950/40 transition">
-                              <td className="py-3 px-3 font-bold text-white">
-                                {row.version}
-                              </td>
-                              <td className="py-3 px-3 text-cyan-300">
-                                {isWebRow ? 'Web' : `Build ${row.build}`}
-                              </td>
-                              <td className="py-3 px-3 text-slate-200">
-                                {row.count} {row.count === 1 ? 'device' : 'devices'}
-                              </td>
-                              <td className="py-3 px-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-slate-300 text-[11px] w-12">{row.percentage.toFixed(1)}%</span>
-                                  <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden hidden sm:block">
-                                    <div
-                                      className={`h-full rounded-full ${
-                                        isWebRow || isLatest
-                                          ? 'bg-cyan-400'
-                                          : isBlocked
-                                          ? 'bg-rose-500'
-                                          : 'bg-emerald-400'
-                                      }`}
-                                      style={{ width: `${Math.max(row.percentage, 2)}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="py-3 px-3">
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                  isWebRow
-                                    ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
-                                    : isLatest
-                                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
-                                    : isBlocked
-                                    ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                    : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                                }`}>
-                                  {row.status}
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 text-right">
-                                {isWebRow ? (
-                                  <span className="text-[10px] text-cyan-300/80 font-sans italic">Always allowed</span>
-                                ) : !isLatest && row.build !== null ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setBlockConfirmTarget({ build: row.build!, version: row.version })}
-                                    className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 hover:text-white text-[11px] font-semibold transition cursor-pointer active:scale-95"
-                                  >
-                                    Block this version and older
-                                  </button>
-                                ) : (
-                                  <span className="text-[10px] text-slate-500 font-sans italic">Latest build</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* =========================================================================
-                    REQUIREMENT 1: DEVICES DIRECTORY (Search, Filters, Detailed List)
-                   ========================================================================= */}
-                <div className="rounded-3xl border border-cyan-500/30 bg-slate-900/80 p-5 sm:p-6 shadow-2xl space-y-4">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
+                {/* Devices Directory */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
                         <Smartphone className="w-4 h-4" />
                       </div>
-                      <div>
-                        <h4 className="text-base font-black text-white">Devices Directory</h4>
-                        <p className="text-[11px] text-slate-400">
-                          Showing {filteredDevices.length} of {installs.length} devices • Click status for exact timestamp
+                      <div className="min-w-0">
+                        <h4 className="text-sm sm:text-base font-bold text-white">Devices Directory</h4>
+                        <p className="text-xs text-slate-400">
+                          Showing {filteredDevices.length} of {installs.length} devices · Tap status for exact timestamp
                         </p>
                       </div>
                     </div>
                   </div>
 
                   {/* Search and Filters Bar */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1">
-                    {/* Search Input */}
-                    <div className="sm:col-span-4 relative">
+                  <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5">
+                    <div className="col-span-2 sm:col-span-4 relative">
                       <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
                         value={deviceSearch}
                         onChange={(e) => setDeviceSearch(e.target.value)}
                         placeholder="Search label, phone name, model, OS..."
-                        className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                        className="w-full min-h-[40px] pl-9 pr-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
                       />
                     </div>
 
-                    {/* Platform Filter */}
-                    <div className="sm:col-span-3">
+                    <div className="col-span-1 sm:col-span-3">
                       <select
                         value={platformFilter}
                         onChange={(e: any) => setPlatformFilter(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                        className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
                       >
                         <option value="all">All Platforms</option>
                         <option value="android">Android App</option>
@@ -2322,12 +2110,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </select>
                     </div>
 
-                    {/* Version Filter */}
-                    <div className="sm:col-span-2">
+                    <div className="col-span-1 sm:col-span-2">
                       <select
                         value={versionFilter}
                         onChange={(e) => setVersionFilter(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                        className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
                       >
                         <option value="all">All Versions</option>
                         {distinctVersions.map((v) => (
@@ -2338,12 +2125,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </select>
                     </div>
 
-                    {/* Status Filter */}
-                    <div className="sm:col-span-2">
+                    <div className="col-span-1 sm:col-span-2">
                       <select
                         value={statusFilter}
                         onChange={(e: any) => setStatusFilter(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                        className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
                       >
                         <option value="all">All Status</option>
                         <option value="online">Online now</option>
@@ -2352,26 +2138,26 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       </select>
                     </div>
 
-                    {/* Last Seen Sort Toggle */}
-                    <div className="sm:col-span-1">
+                    <div className="col-span-1 sm:col-span-1">
                       <button
                         type="button"
                         onClick={() => setLastSeenSortDesc(!lastSeenSortDesc)}
                         title={lastSeenSortDesc ? 'Sorting: Newest activity first' : 'Sorting: Oldest activity first'}
-                        className="w-full h-full py-2 px-2 rounded-xl bg-slate-950 hover:bg-slate-900 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center transition cursor-pointer"
+                        className="w-full min-h-[40px] py-2 px-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center gap-1.5 transition cursor-pointer"
                       >
-                        <ArrowUpDown className="w-3.5 h-3.5 text-cyan-400" />
+                        <ArrowUpDown className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                        <span className="sm:hidden">Sort</span>
                       </button>
                     </div>
                   </div>
 
                   {/* Devices List Rows */}
                   {filteredDevices.length === 0 ? (
-                    <div className="p-8 rounded-2xl bg-slate-950/40 border border-white/5 text-center text-xs text-slate-400">
+                    <div className="p-8 rounded-xl bg-slate-950/60 border border-slate-800 text-center text-xs text-slate-400">
                       No matching devices found.
                     </div>
                   ) : (
-                    <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                    <div className="space-y-3 max-h-[600px] overflow-y-auto pr-0.5">
                       {filteredDevices.map((row) => {
                         const isAndroid = (row.platform || 'web').toLowerCase().includes('android');
                         const rawName = (row.device_name || row.name || '').trim();
@@ -2389,27 +2175,26 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         return (
                           <div
                             key={row.install_id}
-                            className="p-4 rounded-2xl bg-slate-950/70 border border-white/5 hover:border-cyan-500/30 transition space-y-3"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-950/75 border border-slate-800/80 hover:border-cyan-500/35 transition space-y-3"
                           >
                             {/* Top row: Owner label, Phone Name, and Badges */}
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              {/* Left: Owner Label (with edit icon) & Phone Name */}
-                              <div className="flex items-center gap-2.5 flex-wrap">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                              <div className="flex items-center gap-2.5 flex-wrap min-w-0">
                                 {isEditingThisOwner ? (
-                                  <div className="flex items-center gap-1.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <input
                                       type="text"
                                       maxLength={60}
                                       value={editingOwnerLabelInput}
                                       onChange={(e) => setEditingOwnerLabelInput(e.target.value)}
                                       placeholder="Owner label (e.g. John's Tablet)"
-                                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-cyan-400 text-xs text-white font-semibold focus:outline-none"
+                                      className="min-h-[34px] px-2.5 py-1 rounded-lg bg-slate-900 border border-cyan-400 text-xs text-white font-semibold focus:outline-none"
                                     />
                                     <button
                                       type="button"
                                       onClick={() => handleSaveOwnerLabel(row.install_id)}
                                       disabled={isSavingOwnerLabel}
-                                      className="p-1.5 rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition cursor-pointer"
+                                      className="min-h-[34px] px-2.5 py-1.5 rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition cursor-pointer"
                                       title="Save owner label"
                                     >
                                       <Check className="w-3.5 h-3.5" />
@@ -2420,18 +2205,18 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                         setEditingOwnerLabelId(null);
                                         setEditingOwnerLabelInput('');
                                       }}
-                                      className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                                      className="min-h-[34px] px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer"
                                       title="Cancel"
                                     >
                                       <X className="w-3.5 h-3.5" />
                                     </button>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${
                                       row.owner_label
-                                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                                        : 'bg-slate-900 border-white/10 text-slate-400'
+                                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-200'
+                                        : 'bg-slate-900 border-slate-800 text-slate-400'
                                     }`}>
                                       {ownerLabel}
                                     </span>
@@ -2442,7 +2227,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                         setEditingOwnerLabelInput(row.owner_label || '');
                                         setOwnerLabelError(null);
                                       }}
-                                      className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-cyan-300 transition cursor-pointer"
+                                      className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-cyan-300 transition cursor-pointer"
                                       title="Edit owner label"
                                     >
                                       <Edit2 className="w-3 h-3" />
@@ -2450,95 +2235,87 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                                   </div>
                                 )}
 
-                                <span className="text-sm font-black text-white flex items-center gap-1.5">
-                                  <span>{phoneName}</span>
+                                <span className="text-sm font-bold text-white truncate">
+                                  {phoneName}
                                 </span>
                               </div>
 
-                              {/* Right: Status badge & Blocked/Allowed badge */}
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {/* Online / Last Seen status badge (Tappable for exact time) */}
+                              {/* Status, Access, Platform Badges */}
+                              <div className="flex items-center gap-2 flex-wrap shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => setExpandedTimeDeviceId(isTimeExpanded ? null : row.install_id)}
-                                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border flex items-center gap-1.5 cursor-pointer transition active:scale-95 ${
+                                  className={`min-h-[30px] px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5 cursor-pointer transition whitespace-nowrap ${
                                     status.isOnline
-                                      ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
-                                      : 'bg-slate-900 border-white/10 text-slate-300 hover:bg-slate-800'
+                                      ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/20'
+                                      : 'bg-slate-900 border-slate-700/80 text-slate-300 hover:bg-slate-800'
                                   }`}
                                   title="Tap to toggle exact timestamp"
                                 >
                                   {status.isOnline ? (
-                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                   ) : (
                                     <Clock className="w-3 h-3 text-slate-400" />
                                   )}
                                   <span>{status.label}</span>
                                 </button>
 
-                                {/* Blocked / Allowed badge (Android only) or Web always allowed */}
                                 {isAndroid ? (
-                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${
+                                  <span className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border whitespace-nowrap ${
                                     isBlocked
-                                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                                      ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                                      : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                                   }`}>
                                     {isBlocked ? 'Blocked' : 'Allowed'}
                                   </span>
                                 ) : (
-                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border tracking-wider bg-cyan-500/15 border-cyan-500/35 text-cyan-300">
-                                    Web • always allowed
+                                  <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border whitespace-nowrap bg-cyan-500/12 border-cyan-500/35 text-cyan-300">
+                                    Web · Always Allowed
                                   </span>
                                 )}
 
-                                {/* Platform badge */}
-                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
-                                  isAndroid
-                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                                    : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
-                                }`}>
+                                <span className="text-[11px] font-medium text-slate-400 px-1.5">
                                   {isAndroid ? 'Android' : 'Web'}
                                 </span>
                               </div>
                             </div>
 
-                            {/* Exact timestamp banner if tapped */}
                             {isTimeExpanded && (
-                              <div className="p-2 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-xs text-cyan-200 flex items-center justify-between">
-                                <span className="font-mono">Exact last seen: <strong>{status.exactTime}</strong></span>
-                                <span className="text-[10px] text-slate-400">Tap status to hide</span>
+                              <div className="p-2.5 rounded-lg bg-slate-900 border border-cyan-500/30 text-xs text-cyan-200 flex items-center justify-between gap-2 flex-wrap">
+                                <span className="font-mono tabular-nums">Exact last seen: <strong>{status.exactTime}</strong></span>
+                                <span className="text-[11px] text-slate-400">Tap status to hide</span>
                               </div>
                             )}
 
                             {/* Details Grid */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-white/5 text-[11px]">
-                              <div>
-                                <span className="text-slate-500 block text-[9px] uppercase font-bold">Hardware & OS</span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2.5 border-t border-slate-800/80 text-xs">
+                              <div className="min-w-0">
+                                <span className="text-slate-400 block text-[11px]">Hardware &amp; OS</span>
                                 <span className="text-slate-200 font-medium truncate block">{cleanedMfgModel}</span>
-                                <span className="text-slate-400 text-[10px]">{osStr}</span>
+                                <span className="text-slate-400 text-[11px] block truncate">{osStr}</span>
                               </div>
 
-                              <div>
-                                <span className="text-slate-500 block text-[9px] uppercase font-bold">App Version</span>
-                                <span className="text-white font-mono font-bold">
+                              <div className="min-w-0">
+                                <span className="text-slate-400 block text-[11px]">App Version</span>
+                                <span className="text-white font-mono font-semibold block truncate">
                                   {row.app_version || 'v1.0.1'}
                                 </span>
-                                <span className="text-cyan-400 font-mono text-[10px] block">
+                                <span className="text-cyan-300 font-mono tabular-nums text-[11px] block">
                                   Build {row.build ?? 'Unknown'}
                                 </span>
                               </div>
 
-                              <div>
-                                <span className="text-slate-500 block text-[9px] uppercase font-bold">First Seen</span>
-                                <span className="text-slate-300 font-mono text-[10px] block truncate">
+                              <div className="min-w-0">
+                                <span className="text-slate-400 block text-[11px]">First Seen</span>
+                                <span className="text-slate-300 font-mono tabular-nums text-[11px] block truncate">
                                   {row.first_seen ? new Date(row.first_seen).toLocaleString() : 'N/A'}
                                 </span>
                               </div>
 
                               <div className="sm:text-right">
-                                <span className="text-slate-500 block text-[9px] uppercase font-bold">Total Opens</span>
-                                <span className="text-xs font-mono font-bold text-cyan-300">
-                                  {row.opens ?? 1} {row.opens === 1 ? 'open' : 'opens'}
+                                <span className="text-slate-400 block text-[11px]">Total Opens</span>
+                                <span className="text-xs font-mono tabular-nums font-semibold text-cyan-300">
+                                  {(row.opens ?? 1).toLocaleString()} {row.opens === 1 ? 'open' : 'opens'}
                                 </span>
                               </div>
                             </div>
@@ -2547,7 +2324,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       })}
                     </div>
                   )}
-                </div>
+                </section>
               </div>
             )}
 
@@ -2555,11 +2332,11 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 TAB 2: MINIMUM VERSION (Requirement 3)
                ========================================================================= */}
             {activeTab === 'min_version' && (
-              <div className="space-y-6 max-w-3xl mx-auto">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-white tracking-wide">Minimum Version & Access Control</h3>
-                    <p className="text-xs text-slate-400">
+              <div className="space-y-6 max-w-4xl mx-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-white tracking-tight">Minimum Version &amp; Access Control</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
                       Controls access via <code className="text-cyan-300 font-mono">app_config (id = 1)</code>
                     </p>
                   </div>
@@ -2571,7 +2348,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       loadUsageData();
                     }}
                     disabled={isLoadingConfig}
-                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer border border-slate-700/80 disabled:opacity-50 shrink-0 self-start sm:self-auto whitespace-nowrap"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoadingConfig ? 'animate-spin text-cyan-400' : ''}`} />
                     <span>Refresh</span>
@@ -2579,124 +2356,125 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 </div>
 
                 {saveSuccessMsg && (
-                  <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center gap-2 text-xs text-emerald-200">
+                  <div className="p-3.5 rounded-xl bg-emerald-950/50 border border-emerald-500/35 flex items-center gap-2.5 text-xs text-emerald-200">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     <span>{saveSuccessMsg}</span>
                   </div>
                 )}
 
                 {saveErrorMsg && (
-                  <div className="p-3.5 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
+                  <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/35 text-xs text-rose-200 flex items-center gap-2.5">
                     <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>{saveErrorMsg}</span>
                   </div>
                 )}
 
-                {/* Requirement 3: Read-only summary card */}
-                <div className="rounded-3xl border border-cyan-500/40 bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-cyan-950/30 p-5 sm:p-6 shadow-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-5 h-5 text-cyan-400" />
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Access Enforcement Summary</h4>
+                {/* Read-only summary card */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center gap-2.5">
+                      <Shield className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <h4 className="text-sm font-bold text-white">Access Enforcement Summary</h4>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                    <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border whitespace-nowrap ${
                       currentMinBuild > 0
-                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                        : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                        ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                        : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                     }`}>
                       {currentMinBuild > 0 ? `Enforcing Min Build ${currentMinBuild}` : 'All Builds Allowed'}
                     </span>
                   </div>
 
-                  {/* The summary sentence */}
-                  <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30">
-                    <p className="text-sm font-mono font-bold text-cyan-300 leading-relaxed">
+                  <div className="p-3.5 sm:p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <p className="text-xs sm:text-sm font-mono tabular-nums font-semibold text-cyan-300 leading-relaxed break-words">
                       {minVersionSummaryText}
                     </p>
                   </div>
 
                   <div className="flex items-center justify-between text-xs text-slate-400 pt-1 flex-wrap gap-2">
-                    <span>Configured in database: <strong className="text-white font-mono">{currentMinBuild}</strong></span>
-                    <span>Latest published build: <strong className="text-emerald-400 font-mono">{latestBuild}</strong></span>
+                    <span>Configured in database: <strong className="text-white font-mono tabular-nums">{currentMinBuild}</strong></span>
+                    <span>Latest published build: <strong className="text-emerald-300 font-mono tabular-nums">{latestBuild}</strong></span>
                   </div>
-                </div>
+                </section>
 
-                {/* Versions Table directly in Minimum Version tab for quick version blocking */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 shadow-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-purple-400" />
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Block by Version</h4>
+                {/* Versions quick-blocking list */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-3.5">
+                  <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center gap-2.5">
+                      <Layers className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <h4 className="text-sm font-bold text-white">Block by Version</h4>
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowUnblockAllConfirm(true)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-white/10 flex items-center gap-1 transition cursor-pointer"
+                      className="min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-xs font-semibold text-slate-200 border border-slate-700/80 flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      <Unlock className="w-3 h-3 text-emerald-400" />
-                      <span>Unblock all</span>
+                      <Unlock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>Unblock All</span>
                     </button>
                   </div>
 
-                  <div className="divide-y divide-white/5 text-xs font-mono">
+                  <div className="divide-y divide-slate-800/80 text-xs">
                     {versionsTable.map((row) => {
                       const isLatest = row.status === 'Latest';
                       const isBlocked = row.status === 'Blocked';
                       const isWebRow = row.isWeb;
 
                       return (
-                        <div key={row.key} className="py-2.5 flex items-center justify-between flex-wrap gap-2">
-                          <div className="flex items-center gap-2.5">
-                            <span className="font-bold text-white">{row.version}</span>
+                        <div key={row.key} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className="font-semibold text-white">{row.version}</span>
                             {!isWebRow && row.build !== null && (
-                              <span className="text-slate-400">(Build {row.build})</span>
+                              <span className="font-mono tabular-nums text-cyan-300">Build {row.build}</span>
                             )}
-                            <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
+                            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border whitespace-nowrap ${
                               isWebRow
-                                ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                                ? 'bg-cyan-500/12 border-cyan-500/35 text-cyan-300'
                                 : isLatest
-                                ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                                ? 'bg-sky-500/15 border-sky-400/35 text-sky-200'
                                 : isBlocked
-                                ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                                ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                                : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                             }`}>
-                              {row.status}
+                              {row.isWeb ? 'Web · Always Allowed' : row.status}
                             </span>
-                            <span className="text-slate-500 text-[11px] font-sans">
-                              {row.count} {row.count === 1 ? 'device' : 'devices'}
+                            <span className="text-slate-400 text-[11px] font-mono tabular-nums">
+                              · {row.count} {row.count === 1 ? 'device' : 'devices'}
                             </span>
                           </div>
 
-                          {isWebRow ? (
-                            <span className="text-[10px] text-cyan-300/80 font-sans italic">Always allowed</span>
-                          ) : !isLatest && row.build !== null ? (
-                            <button
-                              type="button"
-                              onClick={() => setBlockConfirmTarget({ build: row.build!, version: row.version })}
-                              className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 hover:text-white text-[11px] font-semibold transition cursor-pointer active:scale-95"
-                            >
-                              Block this version and older
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-slate-500 font-sans italic">Latest published build</span>
-                          )}
+                          <div className="shrink-0">
+                            {isWebRow ? (
+                              <span className="text-[11px] text-slate-400">Always allowed</span>
+                            ) : !isLatest && row.build !== null ? (
+                              <button
+                                type="button"
+                                onClick={() => setBlockConfirmTarget({ build: row.build!, version: row.version })}
+                                className="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                              >
+                                Block &le; Build {row.build}
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">Latest published build</span>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                </div>
+                </section>
 
-                {/* Requirement 3: Advanced field to type a build number directly */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-lg space-y-3">
+                {/* Manual Build Number */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-3">
                   <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-cyan-400" />
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Advanced: Manual Build Number</h4>
+                    <Lock className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <h4 className="text-sm font-bold text-white">Advanced: Manual Build Number</h4>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Type a build number directly. Phones below this number will be blocked. Cannot exceed latest published build ({latestBuild}).
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Type a build number directly. Android phones below this number will be blocked. Cannot exceed latest published build (<span className="font-mono tabular-nums text-slate-200">{latestBuild}</span>).
                   </p>
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2.5 pt-1">
                     <input
                       type="number"
                       min="0"
@@ -2705,19 +2483,19 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       value={editingManualBuild}
                       onChange={(e) => setEditingManualBuild(e.target.value)}
                       placeholder={`0 - ${latestBuild}`}
-                      className="w-36 px-3.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono text-sm focus:border-cyan-400 focus:outline-none"
+                      className="w-36 min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono tabular-nums text-sm focus:border-cyan-400 focus:outline-none"
                     />
 
                     <button
                       type="button"
                       onClick={handleSaveManualBuild}
                       disabled={isSavingManualBuild || !editingManualBuild}
-                      className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-cyan-500/20 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50 active:scale-95"
+                      className="min-h-[42px] px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
                     >
                       {isSavingManualBuild ? (
                         <>
                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Saving & Verifying...</span>
+                          <span>Saving &amp; Verifying...</span>
                         </>
                       ) : (
                         <>
@@ -2727,15 +2505,16 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       )}
                     </button>
                   </div>
-                </div>
+                </section>
 
-                {/* Requirement 3: Message, Notes, and APK URL fields and Preview */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 sm:p-6 shadow-xl space-y-4">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Update Screen Customization</h4>
+                {/* Message, Notes, and APK URL fields and Preview */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                  <h4 className="text-sm font-bold text-white pb-2 border-b border-slate-800/80">
+                    Update Screen Customization
+                  </h4>
 
-                  {/* Update Message */}
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="text-xs font-semibold text-slate-300 block">
                       Update Message for Blocked Users
                     </label>
                     <textarea
@@ -2743,30 +2522,28 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       value={editingMessage}
                       onChange={(e) => setEditingMessage(e.target.value)}
                       placeholder="An update is required to continue using JTEC MUSIC."
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:border-cyan-400 focus:outline-none resize-none"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-cyan-400 focus:outline-none resize-none"
                     />
                   </div>
 
-                  {/* Multi-line Notes */}
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <label className="text-xs font-semibold text-slate-300">
                         Release Notes Bullets (Multi-line)
                       </label>
-                      <span className="text-[10px] text-slate-400">One bullet per line starting with &quot;- &quot;</span>
+                      <span className="text-[11px] text-slate-400">One bullet per line starting with &quot;- &quot;</span>
                     </div>
                     <textarea
                       rows={4}
                       value={editingNotes}
                       onChange={(e) => setEditingNotes(e.target.value)}
                       placeholder="- Enhanced playback performance&#10;- Fixed update download resume logic&#10;- Brand new telemetry portal"
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs font-mono focus:border-cyan-400 focus:outline-none resize-y"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-400 focus:outline-none resize-y"
                     />
                   </div>
 
-                  {/* APK URL */}
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    <label className="text-xs font-semibold text-slate-300 block">
                       Direct APK Download URL
                     </label>
                     <input
@@ -2774,21 +2551,20 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       value={editingApkUrl}
                       onChange={(e) => setEditingApkUrl(e.target.value)}
                       placeholder="https://github.com/fatormajohn999-gif/JTEC-music-studio-/releases/latest/download/JTEC-MUSIC.apk"
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white font-mono text-xs focus:border-cyan-400 focus:outline-none"
+                      className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-cyan-400 focus:outline-none"
                     />
-                    <p className="text-[10px] text-slate-400">
+                    <p className="text-[11px] text-slate-400">
                       Leave blank to use the default latest release link.
                     </p>
                   </div>
 
-                  {/* Action Buttons: Preview & Save */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                     <button
                       type="button"
                       onClick={() => setShowRequiredUpdatePreview(true)}
-                      className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                      className="min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 text-white font-semibold text-xs border border-slate-700/80 transition cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <Eye className="w-4 h-4 text-cyan-400" />
+                      <Eye className="w-4 h-4 text-cyan-400 shrink-0" />
                       <span>Preview Screen</span>
                     </button>
 
@@ -2796,7 +2572,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       type="button"
                       onClick={handleSaveConfigText}
                       disabled={isSavingConfig}
-                      className="py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs shadow-lg shadow-cyan-500/20 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
+                      className="min-h-[44px] py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {isSavingConfig ? (
                         <>
@@ -2805,13 +2581,13 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                         </>
                       ) : (
                         <>
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Save Message & Notes</span>
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>Save Message &amp; Notes</span>
                         </>
                       )}
                     </button>
                   </div>
-                </div>
+                </section>
               </div>
             )}
 
@@ -2819,15 +2595,15 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 TAB 3: UPDATE STATUS & DIAGNOSTICS
                ========================================================================= */}
             {activeTab === 'update_status' && (
-              <div className="space-y-6 max-w-4xl mx-auto">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div>
-                    <h3 className="text-base font-black text-white flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-cyan-400" />
-                      <span>Update Status & Device Diagnostics</span>
+              <div className="space-y-6 max-w-6xl mx-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-cyan-400 shrink-0" />
+                      <span>Update Status &amp; Device Diagnostics</span>
                     </h3>
-                    <p className="text-xs text-slate-400">
-                      Live release telemetry, diagnostic logs, and update checker for this device
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Live release telemetry, visualizer performance, and update checker for this device
                     </p>
                   </div>
 
@@ -2849,255 +2625,251 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                       }
                     }}
                     disabled={isCheckingNow}
-                    className="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-lg shadow-cyan-500/20 disabled:opacity-50 active:scale-98"
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 shrink-0 self-start sm:self-auto whitespace-nowrap"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
                     <span>{isCheckingNow ? 'Checking...' : 'Check now'}</span>
                   </button>
                 </div>
 
-                {/* Requirement 5: Visualizer performance telemetry box */}
-                <div className="rounded-3xl border border-cyan-500/40 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+                {/* Visualizer performance telemetry box */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
                         <Activity className="w-4 h-4" />
                       </div>
-                      <div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-wider">Visualizer Performance</h4>
-                        <p className="text-[11px] text-slate-400">Live frame time, draw latency, quality step & particle counts (updates 1/sec)</p>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-white">Visualizer Performance</h4>
+                        <p className="text-xs text-slate-400 truncate">Live frame time, draw latency, quality step &amp; particle counts</p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-cyan-500/12 text-cyan-300 border border-cyan-500/30 whitespace-nowrap">
                       Live Telemetry
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Current Theme</span>
-                      <span className="font-mono text-xs font-bold text-cyan-300 block">
-                        {visualizerStats.theme === 'jt_night' ? '🌙 JT Night' : visualizerStats.theme}
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Current Theme</span>
+                      <span className="font-mono text-xs font-semibold text-cyan-300 block truncate">
+                        {visualizerStats.theme === 'jt_night' ? 'JT Night' : visualizerStats.theme}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Avg Frame Time</span>
-                      <span className="font-mono text-xs font-bold text-white block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Avg Frame Time</span>
+                      <span className="font-mono tabular-nums text-xs font-semibold text-white block">
                         {visualizerStats.avgFrameTimeMs.toFixed(1)} ms ({visualizerStats.fps} FPS)
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Draw Time</span>
-                      <span className="font-mono text-xs font-bold text-emerald-400 block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Draw Time</span>
+                      <span className="font-mono tabular-nums text-xs font-semibold text-emerald-300 block">
                         {visualizerStats.drawTimeMs.toFixed(2)} ms
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Quality Step</span>
-                      <span className="font-mono text-xs font-bold uppercase text-purple-300 block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Quality Step</span>
+                      <span className="font-mono text-xs font-semibold uppercase text-cyan-200 block">
                         {visualizerStats.qualityStep}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Bubbles Drawn</span>
-                      <span className="font-mono text-xs font-bold text-white block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Bubbles Drawn</span>
+                      <span className="font-mono tabular-nums text-xs font-semibold text-white block">
                         {visualizerStats.bubblesCount}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Stars Drawn</span>
-                      <span className="font-mono text-xs font-bold text-white block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Stars Drawn</span>
+                      <span className="font-mono tabular-nums text-xs font-semibold text-white block">
                         {visualizerStats.starsCount}
                       </span>
                     </div>
                   </div>
-                </div>
+                </section>
 
-                {/* Requirement 1: What this phone reports */}
-                <div className="rounded-3xl border border-cyan-500/40 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                        <Smartphone className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-wider">What this phone reports</h4>
-                        <p className="text-[11px] text-slate-400">Raw values from Device.getInfo() & last ping_install telemetry</p>
-                      </div>
+                {/* What this phone reports */}
+                <section className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-6 space-y-4">
+                  <div className="flex items-center gap-3 pb-3 border-b border-slate-800/80">
+                    <div className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-cyan-400 shrink-0">
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-white">What This Device Reports</h4>
+                      <p className="text-xs text-slate-400 truncate">Raw values from Device.getInfo() &amp; last ping_install telemetry</p>
                     </div>
                   </div>
 
-                  {/* Raw values from Device.getInfo() */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">name</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">name</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.name)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">model</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">model</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.model)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">manufacturer</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">manufacturer</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.manufacturer)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">platform</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">platform</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.platform)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">osVersion</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">osVersion</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.osVersion)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">operatingSystem</span>
-                      <span className="font-mono text-xs text-white break-all block">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">operatingSystem</span>
+                      <span className="font-mono text-xs text-white break-words block">
                         {renderRawValue(rawDeviceInfo?.operatingSystem)}
                       </span>
                     </div>
                   </div>
 
-                  {/* Last ping_install details */}
-                  <div className="pt-3 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Last Sent p_name</span>
-                      <span className="font-mono text-xs text-cyan-300 font-bold break-all block">
+                  <div className="pt-3 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1 min-w-0">
+                      <span className="text-[11px] text-slate-400 block">Last Sent p_name</span>
+                      <span className="font-mono text-xs text-cyan-300 font-semibold break-words block">
                         {renderRawValue(lastPingDiag.p_name)}
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">ping_install Status</span>
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">ping_install Status</span>
                       <div className="pt-0.5">
                         {lastPingDiag.succeeded === true ? (
-                          <span className="text-emerald-400 text-xs font-bold flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span className="text-emerald-300 text-xs font-semibold flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                             <span>Succeeded</span>
                           </span>
                         ) : lastPingDiag.succeeded === false ? (
-                          <span className="text-rose-400 text-xs font-bold flex items-center gap-1.5">
-                            <AlertCircle className="w-3.5 h-3.5" />
+                          <span className="text-rose-300 text-xs font-semibold flex items-center gap-1.5 break-words">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                             <span>Failed {lastPingDiag.error ? `(${lastPingDiag.error})` : ''}</span>
                           </span>
                         ) : (
-                          <span className="text-slate-500 text-xs italic">Not sent yet</span>
+                          <span className="text-slate-400 text-xs italic">Not sent yet</span>
                         )}
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Last Ping Time</span>
-                      <span className="font-mono text-xs text-slate-300 block">
-                        {lastPingDiag.timestamp ? new Date(lastPingDiag.timestamp).toLocaleString() : <span className="text-slate-500 italic">Never</span>}
+                    <div className="p-3 rounded-xl bg-slate-950/75 border border-slate-800/80 space-y-1">
+                      <span className="text-[11px] text-slate-400 block">Last Ping Time</span>
+                      <span className="font-mono tabular-nums text-xs text-slate-300 block">
+                        {lastPingDiag.timestamp ? new Date(lastPingDiag.timestamp).toLocaleString() : <span className="text-slate-400 italic">Never</span>}
                       </span>
                     </div>
                   </div>
-                </div>
+                </section>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      Installed Version & Build
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
+                      Installed Version &amp; Build
                     </span>
-                    <div className="text-xl font-black text-white font-mono">
+                    <div className="text-lg font-bold text-white font-mono tabular-nums">
                       {isNativeAndroid() ? (
                         <>
-                          v{appVersionInfo.version} <span className="text-cyan-400 text-base">(Build {appVersionInfo.build})</span>
+                          v{appVersionInfo.version} <span className="text-cyan-300 text-sm">(Build {appVersionInfo.build})</span>
                         </>
                       ) : (
                         <>
-                          Web version <span className="text-cyan-400 text-sm">({BUILD_DATE})</span>
+                          Web Build <span className="text-cyan-300 text-sm">({BUILD_DATE})</span>
                         </>
                       )}
                     </div>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[11px] text-slate-400 block">
                       {isNativeAndroid() ? 'Read natively via App.getInfo()' : 'Web app (always allowed)'}
                     </span>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-emerald-500/30 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
                       Latest Published Build
                     </span>
-                    <div className="text-xl font-black text-emerald-400 font-mono">
+                    <div className="text-lg font-bold text-emerald-300 font-mono tabular-nums">
                       Build {latestBuild}
                     </div>
-                    <span className="text-[10px] text-slate-500">{latestVersionName || 'From latest release'}</span>
+                    <span className="text-[11px] text-slate-400 block truncate">{latestVersionName || 'From latest release'}</span>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-purple-500/30 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
                       Source
                     </span>
-                    <div className="text-xl font-black text-purple-300 font-mono">
+                    <div className="text-lg font-bold text-cyan-300 font-mono truncate">
                       {updateDiag.lastSource ? updateDiag.lastSource : 'None'}
                     </div>
-                    <span className="text-[10px] text-slate-500">latest.json or GitHub API</span>
+                    <span className="text-[11px] text-slate-400 block">latest.json or GitHub API</span>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
                       Last Check Time
                     </span>
-                    <div className="text-sm font-bold text-slate-200 font-mono pt-1">
+                    <div className="text-sm font-semibold text-slate-200 font-mono tabular-nums pt-0.5">
                       {formatTimestamp(updateDiag.lastCheckTime)}
                     </div>
-                    <span className="text-[10px] text-slate-500">Timestamp</span>
+                    <span className="text-[11px] text-slate-400 block">Timestamp</span>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
                       Last Error
                     </span>
-                    <div className={`text-xs font-mono font-bold pt-1 break-all ${updateDiag.lastError ? 'text-rose-400' : 'text-slate-400'}`}>
+                    <div className={`text-xs font-mono font-semibold pt-0.5 break-words ${updateDiag.lastError ? 'text-rose-300' : 'text-slate-400'}`}>
                       {updateDiag.lastError || 'None'}
                     </div>
-                    <span className="text-[10px] text-slate-500">Error text or code</span>
+                    <span className="text-[11px] text-slate-400 block">Error text or code</span>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+                    <span className="text-xs font-medium text-slate-400">
                       Cloud Min Build
                     </span>
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="font-mono text-sm text-cyan-300 font-bold">
+                    <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                      <span className="font-mono tabular-nums text-sm text-cyan-300 font-bold">
                         {currentMinBuild > 0 ? `Build ${currentMinBuild}` : 'No Min Build'}
                       </span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border whitespace-nowrap ${
                         !isNativeAndroid()
-                          ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                          ? 'bg-cyan-500/12 border-cyan-500/35 text-cyan-300'
                           : minVersionDiag.isBlocked
-                          ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                          : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          ? 'bg-rose-500/15 border-rose-500/35 text-rose-300'
+                          : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                       }`}>
                         {!isNativeAndroid()
-                          ? 'Web • always allowed'
+                          ? 'Web · Always Allowed'
                           : minVersionDiag.isBlocked
                           ? 'Blocked'
                           : 'Allowed'}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[11px] text-slate-400 block">
                       Read: {formatTimestamp(minVersionDiag.lastReadTime)}
                     </span>
                   </div>
@@ -3109,18 +2881,18 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 TAB 4: CONNECTION TEST
                ========================================================================= */}
             {activeTab === 'connection' && (
-              <div className="space-y-5 max-w-3xl mx-auto">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-white tracking-wide">Connection Test</h3>
-                    <p className="text-xs text-slate-400">Public read check across all cloud sources</p>
+              <div className="space-y-5 max-w-4xl mx-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-white tracking-tight">Connection Test</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Public read check across all cloud sources</p>
                   </div>
 
                   <button
                     type="button"
                     onClick={runConnectionTests}
                     disabled={isRunningConnectionTest}
-                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10 disabled:opacity-50"
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer border border-slate-700/80 disabled:opacity-50 shrink-0 self-start sm:self-auto whitespace-nowrap"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isRunningConnectionTest ? 'animate-spin text-cyan-400' : ''}`} />
                     <span>Run Test</span>
@@ -3135,50 +2907,50 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                     return (
                       <div
                         key={cat.key}
-                        className="p-5 rounded-2xl border border-white/10 bg-slate-900/70 space-y-3"
+                        className="p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-3"
                       >
-                        <div className="flex items-center justify-between flex-wrap gap-2">
-                          <div className="flex items-center gap-2.5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <span
-                              className="w-2.5 h-2.5 rounded-full"
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
                               style={{ backgroundColor: result?.success ? '#10b981' : isPending ? '#eab308' : '#ef4444' }}
                             />
-                            <div>
-                              <h4 className="text-sm font-bold text-white">{cat.title}</h4>
-                              <p className="text-[11px] text-slate-400">{cat.subtitle}</p>
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-bold text-white truncate">{cat.title}</h4>
+                              <p className="text-xs text-slate-400 truncate">{cat.subtitle}</p>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 shrink-0">
                             {isPending ? (
-                              <span className="text-xs text-yellow-400 font-semibold flex items-center gap-1">
+                              <span className="text-xs text-amber-300 font-semibold flex items-center gap-1.5 whitespace-nowrap">
                                 <RefreshCw className="w-3 h-3 animate-spin" /> Testing...
                               </span>
                             ) : result ? (
                               <span
-                                className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                                className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border whitespace-nowrap ${
                                   result.success
-                                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
-                                    : 'bg-red-950/60 text-red-300 border-red-500/40'
+                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                                    : 'bg-rose-500/15 text-rose-300 border-rose-500/35'
                                 }`}
                               >
                                 {result.success ? 'Read Works (HTTP ' + result.httpStatus + ')' : 'Failed (HTTP ' + result.httpStatus + ')'}
                               </span>
                             ) : (
-                              <span className="text-xs text-slate-500">Not tested yet</span>
+                              <span className="text-xs text-slate-400">Not tested yet</span>
                             )}
                           </div>
                         </div>
 
                         {result && (
-                          <div className="pt-2 border-t border-white/5 space-y-1.5 text-xs">
-                            <div className="flex items-center justify-between text-slate-400">
+                          <div className="pt-2.5 border-t border-slate-800/80 space-y-1.5 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-400">
                               <span>Project Host:</span>
-                              <span className="font-mono text-slate-200">{result.projectHost}</span>
+                              <span className="font-mono text-slate-200 break-all">{result.projectHost}</span>
                             </div>
 
                             {result.errorMessage && (
-                              <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/30 text-red-200 text-xs mt-2">
+                              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/35 text-rose-200 text-xs mt-2 break-words">
                                 <span className="font-semibold block">Error:</span>
                                 <span>{result.errorMessage}</span>
                               </div>
@@ -3193,529 +2965,63 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             )}
 
             {/* =========================================================================
-                TAB 5: JTEC PARTY DEMO & NETWORK SIMULATION (Requirement 11)
+                TAB 5: JTEC PARTY USERS & ACTIVITY (Real Party Supabase Only)
                ========================================================================= */}
-            {activeTab === 'party_demo' && (
-              <div className="space-y-6 max-w-4xl mx-auto">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-white tracking-wide">
-                      Party Demo & Network Simulation
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Multiplayer sync engine testing, simulated bot listeners, latency, and drift correction
-                    </p>
-                  </div>
-                </div>
-
-                {partyActionFeedback && (
-                  <div className="p-3.5 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs flex items-center gap-2 animate-in fade-in">
-                    <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span>{partyActionFeedback}</span>
-                  </div>
-                )}
-
-                {/* Party Status Box (Requirement 7) */}
-                <div className="rounded-3xl border border-cyan-500/30 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-900/90 p-5 sm:p-6 space-y-4 shadow-xl">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                        <Activity className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-white">Party Status</h4>
-                        <p className="text-xs text-slate-400">
-                          Realtime infrastructure, session identity & channel connection diagnostics
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
-                      partyStatus.backendType === 'Supabase'
-                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                        : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                    }`}>
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                      <span>{partyStatus.backendType} Backend</span>
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Backend Engine</span>
-                      <p className="text-sm font-bold text-cyan-300 font-mono">
-                        {partyStatus.backendType === 'Supabase' ? 'Supabase Realtime' : 'Local Mock Transport'}
-                      </p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Party ID</span>
-                      <p className="text-sm font-bold text-purple-300 font-mono">
-                        {partyStatus.partyId || PartyService.getState().partyId || 'None'}
-                      </p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Account ID</span>
-                      <p className="text-xs font-mono text-slate-200 truncate" title={partyStatus.accountId || ''}>
-                        {partyStatus.accountId || 'Not signed in'}
-                      </p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Online Channel</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={`w-2 h-2 rounded-full ${
-                          partyStatus.onlineChannelState === 'SUBSCRIBED' ? 'bg-emerald-400' : 'bg-slate-500'
-                        }`} />
-                        <span className="font-mono font-bold text-xs text-white">
-                          {partyStatus.onlineChannelState || 'DISCONNECTED'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Room Channel</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={`w-2 h-2 rounded-full ${
-                          partyDiagnostics.connectionStatus === 'SUBSCRIBED'
-                            ? 'bg-emerald-400'
-                            : partyDiagnostics.connectionStatus === 'CHANNEL_ERROR' || partyDiagnostics.connectionStatus === 'TIMED_OUT'
-                            ? 'bg-rose-400'
-                            : 'bg-slate-500'
-                        }`} />
-                        <span className="font-mono font-bold text-xs text-white">
-                          {partyDiagnostics.roomCode
-                            ? `${partyDiagnostics.roomCode} (${partyDiagnostics.connectionStatus})`
-                            : partyStatus.roomChannelState || 'IDLE'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Online / Room Users</span>
-                      <p className="text-xs font-mono text-slate-200 truncate">
-                        {typeof partyStatus.onlineUsersCount === 'number'
-                          ? `${partyStatus.onlineUsersCount} online`
-                          : 'Online: Unavailable'}
-                        {' • '}
-                        {partyDiagnostics.realParticipantsCount} real
-                        {partyDiagnostics.simulatedBotsCount > 0 ? ` + ${partyDiagnostics.simulatedBotsCount} bots` : ''}
-                      </p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Last Error</span>
-                      <p className={`text-xs truncate ${partyDiagnostics.lastErrorMessage || partyStatus.lastError ? 'text-rose-400 font-bold' : 'text-slate-400'}`}>
-                        {partyDiagnostics.lastErrorMessage || partyStatus.lastError || 'None'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 1: Bot Guests in Active Room */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
-                        <Bot className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-white">Simulated Bot Guests</h4>
-                        <p className="text-xs text-slate-400">
-                          Inject virtual listeners into your active party room with unique clock offsets
-                        </p>
-                      </div>
-                    </div>
-
-                    {botsActive && (
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>Bots Active</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Spawns 3 simulated friends who join your room, buffer audio on track change, respond with &apos;ready&apos;, and report live clock drift:
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-pink-300">Aisha</span>
-                        <span className="font-mono text-[10px] text-slate-500">#4092</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Clock offset: <strong className="text-white font-mono">+350ms</strong>
-                      </div>
-                      <div className="text-[10px] text-slate-500">Base latency: ~85ms</div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-purple-300">Marcus</span>
-                        <span className="font-mono text-[10px] text-slate-500">#8811</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Clock offset: <strong className="text-white font-mono">-120ms</strong>
-                      </div>
-                      <div className="text-[10px] text-slate-500">Base latency: ~140ms</div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-blue-300">Devon</span>
-                        <span className="font-mono text-[10px] text-slate-500">#1304</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Clock offset: <strong className="text-white font-mono">+45ms</strong>
-                      </div>
-                      <div className="text-[10px] text-slate-500">Base latency: ~55ms</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 pt-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={handleBotsJoinRoom}
-                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-purple-600/25 active:scale-95 transition cursor-pointer flex items-center gap-2"
-                    >
-                      <Users className="w-4 h-4" />
-                      <span>Bots join my room</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={botDisconnectCountdown > 0}
-                      onClick={handleDisconnectBots15s}
-                      className="px-4 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
-                    >
-                      <Wifi className="w-4 h-4" />
-                      <span>
-                        {botDisconnectCountdown > 0
-                          ? `Reconnecting in ${botDisconnectCountdown}s...`
-                          : 'Disconnect all bots for 15 seconds'}
-                      </span>
-                    </button>
-                  </div>
-
-                  {/* Interactive Bot Simulation Controls (Requirement 6) */}
-                  <div className="pt-3 border-t border-white/5 space-y-2">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Live Bot Actions (Requirement 6)
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                      <button
-                        type="button"
-                        onClick={handleBotReaction}
-                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <span className="text-base">👍</span>
-                        <span>A bot sends a reaction</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleBotVoteSkip}
-                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <SkipForward className="w-3.5 h-3.5 text-rose-400" />
-                        <span>A bot votes to skip</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleBotLeaves}
-                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <UserMinus className="w-3.5 h-3.5 text-amber-400" />
-                        <span>A bot leaves</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleBotHostSkips}
-                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <Radio className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>The host (bot) skips a song</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 2: Simulate a Bad Network */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-                      <Sliders className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-white">Simulate a Bad Network</h4>
-                      <p className="text-xs text-slate-400">
-                        Inject artificial latency and jitter into the transport to test party audio drift correction
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 pt-1">
-                    {/* Latency Slider: 20 to 800 ms */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-300">Artificial Latency</span>
-                        <span className="font-mono text-cyan-300 font-bold bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/30">
-                          {botLatency} ms
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={20}
-                        max={800}
-                        step={5}
-                        value={botLatency}
-                        onChange={(e) => handleLatencyChange(Number(e.target.value))}
-                        className="w-full h-2 rounded-lg bg-slate-950 accent-cyan-400 cursor-pointer"
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                        <span>20 ms (Broadband)</span>
-                        <span>400 ms (Cellular lag)</span>
-                        <span>800 ms (Extreme lag)</span>
-                      </div>
-                    </div>
-
-                    {/* Jitter Slider: 0 to 200 ms */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-300">Packet Jitter Variance</span>
-                        <span className="font-mono text-purple-300 font-bold bg-purple-950/40 px-2 py-0.5 rounded border border-purple-500/30">
-                          ±{botJitter} ms
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={200}
-                        step={5}
-                        value={botJitter}
-                        onChange={(e) => handleJitterChange(Number(e.target.value))}
-                        className="w-full h-2 rounded-lg bg-slate-950 accent-purple-400 cursor-pointer"
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                        <span>0 ms (Smooth)</span>
-                        <span>100 ms (Variable network)</span>
-                        <span>200 ms (Unstable jitter)</span>
-                      </div>
-                    </div>
-
-                    {/* Presets */}
-                    <div className="pt-2 border-t border-white/5 space-y-2">
-                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Quick Simulation Profiles
-                      </span>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleLatencyChange(30);
-                            handleJitterChange(5);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 cursor-pointer"
-                        >
-                          Fast WiFi (30ms / 5ms)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleLatencyChange(95);
-                            handleJitterChange(25);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 cursor-pointer"
-                        >
-                          Standard 4G (95ms / 25ms)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleLatencyChange(380);
-                            handleJitterChange(80);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold border border-amber-500/30 cursor-pointer"
-                        >
-                          Congested (380ms / 80ms)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleLatencyChange(720);
-                            handleJitterChange(160);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 cursor-pointer"
-                        >
-                          Bad Network (720ms / 160ms)
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 3: Bot Friends & Social Graph Simulation */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                      <Bot className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-white">Bot Friends & Social Actions</h4>
-                      <p className="text-xs text-slate-400">
-                        Simulate friend presence changes, incoming friend requests, party invites, or reset demo data
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleToggleBotOnline}
-                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Bot comes online / offline</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleBotSendFriendRequest}
-                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <UserPlus className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>A bot sends me a friend request</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleBotInviteToParty}
-                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Radio className="w-3.5 h-3.5 text-purple-400" />
-                      <span>A bot invites me to a party</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleResetDemoData}
-                      className="px-3.5 py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-300 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
-                      <span>Reset demo data</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Card 5: Realtime Sync Log (Requirement 6) */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 sm:p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                        <Activity className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-white">Party Sync Engine Log</h4>
-                        <p className="text-xs text-slate-400">
-                          Last 30 events: message received, seek performed, drift correction, dropped duplicates
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="max-h-72 overflow-y-auto space-y-1.5 p-3 rounded-2xl bg-slate-950/80 border border-white/10 font-mono text-xs">
-                    {(() => {
-                      const logs = PartyService.getState().syncLogs || [];
-                      if (logs.length === 0) {
-                        return <p className="text-slate-500 text-center py-6 font-sans">No sync events recorded yet.</p>;
-                      }
-                      return logs.map((log) => {
-                        const timeStr =
-                          new Date(log.timestamp).toLocaleTimeString('en-US', {
-                            hour12: false,
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                          }) +
-                          '.' +
-                          (log.timestamp % 1000).toString().padStart(3, '0');
-
-                        const badgeColor =
-                          log.type === 'seek_performed'
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                            : log.type === 'drift_corrected'
-                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                            : log.type === 'duplicate_dropped'
-                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                            : 'bg-purple-500/20 text-purple-300 border-purple-500/30';
-
-                        return (
-                          <div
-                            key={log.id}
-                            className="p-2 rounded-xl bg-slate-900/70 border border-white/5 space-y-1"
-                          >
-                            <div className="flex items-center justify-between text-[10px]">
-                              <span className={`px-1.5 py-0.5 rounded font-bold border ${badgeColor}`}>
-                                {log.type.replace('_', ' ').toUpperCase()}
-                              </span>
-                              <span className="text-slate-500">{timeStr}</span>
-                            </div>
-                            <p className="text-slate-200 text-xs font-sans leading-tight">{log.summary}</p>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                </div>
-              </div>
+            {activeTab === 'party_activity' && (
+              <PartyActivityPanel
+                partyStatus={partyStatus}
+                partyDiagnostics={partyDiagnostics}
+                partyLiveState={partyLiveState}
+                partyActivity={partyActivity}
+                isLoading={isLoadingPartyActivity}
+                onRefresh={loadPartyActivity}
+                formatTimestamp={formatTimestamp}
+              />
             )}
           </div>
         </div>
       )}
 
-      {/* Confirmation Modal for "Block this version and older" (Requirement 2) */}
+      {/* Confirmation Modal for "Block this version and older" */}
       {blockConfirmTarget && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-3xl border border-rose-500/40 bg-slate-950 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+          <div className="max-w-md w-full rounded-2xl border border-slate-700 bg-slate-950 p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/35 flex items-center justify-center text-rose-400 shrink-0">
                   <Ban className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Block Version & Older</h3>
-                  <p className="text-xs text-slate-400">Target build: {blockConfirmTarget.build}</p>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-white">Block Version &amp; Older</h3>
+                  <p className="text-xs font-mono tabular-nums text-slate-400">Target build: {blockConfirmTarget.build}</p>
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => setBlockConfirmTarget(null)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="Close modal"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 space-y-2 text-xs">
-              <p className="text-rose-200 font-semibold leading-relaxed">
-                All phones on build {blockConfirmTarget.build} or lower will be locked and shown the update screen for {latestVersionName || `v${appVersionInfo.version}`}.
+            <div className="p-3.5 rounded-xl bg-rose-950/35 border border-rose-500/30 space-y-2 text-xs">
+              <p className="text-rose-200 font-medium leading-relaxed">
+                All Android phones on build {blockConfirmTarget.build} or lower will be locked and shown the update screen for {latestVersionName || `v${appVersionInfo.version}`}.
               </p>
-              <p className="text-slate-400 pt-1">
-                This will set <code className="text-cyan-300 font-mono">app_config.min_build = {blockConfirmTarget.build + 1}</code>.
+              <p className="text-slate-400 pt-0.5">
+                This will set <code className="text-cyan-300 font-mono tabular-nums">app_config.min_build = {blockConfirmTarget.build + 1}</code>.
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setBlockConfirmTarget(null)}
                 disabled={isBlockingVersion}
-                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
               >
                 Cancel
               </button>
@@ -3724,12 +3030,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 type="button"
                 onClick={handleConfirmBlockVersion}
                 disabled={isBlockingVersion}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isBlockingVersion ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Saving & Verifying...</span>
+                    <span>Saving &amp; Verifying...</span>
                   </>
                 ) : (
                   <>
@@ -3743,42 +3049,43 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
         </div>
       )}
 
-      {/* Confirmation Modal for "Unblock all" (Requirement 2) */}
+      {/* Confirmation Modal for "Unblock All" */}
       {showUnblockAllConfirm && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-3xl border border-emerald-500/40 bg-slate-950 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+          <div className="max-w-md w-full rounded-2xl border border-slate-700 bg-slate-950 p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center text-emerald-400 shrink-0">
                   <Unlock className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-base font-bold text-white">Unblock All Builds</h3>
-                  <p className="text-xs text-slate-400">Sets min_build to 0</p>
+                  <p className="text-xs font-mono text-slate-400">Sets min_build to 0</p>
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => setShowUnblockAllConfirm(false)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="Close modal"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2 text-xs">
-              <p className="text-emerald-200 font-semibold leading-relaxed">
+            <div className="p-3.5 rounded-xl bg-emerald-950/35 border border-emerald-500/30 text-xs">
+              <p className="text-emerald-200 font-medium leading-relaxed">
                 Are you sure you want to unblock all versions? All devices will be allowed to use the app without requiring an update.
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setShowUnblockAllConfirm(false)}
                 disabled={isUnblockingAll}
-                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
               >
                 Cancel
               </button>
@@ -3787,7 +3094,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                 type="button"
                 onClick={handleConfirmUnblockAll}
                 disabled={isUnblockingAll}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isUnblockingAll ? (
                   <>
@@ -3809,13 +3116,13 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
       {/* Confirmation Modal for Clear Local Device Logs */}
       {showClearLogsConfirm && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-3xl border border-rose-500/40 bg-slate-950 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+          <div className="max-w-md w-full rounded-2xl border border-slate-700 bg-slate-950 p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/35 flex items-center justify-center text-rose-400 shrink-0">
                   <Trash2 className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-base font-bold text-white">Clear Device Logs</h3>
                   <p className="text-xs text-slate-400">Removes saved diagnostic logs on this device</p>
                 </div>
@@ -3824,21 +3131,22 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
               <button
                 type="button"
                 onClick={() => setShowClearLogsConfirm(false)}
-                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="Close modal"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-xs text-rose-200 leading-relaxed">
+            <div className="p-3.5 rounded-xl bg-rose-950/35 border border-rose-500/30 text-xs text-rose-200 leading-relaxed">
               This will permanently clear all local diagnostic logs stored on this device. No database records or music files are affected.
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setShowClearLogsConfirm(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
               >
                 Cancel
               </button>
@@ -3849,7 +3157,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
                   AppLogger.clearLogs();
                   setShowClearLogsConfirm(false);
                 }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 cursor-pointer flex items-center gap-1.5"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer flex items-center gap-1.5"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Confirm Clear Logs</span>
