@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ArrowLeft, Users, Crown, Copy, Check, Share2,
   Radio, AlertCircle, LogOut, Sparkles,
-  Music, Loader2, Lock, UserMinus, UserPlus,
-  SkipForward, ListMusic, Plus, Trash2,
-  Bell, BellOff, Camera, Edit3, Shield,
-  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity
+  Loader2, UserMinus, UserPlus,
+  Trash2, Camera, Edit3, Shield,
+  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity,
+  Headphones, MessageCircle, ListMusic
 } from 'lucide-react';
 import { PartyService, triggerHapticFeedback } from './PartyService';
-import { PartyState, PartyMember, PARTY_REACTION_EMOJIS, PartyTrack } from './types';
+import { PartyState, PartyMember } from './types';
 import { audioEngine } from '../services/audioEngine';
 import { registerBackHandler } from '../services/navigation';
 import { Song } from '../types/music';
@@ -19,12 +19,17 @@ import {
   FriendRequest,
   PartyInvite,
   PresenceInfo,
-  PARTY_ID_ALPHABET,
   isValidPartyId,
 } from './backend';
 import { AppLogger } from '../services/appLogger';
 import { Avatar } from './components/Avatar';
 import { processProfilePhoto } from './utils/photoProcessor';
+import { PartyRoomListenTab } from './components/PartyRoomListenTab';
+import { PartyRoomPeopleTab } from './components/PartyRoomPeopleTab';
+import { PartyRoomInviteTab } from './components/PartyRoomInviteTab';
+import { PartyRoomChatTab } from './components/PartyRoomChatTab';
+import { PartyRoomQueueTab } from './components/PartyRoomQueueTab';
+import { PartyAddMusicModal } from './components/PartyAddMusicModal';
 
 interface PartyScreenProps {
   onBack: () => void;
@@ -34,6 +39,7 @@ interface PartyScreenProps {
 
 type LobbyTab = 'rooms' | 'friends' | 'profile';
 type FriendsSubTab = 'friends' | 'requests' | 'blocked';
+type RoomTab = 'listen' | 'people' | 'invite' | 'chat' | 'queue';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9 ._-]{2,20}$/;
 
@@ -91,11 +97,13 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
-  // Add Songs to Party modal (for host)
+  // Add Songs to Party modal
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
 
-  // Invite friends in active room modal
-  const [showInviteModal, setShowInviteModal] = useState(false);
+  // Active Room 5-tab navigation & unread chat indicator
+  const [activeRoomTab, setActiveRoomTab] = useState<RoomTab>('listen');
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const prevChatCountRef = useRef(0);
   const [invitedFriendIds, setInvitedFriendIds] = useState<Set<string>>(new Set());
 
   // Leave / End confirmation modal
@@ -111,12 +119,22 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // Synced progress seconds
   const [currentPlaybackSec, setCurrentPlaybackSec] = useState<number>(0);
 
-  // Clear old errors on mount
+  // Clear old errors on mount & pre-fill room code from ?party= or ?room= link
   useEffect(() => {
     PartyService.clearErrorMessage();
     setLocalError(null);
     setProfileError(null);
     setSocialActionMsg(null);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const inviteCode = (params.get('party') || params.get('room') || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+      if (inviteCode.length === 6) {
+        setJoinCodeInput(inviteCode);
+      }
+    } catch {}
   }, []);
 
   // Auto-dismiss errors after 5 seconds
@@ -271,16 +289,46 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     });
   }, [onBack]);
 
-  // Update progress bar while playing
+  // Reset room tab when entering or leaving a room
   useEffect(() => {
-    if (!partyState.roomCode || partyState.playbackStatus !== 'playing') return;
+    setActiveRoomTab('listen');
+    setUnreadChatCount(0);
+    prevChatCountRef.current = 0;
+  }, [partyState.roomCode]);
+
+  // Track unread chat messages when user is on another tab
+  useEffect(() => {
+    const count = partyState.chatMessages.length;
+    if (activeRoomTab === 'chat') {
+      setUnreadChatCount(0);
+      prevChatCountRef.current = count;
+    } else if (count > prevChatCountRef.current) {
+      const newMsgs = partyState.chatMessages.slice(prevChatCountRef.current);
+      const fromOthers = newMsgs.filter((m) => m.senderId !== partyState.selfId).length;
+      if (fromOthers > 0) {
+        setUnreadChatCount((prev) => prev + fromOthers);
+      }
+      prevChatCountRef.current = count;
+    } else {
+      prevChatCountRef.current = count;
+    }
+  }, [partyState.chatMessages, activeRoomTab, partyState.selfId]);
+
+  // Update progress bar while playing (and sync immediately on pause/track change)
+  useEffect(() => {
+    if (!partyState.roomCode) {
+      setCurrentPlaybackSec(0);
+      return;
+    }
+    setCurrentPlaybackSec(audioEngine.currentTime || 0);
+    if (partyState.playbackStatus !== 'playing') return;
 
     const interval = setInterval(() => {
       setCurrentPlaybackSec(audioEngine.currentTime);
     }, 500);
 
     return () => clearInterval(interval);
-  }, [partyState.roomCode, partyState.playbackStatus]);
+  }, [partyState.roomCode, partyState.playbackStatus, partyState.currentTrack?.id]);
 
   // Handle Back: leaves full-screen without leaving active room
   const handleBack = () => {
@@ -648,36 +696,6 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     onBack();
   };
 
-  // Add a downloaded cloud song to party queue
-  const handleAddSongToParty = (song: Song) => {
-    if (!song.isCloud) return;
-    triggerHapticFeedback();
-    const partyTrack: PartyTrack = {
-      source: 'cloud',
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      cover: song.artworkUrl,
-      audioUrl: song.audioUrl || '',
-      duration: song.duration,
-    };
-
-    if (!partyState.currentTrack) {
-      PartyService.hostSelectTrack(partyTrack);
-    } else {
-      PartyService.hostAddToQueue(partyTrack);
-    }
-    setShowAddSongsModal(false);
-    setSocialActionMsg({ type: 'success', text: `Added "${song.title}" to Party!` });
-  };
-
-  const formatSeconds = (sec: number): string => {
-    const s = Math.max(0, Math.floor(sec || 0));
-    const mins = Math.floor(s / 60);
-    const remainder = s % 60;
-    return `${mins}:${remainder.toString().padStart(2, '0')}`;
-  };
-
   const formatLastSeen = (timestamp: number) => {
     if (!timestamp) return 'Offline';
     const diff = Math.max(0, Date.now() - timestamp);
@@ -690,21 +708,12 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     return `${days}d ago`;
   };
 
-  const readyMembersCount = partyState.members.filter(
-    (m) => m.status === 'ready' || m.status === 'playing'
-  ).length;
-
-  const totalMembers = Math.max(1, partyState.members.length);
-  const skipVotesCount = partyState.skipVotes.length;
-  const isMajoritySkip = skipVotesCount > Math.floor(totalMembers / 2);
-  const hasSelfVotedSkip = partyState.skipVotes.includes(partyState.selfId);
-
   // =========================================================================
   // VIEW RENDER
   // =========================================================================
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#050811] text-slate-100 flex flex-col font-sans select-none overflow-hidden pt-safe pb-safe pl-safe pr-safe animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-[#090B11] text-slate-100 flex flex-col font-sans select-none overflow-hidden pt-safe pb-safe pl-safe pr-safe animate-in fade-in duration-200">
       {/* Hidden file input for native image picker */}
       <input
         ref={fileInputRef}
@@ -784,8 +793,8 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
         </div>
       )}
 
-      {/* Top Bar (Requirement 4: Show ONLY Back, title "JTEC Party" and 36px avatar circle) */}
-      <header className="h-14 border-b border-white/10 px-3 flex items-center justify-between shrink-0 bg-slate-950/90 backdrop-blur-md z-30">
+      {/* Top Bar */}
+      <header className="h-14 border-b border-white/10 px-3 flex items-center justify-between shrink-0 bg-[#0D1019]/95 backdrop-blur-md z-30">
         <button
           type="button"
           onClick={handleBack}
@@ -1556,482 +1565,155 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           )}
 
           {/* =========================================================================
-              CASE 3: ACTIVE ROOM VIEW (Strict top-to-bottom layout, no overlap)
+              CASE 3: ACTIVE ROOM VIEW (Clean 5-Tab Social Listening Experience)
           ========================================================================= */}
-          {partyState.roomCode && (
-            <div className="space-y-4">
-              {/* 1. ROOM CODE CARD */}
-              <div className="p-4 sm:p-5 rounded-3xl bg-slate-900/80 border border-cyan-500/30 shadow-2xl space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <span className="text-[10px] font-bold text-cyan-300 uppercase tracking-wider block">
-                      Party Room
-                    </span>
-                    <div className="text-3xl sm:text-4xl font-black font-mono tracking-widest text-white mt-0.5">
-                      {partyState.roomCode}
-                    </div>
-                  </div>
+          {partyState.roomCode && (() => {
+            const diagnostics = PartyService.getDiagnostics();
+            const roomTabs: Array<{
+              id: RoomTab;
+              label: string;
+              icon: React.ReactNode;
+              badge?: number;
+            }> = [
+              { id: 'listen', label: 'Listen', icon: <Headphones className="w-4 h-4" /> },
+              {
+                id: 'people',
+                label: 'People',
+                icon: <Users className="w-4 h-4" />,
+                badge: partyState.members.length > 0 ? partyState.members.length : undefined,
+              },
+              { id: 'invite', label: 'Invite', icon: <Share2 className="w-4 h-4" /> },
+              {
+                id: 'chat',
+                label: 'Chat',
+                icon: <MessageCircle className="w-4 h-4" />,
+                badge: unreadChatCount > 0 ? unreadChatCount : undefined,
+              },
+              {
+                id: 'queue',
+                label: 'Queue',
+                icon: <ListMusic className="w-4 h-4" />,
+                badge: partyState.queue.length > 0 ? partyState.queue.length : undefined,
+              },
+            ];
 
-                  <div className="text-right text-xs flex flex-col items-end gap-1">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
-                        partyState.role === 'host'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/30'
-                      }`}
-                    >
-                      {partyState.role === 'host' ? <Crown className="w-3.5 h-3.5" /> : null}
-                      <span>{partyState.role === 'host' ? 'Host' : 'Guest'}</span>
-                    </span>
-                    {(() => {
-                      const diag = PartyService.getDiagnostics();
-                      const statusLabel = diag.isBotDemoRoom
-                        ? 'Demo Room'
-                        : partyState.isConnected && diag.connectionStatus === 'SUBSCRIBED'
-                        ? 'Realtime Connected'
-                        : partyState.isReconnecting
-                        ? `Reconnecting (${diag.reconnectAttempts})`
-                        : diag.connectionStatus === 'CONNECTING'
-                        ? 'Connecting...'
-                        : diag.connectionStatus === 'TIMED_OUT'
-                        ? 'Timed Out'
-                        : diag.connectionStatus === 'CHANNEL_ERROR'
-                        ? 'Channel Error'
-                        : 'Disconnected';
-                      const statusClass = diag.isBotDemoRoom
-                        ? 'text-purple-300'
-                        : partyState.isConnected && diag.connectionStatus === 'SUBSCRIBED'
-                        ? 'text-emerald-400'
-                        : partyState.isReconnecting || diag.connectionStatus === 'CONNECTING'
-                        ? 'text-amber-300'
-                        : 'text-rose-400';
-                      return (
-                        <span className={`text-[10px] font-mono font-semibold ${statusClass}`}>
-                          ● {statusLabel}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                </div>
-
-                {/* Buttons row: Copy, Share, Invite, Connection */}
-                <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/5">
-                  <button
-                    type="button"
-                    onClick={handleCopyCode}
-                    aria-label="Copy room code to clipboard"
-                    className="flex-1 min-w-[90px] min-h-[44px] px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                  >
-                    {copiedCode ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span className="text-emerald-300">Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Copy</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleShareRoom}
-                    aria-label="Share room code"
-                    className="flex-1 min-w-[90px] min-h-[44px] px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                  >
-                    <Share2 className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Share</span>
-                  </button>
-
-                  {partyState.role === 'host' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowInviteModal(true)}
-                      aria-label="Invite friends"
-                      className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                    >
-                      <UserPlus className="w-3.5 h-3.5 text-purple-300" />
-                      <span>Invite</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setShowConnectionDetailsModal(true)}
-                    aria-label="Connection details and sync log"
-                    className="flex-1 min-w-[100px] min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer"
-                  >
-                    <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Connection</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 2. NOW PLAYING CARD */}
-              <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-cyan-950/40 via-purple-950/30 to-slate-900/90 border border-white/10 shadow-2xl space-y-4">
-                <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span className="font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-                    <Music className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Now Playing in Party</span>
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      partyState.playbackStatus === 'playing'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : partyState.playbackStatus === 'loading'
-                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                        : 'bg-slate-800 text-slate-400 border border-white/5'
-                    }`}
-                  >
-                    {partyState.playbackStatus.toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3.5">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-slate-950/80 border border-white/10 overflow-hidden shrink-0 shadow-lg relative flex items-center justify-center">
-                    {partyState.currentTrack?.cover ? (
-                      <img
-                        src={partyState.currentTrack.cover}
-                        alt="Track cover"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Music className="w-8 h-8 text-cyan-400/50" />
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-base sm:text-lg font-bold text-white truncate">
-                      {partyState.currentTrack?.title || 'Waiting for host to pick a track...'}
-                    </h3>
-                    <p className="text-xs sm:text-sm text-slate-300 truncate mt-0.5">
-                      {partyState.currentTrack?.artist || 'Synced listening'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Read-Only Progress Bar */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="h-2 w-full rounded-full bg-slate-950/80 overflow-hidden border border-white/5">
-                    <div
-                      className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 transition-all duration-300"
-                      style={{
-                        width: `${
-                          partyState.currentTrack?.duration
-                            ? Math.min(100, (currentPlaybackSec / partyState.currentTrack.duration) * 100)
-                            : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[11px] font-mono text-slate-400">
-                    <span>{formatSeconds(currentPlaybackSec)}</span>
-                    <span>
-                      {partyState.currentTrack?.duration
-                        ? formatSeconds(partyState.currentTrack.duration)
-                        : '--:--'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Vote to Skip Row & Controls */}
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    {partyState.role === 'guest' && (
+            return (
+              <div className="space-y-4">
+                {/* Five-Tab Room Navigation */}
+                <nav
+                  aria-label="Party room navigation"
+                  className="grid grid-cols-5 gap-1 p-1.5 rounded-2xl bg-[#121622]/95 border border-white/10 shadow-xl sticky top-0 z-20 backdrop-blur-md"
+                >
+                  {roomTabs.map((tab) => {
+                    const isActive = activeRoomTab === tab.id;
+                    return (
                       <button
+                        key={tab.id}
                         type="button"
-                        disabled={hasSelfVotedSkip || !partyState.currentTrack}
-                        onClick={() => PartyService.voteToSkip()}
-                        className={`min-h-[44px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                          hasSelfVotedSkip
-                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                            : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10'
+                        onClick={() => {
+                          triggerHapticFeedback();
+                          setActiveRoomTab(tab.id);
+                        }}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`relative min-h-[48px] px-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] sm:text-xs font-bold transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-lg shadow-cyan-500/20'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
                         }`}
                       >
-                        <SkipForward className="w-3.5 h-3.5 text-purple-400" />
-                        <span>{hasSelfVotedSkip ? 'Vote Recorded' : 'Vote Skip'}</span>
+                        <div className="relative flex items-center justify-center">
+                          {tab.icon}
+                          {tab.badge !== undefined && (
+                            <span
+                              className={`absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center ${
+                                tab.id === 'chat' && !isActive
+                                  ? 'bg-rose-500 text-white animate-pulse'
+                                  : isActive
+                                  ? 'bg-slate-950/70 text-cyan-200'
+                                  : 'bg-white/15 text-slate-200'
+                              }`}
+                            >
+                              {tab.badge > 99 ? '99+' : tab.badge}
+                            </span>
+                          )}
+                        </div>
+                        <span className="truncate max-w-full">{tab.label}</span>
                       </button>
-                    )}
+                    );
+                  })}
+                </nav>
 
-                    {skipVotesCount > 0 && (
-                      <span className="text-xs text-slate-300 font-medium">
-                        {skipVotesCount} of {totalMembers} want to skip
-                      </span>
-                    )}
-                  </div>
+                {/* Tab 1: Listen */}
+                {activeRoomTab === 'listen' && (
+                  <PartyRoomListenTab
+                    partyState={partyState}
+                    diagnostics={diagnostics}
+                    currentPlaybackSec={currentPlaybackSec}
+                    onOpenPeopleTab={() => setActiveRoomTab('people')}
+                    onOpenQueueTab={() => setActiveRoomTab('queue')}
+                    onOpenAddMusic={() => setShowAddSongsModal(true)}
+                  />
+                )}
 
-                  {partyState.role === 'host' && (
-                    <button
-                      type="button"
-                      onClick={() => PartyService.hostSkipTrack()}
-                      className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        isMajoritySkip
-                          ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white animate-pulse shadow-lg'
-                          : 'bg-slate-800 hover:bg-slate-700 text-white border border-white/10'
-                      }`}
-                    >
-                      <SkipForward className="w-3.5 h-3.5 text-white" />
-                      <span>Skip Song</span>
-                    </button>
-                  )}
-                </div>
+                {/* Tab 2: People */}
+                {activeRoomTab === 'people' && (
+                  <PartyRoomPeopleTab
+                    partyState={partyState}
+                    diagnostics={diagnostics}
+                    onSelectMember={(member) => setSelectedMemberProfile(member)}
+                    onKickMember={handleKickMember}
+                    onOpenConnectionDetails={() => setShowConnectionDetailsModal(true)}
+                  />
+                )}
+
+                {/* Tab 3: Invite */}
+                {activeRoomTab === 'invite' && (
+                  <PartyRoomInviteTab
+                    partyState={partyState}
+                    friends={friends}
+                    presenceMap={presenceMap}
+                    invitedFriendIds={invitedFriendIds}
+                    onInviteFriend={handleInviteFriendToRoom}
+                    onCopyCode={handleCopyCode}
+                    copiedCode={copiedCode}
+                    onShareRoom={handleShareRoom}
+                  />
+                )}
+
+                {/* Tab 4: Chat */}
+                {activeRoomTab === 'chat' && (
+                  <PartyRoomChatTab partyState={partyState} />
+                )}
+
+                {/* Tab 5: Queue */}
+                {activeRoomTab === 'queue' && (
+                  <PartyRoomQueueTab
+                    partyState={partyState}
+                    onOpenAddMusic={() => setShowAddSongsModal(true)}
+                  />
+                )}
               </div>
-
-              {/* 3. REACTION BAR */}
-              <div className="p-3.5 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                  {PARTY_REACTION_EMOJIS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      onClick={() => PartyService.sendReaction(emoji)}
-                      className="w-11 h-11 min-h-[44px] min-w-[44px] rounded-xl bg-slate-800/80 hover:bg-slate-700 text-lg flex items-center justify-center active:scale-90 transition cursor-pointer"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => PartyService.toggleMuteReactions()}
-                  className={`min-h-[44px] min-w-[44px] p-2.5 rounded-xl transition cursor-pointer flex items-center justify-center ${
-                    partyState.isReactionsMuted
-                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title={partyState.isReactionsMuted ? 'Unmute reactions' : 'Mute reactions'}
-                >
-                  {partyState.isReactionsMuted ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-                </button>
-              </div>
-
-              {/* 4. QUEUE LIST (For Host) */}
-              {partyState.role === 'host' && (
-                <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ListMusic className="w-4 h-4 text-cyan-400" />
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-white">
-                        Host Queue ({partyState.queue.length})
-                      </h4>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowAddSongsModal(true)}
-                      className="min-h-[44px] px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-xs text-cyan-300 font-bold flex items-center gap-1 cursor-pointer transition"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Songs</span>
-                    </button>
-                  </div>
-
-                  {partyState.queue.length === 0 ? (
-                    <p className="text-xs text-slate-400">Queue is empty. Tap &quot;Add Songs&quot; to pick downloaded cloud tracks.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                      {partyState.queue.map((track, idx) => (
-                        <div
-                          key={`${track.id}-${idx}`}
-                          className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-white/5 text-xs"
-                        >
-                          <div className="min-w-0 flex-1 truncate pr-2">
-                            <span className="font-semibold text-white">{track.title}</span>
-                            <span className="text-slate-400 ml-1.5">— {track.artist}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => PartyService.hostRemoveFromQueue(idx)}
-                            className="min-h-[44px] min-w-[44px] p-2 text-slate-400 hover:text-rose-400 transition flex items-center justify-center cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 5. MEMBERS LIST (Requirement 3: shared Avatar component) */}
-              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-purple-400" />
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-white">
-                      Listeners in Room ({partyState.members.length}/8)
-                    </h4>
-                  </div>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {readyMembersCount} synced
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {partyState.members.map((member) => (
-                    <div
-                      key={member.id}
-                      onClick={() => {
-                        triggerHapticFeedback();
-                        setSelectedMemberProfile(member);
-                      }}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-800/60 border border-white/5 hover:border-cyan-500/30 text-xs min-h-[48px] cursor-pointer transition"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <Avatar
-                          url={member.avatarUrl || (member.avatar?.startsWith('data:') ? member.avatar : null)}
-                          name={member.username || member.nickname}
-                          size={36}
-                        />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-white truncate">{member.username || member.nickname}</span>
-                            {member.isHost && (
-                              <Crown className="w-3 h-3 text-amber-400 shrink-0" />
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
-                            <span>Status: {member.status}</span>
-                            {member.latencyMs !== undefined && (
-                              <span className="font-mono text-cyan-300">
-                                {member.latencyMs}ms ping
-                              </span>
-                            )}
-                            {member.partyId && (
-                              <span className="font-mono text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-white/5">
-                                ID: {member.partyId}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {partyState.role === 'host' && !member.isHost && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleKickMember(member);
-                          }}
-                          className="min-h-[44px] min-w-[44px] p-2 text-slate-400 hover:text-rose-400 transition flex items-center justify-center cursor-pointer"
-                          title="Remove from room"
-                        >
-                          <UserMinus className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </main>
 
       {/* =========================================================================
-          ADD SONGS MODAL (Requirement 6: downloaded cloud songs selectable; local songs greyed out with reason)
+          MULTI-SOURCE ADD MUSIC MODAL (Downloaded, JTEC Cloud, Online Catalogs)
       ========================================================================= */}
-      {showAddSongsModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-cyan-500/30 p-5 space-y-4 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
-              <div className="flex items-center gap-2">
-                <Music className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold text-white">Add Songs from Library</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAddSongsModal(false)}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300 shrink-0 leading-relaxed">
-              Downloaded cloud songs can be synchronized with party members. Local device audio cannot be shared.
-            </p>
-
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0">
-              {songs.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-400 space-y-2">
-                  <p>No songs found in Library.</p>
-                  {onNavigateToCloud && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAddSongsModal(false);
-                        onNavigateToCloud();
-                      }}
-                      className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs"
-                    >
-                      Browse Cloud Catalog
-                    </button>
-                  )}
-                </div>
-              ) : (
-                songs.map((song) => {
-                  const isCloudTrack = Boolean(song.isCloud);
-                  return (
-                    <div
-                      key={song.id}
-                      className={`flex items-center justify-between p-3 rounded-2xl border transition min-h-[56px] ${
-                        isCloudTrack
-                          ? 'bg-slate-950/80 border-white/10 hover:border-cyan-500/40'
-                          : 'bg-slate-950/30 border-white/5 opacity-50 cursor-not-allowed'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                        <img
-                          src={song.artworkUrl || './pwa-192x192.png'}
-                          alt={song.title}
-                          className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/10"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-white truncate">{song.title}</p>
-                          <p className="text-[11px] text-slate-400 truncate">{song.artist}</p>
-                          {!isCloudTrack && (
-                            <span className="text-[10px] text-amber-300/90 font-medium block mt-0.5">
-                              Local file — party sync requires downloaded cloud song
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {isCloudTrack ? (
-                        <button
-                          type="button"
-                          onClick={() => handleAddSongToParty(song)}
-                          className="min-h-[44px] px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shrink-0 cursor-pointer active:scale-95 transition"
-                        >
-                          Add to Party
-                        </button>
-                      ) : (
-                        <span className="text-[11px] text-slate-500 px-2 py-1 bg-slate-800/40 rounded-lg shrink-0">
-                          Unavailable
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="pt-2 border-t border-white/10 flex justify-end shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowAddSongsModal(false)}
-                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PartyAddMusicModal
+        isOpen={showAddSongsModal}
+        onClose={() => setShowAddSongsModal(false)}
+        songs={songs}
+        onAddTracks={(tracks) => {
+          PartyService.addTracksToQueue(tracks);
+          setSocialActionMsg({
+            type: 'success',
+            text: `Added ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'} to Party!`,
+          });
+        }}
+        onNavigateToCloud={onNavigateToCloud}
+      />
 
       {/* Leave / End Party Confirmation Modal */}
       {showLeaveConfirm && (
@@ -2101,87 +1783,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
         </div>
       )}
 
-      {/* Invite Friends Modal (Inside active room - Requirement 3: shared Avatar) */}
-      {showInviteModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-purple-500/30 p-5 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-purple-400" />
-                <h4 className="text-sm font-bold text-white">Invite Friends</h4>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowInviteModal(false)}
-                className="min-h-[44px] min-w-[44px] text-xs text-slate-400 hover:text-white flex items-center justify-center"
-              >
-                Close
-              </button>
-            </div>
 
-            <p className="text-xs text-slate-400">
-              Invite your friends to room{' '}
-              <strong className="text-white font-mono">{partyState.roomCode}</strong>:
-            </p>
-
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {friends.length === 0 ? (
-                <p className="text-xs text-slate-500 text-center py-4">No friends added yet.</p>
-              ) : (
-                friends.map((friend) => {
-                  const isInvited = invitedFriendIds.has(friend.id);
-                  const presence = presenceMap[friend.id] || { isOnline: true, lastSeen: Date.now() };
-                  return (
-                    <div
-                      key={friend.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-white/5 min-h-[48px]"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Avatar url={friend.avatarUrl} name={friend.username} size={36} />
-                        <div className="min-w-0">
-                          <span className="text-xs font-semibold text-white truncate block">
-                            {friend.username}
-                          </span>
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                presence.isOnline ? 'bg-emerald-400' : 'bg-slate-500'
-                              }`}
-                            />
-                            <span className="text-slate-400">
-                              {presence.isOnline ? 'Online now' : 'Offline'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={isInvited}
-                        onClick={() => handleInviteFriendToRoom(friend.id)}
-                        className={`min-h-[44px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                          isInvited
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-purple-600 hover:bg-purple-500 text-white'
-                        }`}
-                      >
-                        {isInvited ? (
-                          <>
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Invited</span>
-                          </>
-                        ) : (
-                          <span>Invite</span>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* =========================================================================
           MEMBER PROFILE MODAL (Tapping a member in the room)

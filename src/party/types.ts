@@ -21,6 +21,13 @@ export interface PartyMember {
   lastSeen: number;
 }
 
+export interface PartyTrackAddedBy {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+  avatar?: string;
+}
+
 export interface PartyTrack {
   source: string; // 'nasheed' | 'love_chill' | 'jtec_main' | 'jamendo' | 'archive' | 'cloud'
   id: string;
@@ -30,6 +37,7 @@ export interface PartyTrack {
   audioUrl: string;
   duration?: number;
   size?: number;
+  addedBy?: PartyTrackAddedBy;
 }
 
 export type PartyPlaybackStatus = 'idle' | 'loading' | 'ready' | 'countdown' | 'playing' | 'paused';
@@ -73,6 +81,16 @@ export interface FloatingReaction {
   xOffsetPercent: number; // 10 to 90%
 }
 
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  text: string;
+  timestamp: number;
+  reactions?: Record<string, string[]>; // emoji -> array of senderIds
+}
+
 export interface SyncLogEntry {
   id: string;
   timestamp: number;
@@ -103,8 +121,12 @@ export interface PartyState {
   // Vote-to-skip
   skipVotes: string[]; // member IDs who voted to skip current track
   autoSkipEnabled: boolean; // host setting: auto-skip when > 50% vote
-  // Queue list for host
+  // Queue list & history
   queue: PartyTrack[];
+  history: PartyTrack[];
+  allowGuestQueue: boolean;
+  // Chat messages
+  chatMessages: ChatMessage[];
   // Reactions
   activeReactions: FloatingReaction[];
   isReactionsMuted: boolean;
@@ -129,7 +151,12 @@ export type PartyBroadcastPayload =
   | { type: 'skip_votes_update'; skipVotes: string[]; autoSkipEnabled: boolean; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'set_auto_skip'; enabled: boolean; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'queue_update'; queue: PartyTrack[]; senderId: string; seq: number; targetMemberId?: string }
-  | { type: 'skip_track'; nextTrack?: PartyTrack | null; senderId: string; seq: number; targetMemberId?: string };
+  | { type: 'history_update'; history: PartyTrack[]; senderId: string; seq: number; targetMemberId?: string }
+  | { type: 'guest_add_queue'; tracks: PartyTrack[]; senderId: string; seq: number; targetMemberId?: string }
+  | { type: 'set_guest_queue_permission'; enabled: boolean; senderId: string; seq: number; targetMemberId?: string }
+  | { type: 'skip_track'; nextTrack?: PartyTrack | null; senderId: string; seq: number; targetMemberId?: string }
+  | { type: 'chat_msg'; id: string; senderId: string; senderName: string; senderAvatar?: string; text: string; timestamp: number; seq: number; targetMemberId?: string }
+  | { type: 'chat_reaction'; messageId: string; emoji: string; memberId: string; senderId: string; seq: number; targetMemberId?: string };
 
 export type PartyListener = (state: PartyState) => void;
 
@@ -139,4 +166,3 @@ export type PartyBroadcastInput = DistributiveOmit<PartyBroadcastPayload, 'sende
   seq?: number;
   targetMemberId?: string;
 };
-

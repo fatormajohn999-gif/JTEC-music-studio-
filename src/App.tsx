@@ -87,7 +87,16 @@ export default function App() {
     }
     return 'home';
   });
-  const [isSettingsView, setIsSettingsView] = useState(false);
+  const [isSettingsView, setIsSettingsView] = useState<boolean>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const partyCode = (searchParams.get('party') || searchParams.get('room') || '').trim();
+      if (/^[a-zA-Z0-9]{6}$/.test(partyCode)) return true;
+    } catch {
+      // ignore
+    }
+    return false;
+  });
   const [showStartup, setShowStartup] = useState(true);
 
   // Native Android Update Controller (only runs on native Android)
@@ -561,7 +570,16 @@ export default function App() {
   const [detailsSong, setDetailsSong] = useState<Song | null>(null);
   const [optionsMenuSong, setOptionsMenuSong] = useState<Song | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
-  const [settingsSubView, setSettingsSubView] = useState<SettingsSubView>('main');
+  const [settingsSubView, setSettingsSubView] = useState<SettingsSubView>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const partyCode = (searchParams.get('party') || searchParams.get('room') || '').trim();
+      if (/^[a-zA-Z0-9]{6}$/.test(partyCode)) return 'party';
+    } catch {
+      // ignore
+    }
+    return 'main';
+  });
 
   // JTEC Party Listener & Host hook
   const {
@@ -1464,6 +1482,11 @@ export default function App() {
       return;
     }
 
+    if (isPartyHost) {
+      PartyService.hostNextTrack(isAutoAdvance);
+      return;
+    }
+
     const cur = currentSongRef.current;
     const q = queueRef.current.length > 0 ? queueRef.current : songsRef.current;
     if (q.length === 0) return;
@@ -1517,13 +1540,18 @@ export default function App() {
       // Manual Next button: wrap around to first song
       playSong(q[0]);
     }
-  }, [isPartyGuest]);
+  }, [isPartyGuest, isPartyHost]);
 
   // Previous Track (goes to the song above in top-to-bottom order)
   const handlePreviousTrack = useCallback(() => {
     if (isPartyGuest) {
       setGlobalError('Controlled by the host');
       setTimeout(() => setGlobalError(null), 3000);
+      return;
+    }
+
+    if (isPartyHost) {
+      PartyService.hostPreviousTrack();
       return;
     }
 
@@ -1558,7 +1586,7 @@ export default function App() {
 
     // At the top song: wrap around to bottom
     playSong(q[q.length - 1]);
-  }, [isPartyGuest]);
+  }, [isPartyGuest, isPartyHost]);
 
   useEffect(() => {
     handleNextTrackRef.current = handleNextTrack;

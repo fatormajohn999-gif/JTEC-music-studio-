@@ -24,7 +24,9 @@
     "@capawesome-team/capacitor-file-opener": "^7.0.0",
     "@jofr/capacitor-media-session": "^4.0.0",
     "@supabase/supabase-js": "^2.118.0",
+    "@types/qrcode": "^1.5.6",
     "lucide-react": "^1.59.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

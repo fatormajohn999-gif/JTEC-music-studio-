@@ -141,8 +141,11 @@ class PartyServiceClass {
     // Vote-to-skip
     skipVotes: [],
     autoSkipEnabled: false,
-    // Queue list
+    // Queue list & history
     queue: [],
+    history: [],
+    allowGuestQueue: false,
+    chatMessages: [],
     // Reactions
     activeReactions: [],
     isReactionsMuted: false,
@@ -270,6 +273,8 @@ class PartyServiceClass {
       diagnostics: [...this.state.diagnostics],
       skipVotes: [...this.state.skipVotes],
       queue: [...this.state.queue],
+      history: [...this.state.history],
+      chatMessages: [...this.state.chatMessages],
       activeReactions: [...this.state.activeReactions],
     };
   }
@@ -529,6 +534,72 @@ class PartyServiceClass {
     this.emitState();
   }
 
+  public sendChatMessage(text: string): void {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    triggerHapticFeedback();
+    const msgId = 'chat_' + Math.random().toString(36).slice(2, 9);
+    const chatMsg = {
+      id: msgId,
+      senderId: this.state.selfId,
+      senderName: this.state.nickname,
+      senderAvatar: this.state.avatarUrl || this.state.avatar,
+      text: clean,
+      timestamp: Date.now(),
+    };
+    this.state.chatMessages = [...this.state.chatMessages, chatMsg].slice(-100);
+    this.emitState();
+
+    this.broadcastMessage({
+      type: 'chat_msg',
+      id: chatMsg.id,
+      senderId: this.state.selfId,
+      senderName: this.state.nickname,
+      senderAvatar: chatMsg.senderAvatar,
+      text: clean,
+      timestamp: chatMsg.timestamp,
+    });
+  }
+
+  public sendChatReaction(messageId: string, emoji: string): void {
+    if (!messageId || !emoji) return;
+    triggerHapticFeedback();
+    this.applyChatReaction(messageId, emoji, this.state.selfId);
+    this.broadcastMessage({
+      type: 'chat_reaction',
+      messageId,
+      emoji,
+      memberId: this.state.selfId,
+    });
+  }
+
+  private applyChatReaction(messageId: string, emoji: string, memberId: string): void {
+    let changed = false;
+    this.state.chatMessages = this.state.chatMessages.map((msg) => {
+      if (msg.id !== messageId) return msg;
+      changed = true;
+      const prevReactions = msg.reactions ? { ...msg.reactions } : {};
+      const users = prevReactions[emoji] ? [...prevReactions[emoji]] : [];
+      if (users.includes(memberId)) {
+        const filtered = users.filter((id) => id !== memberId);
+        if (filtered.length === 0) {
+          delete prevReactions[emoji];
+        } else {
+          prevReactions[emoji] = filtered;
+        }
+      } else {
+        prevReactions[emoji] = [...users, memberId];
+      }
+      return {
+        ...msg,
+        reactions: prevReactions,
+      };
+    });
+    if (changed) {
+      this.emitState();
+    }
+  }
+
   private addFloatingReaction(reaction: FloatingReaction): void {
     if (this.state.isReactionsMuted) return;
 
@@ -592,44 +663,185 @@ class PartyServiceClass {
     }
   }
 
-  public hostSkipTrack(): void {
-    if (this.state.role !== 'host') return;
-    triggerHapticFeedback();
+  private stampTrackAddedBy(track: PartyTrack): PartyTrack {
+    if (track.addedBy) return track;
+    return {
+      ...track,
+      addedBy: {
+        id: this.state.selfId,
+        name: this.state.nickname,
+        avatarUrl: this.state.avatarUrl || null,
+        avatar: this.state.avatar,
+      },
+    };
+  }
+
+  public hostNextTrack(isAutoAdvance = false): boolean {
+    if (this.state.role !== 'host') return false;
+    if (!isAutoAdvance) {
+      triggerHapticFeedback();
+    }
 
     // Reset votes for new track
     this.state.skipVotes = [];
 
-    // Next track from queue or demo track
-    let nextTrack: PartyTrack | null = null;
     if (this.state.queue.length > 0) {
-      nextTrack = this.state.queue.shift() || null;
+      const nextTrack = this.state.queue.shift() || null;
       this.broadcastMessage({
         type: 'queue_update',
         queue: this.state.queue,
       });
-    } else {
-      // Pick next demo track if available
-      nextTrack = DEMO_BOT_TRACKS[1];
+      if (nextTrack) {
+        this.hostSelectTrack(nextTrack);
+        return true;
+      }
     }
 
-    if (nextTrack) {
-      this.hostSelectTrack(nextTrack);
+    if (this.isBotDemoRoom) {
+      const nextTrack = DEMO_BOT_TRACKS[1];
+      if (nextTrack) {
+        this.hostSelectTrack(nextTrack);
+        return true;
+      }
     }
+
+    if (isAutoAdvance) {
+      this.state.playbackStatus = 'paused';
+      if (this.playerHandlers.pause) {
+        this.playerHandlers.pause();
+      }
+      this.emitState();
+      this.broadcastCurrentHostState();
+    }
+
+    return false;
+  }
+
+  public hostPreviousTrack(): void {
+    if (this.state.role !== 'host') return;
+    triggerHapticFeedback();
+
+    const posSec = this.playerHandlers.getCurrentPositionSeconds
+      ? this.playerHandlers.getCurrentPositionSeconds()
+      : audioEngine.currentTime;
+
+    if (posSec > 3 || this.state.history.length === 0) {
+      this.hostSeek(0);
+      return;
+    }
+
+    const updatedHistory = [...this.state.history];
+    const prevTrack = updatedHistory.pop();
+    if (!prevTrack) {
+      this.hostSeek(0);
+      return;
+    }
+
+    if (this.state.currentTrack) {
+      this.state.queue = [this.state.currentTrack, ...this.state.queue];
+      this.broadcastMessage({
+        type: 'queue_update',
+        queue: this.state.queue,
+      });
+    }
+
+    this.state.history = updatedHistory;
+    this.broadcastMessage({
+      type: 'history_update',
+      history: this.state.history,
+    });
+
+    this.hostSelectTrack(prevTrack, { skipHistoryPush: true });
+  }
+
+  public hostSkipTrack(): void {
+    this.hostNextTrack(false);
   }
 
   // =========================================================================
-  // QUEUE LIST FOR HOST (Requirement 3)
+  // QUEUE LIST FOR HOST & ROOM (Requirement 6 & 7)
   // =========================================================================
-  public hostAddToQueue(track: PartyTrack): void {
+  public hostSetGuestQueueAllowed(enabled: boolean): void {
     if (this.state.role !== 'host') return;
     triggerHapticFeedback();
-    this.state.queue = [...this.state.queue, track];
+    this.state.allowGuestQueue = enabled;
+    this.emitState();
+
+    this.broadcastMessage({
+      type: 'set_guest_queue_permission',
+      enabled,
+    });
+  }
+
+  public addTracksToQueue(tracks: PartyTrack[]): void {
+    if (!Array.isArray(tracks) || tracks.length === 0) return;
+    const stamped = tracks
+      .filter((t) => Boolean(t && t.audioUrl))
+      .map((t) => this.stampTrackAddedBy(t));
+
+    if (stamped.length === 0) return;
+    triggerHapticFeedback();
+
+    if (this.state.role === 'host') {
+      if (!this.state.currentTrack) {
+        const [first, ...rest] = stamped;
+        if (rest.length > 0) {
+          this.state.queue = [...this.state.queue, ...rest];
+          this.broadcastMessage({
+            type: 'queue_update',
+            queue: this.state.queue,
+          });
+        }
+        this.hostSelectTrack(first);
+      } else {
+        this.state.queue = [...this.state.queue, ...stamped];
+        this.emitState();
+        this.broadcastMessage({
+          type: 'queue_update',
+          queue: this.state.queue,
+        });
+      }
+      return;
+    }
+
+    if (this.state.allowGuestQueue) {
+      this.broadcastMessage({
+        type: 'guest_add_queue',
+        tracks: stamped,
+      });
+    }
+  }
+
+  public hostAddToQueue(track: PartyTrack): void {
+    if (this.state.role !== 'host') return;
+    const stamped = this.stampTrackAddedBy(track);
+    triggerHapticFeedback();
+    this.state.queue = [...this.state.queue, stamped];
     this.emitState();
 
     this.broadcastMessage({
       type: 'queue_update',
       queue: this.state.queue,
     });
+  }
+
+  public hostPlayTrackFromQueue(index: number): void {
+    if (this.state.role !== 'host') return;
+    if (index < 0 || index >= this.state.queue.length) return;
+    triggerHapticFeedback();
+    const updated = [...this.state.queue];
+    const [selected] = updated.splice(index, 1);
+    this.state.queue = updated;
+    this.emitState();
+
+    this.broadcastMessage({
+      type: 'queue_update',
+      queue: this.state.queue,
+    });
+
+    if (selected) {
+      this.hostSelectTrack(selected);
+    }
   }
 
   public hostRemoveFromQueue(index: number): void {
@@ -745,6 +957,9 @@ class PartyServiceClass {
     this.state.isLocked = false;
     this.state.skipVotes = [];
     this.state.queue = [];
+    this.state.history = [];
+    this.state.allowGuestQueue = false;
+    this.state.chatMessages = [];
     this.state.activeReactions = [];
     this.clockOffsetSamples = [];
     this.medianOffsetMs = 0;
@@ -810,6 +1025,9 @@ class PartyServiceClass {
     this.state.isLocked = false;
     this.state.skipVotes = [];
     this.state.queue = [];
+    this.state.history = [];
+    this.state.allowGuestQueue = false;
+    this.state.chatMessages = [];
     this.state.activeReactions = [];
     this.realPresenceMembers = [];
     this.botMembers = [];
@@ -1467,6 +1685,18 @@ class PartyServiceClass {
             queue: this.state.queue,
             targetMemberId: msg.memberId,
           });
+
+          this.broadcastMessage({
+            type: 'history_update',
+            history: this.state.history,
+            targetMemberId: msg.memberId,
+          });
+
+          this.broadcastMessage({
+            type: 'set_guest_queue_permission',
+            enabled: this.state.allowGuestQueue,
+            targetMemberId: msg.memberId,
+          });
         }
         break;
       }
@@ -1492,6 +1722,64 @@ class PartyServiceClass {
       case 'close_room': {
         if (this.state.role === 'guest') {
           this.endPartyByHost(msg.reason || 'The host ended the party.');
+        }
+        break;
+      }
+
+      case 'chat_msg': {
+        const chatMsg = {
+          id: msg.id,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          senderAvatar: msg.senderAvatar,
+          text: msg.text,
+          timestamp: msg.timestamp,
+        };
+        this.state.chatMessages = [...this.state.chatMessages, chatMsg].slice(-100);
+        this.emitState();
+        break;
+      }
+
+      case 'chat_reaction': {
+        this.applyChatReaction(msg.messageId, msg.emoji, msg.memberId);
+        break;
+      }
+
+      case 'history_update': {
+        this.state.history = msg.history;
+        this.emitState();
+        break;
+      }
+
+      case 'set_guest_queue_permission': {
+        this.state.allowGuestQueue = msg.enabled;
+        this.emitState();
+        break;
+      }
+
+      case 'guest_add_queue': {
+        if (this.state.role === 'host' && this.state.allowGuestQueue && Array.isArray(msg.tracks)) {
+          const valid = msg.tracks.filter((t) => Boolean(t && t.audioUrl));
+          if (valid.length > 0) {
+            if (!this.state.currentTrack) {
+              const [first, ...rest] = valid;
+              if (rest.length > 0) {
+                this.state.queue = [...this.state.queue, ...rest];
+                this.broadcastMessage({
+                  type: 'queue_update',
+                  queue: this.state.queue,
+                });
+              }
+              this.hostSelectTrack(first);
+            } else {
+              this.state.queue = [...this.state.queue, ...valid];
+              this.emitState();
+              this.broadcastMessage({
+                type: 'queue_update',
+                queue: this.state.queue,
+              });
+            }
+          }
         }
         break;
       }
@@ -1566,34 +1854,50 @@ class PartyServiceClass {
     this.emitState();
   }
 
-  public async hostSelectTrack(track: PartyTrack): Promise<void> {
+  public async hostSelectTrack(track: PartyTrack, options?: { skipHistoryPush?: boolean }): Promise<void> {
     if (this.state.role !== 'host') return;
 
     if (!track.audioUrl) {
       throw new Error('This track does not have a streamable audio address.');
     }
 
+    const stampedTrack = this.stampTrackAddedBy(track);
+
+    if (!options?.skipHistoryPush && this.state.currentTrack && this.state.currentTrack.id !== stampedTrack.id) {
+      this.state.history = [...this.state.history, this.state.currentTrack].slice(-20);
+      this.broadcastMessage({
+        type: 'history_update',
+        history: this.state.history,
+      });
+    }
+
     // Requirement 4: unique commandId on load
     this.currentCommandId = 'cmd_load_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-    this.state.currentTrack = track;
+    this.state.currentTrack = stampedTrack;
     this.state.playbackStatus = 'loading';
     this.state.skipVotes = []; // Reset votes on track change
     this.emitState();
 
     this.broadcastMessage({
       type: 'load',
-      track,
+      track: stampedTrack,
       commandId: this.currentCommandId,
       hostTimestamp: Date.now(),
     });
 
     if (this.playerHandlers.loadTrack) {
-      await this.playerHandlers.loadTrack(track);
+      await this.playerHandlers.loadTrack(stampedTrack);
     }
 
     const hostMember = this.state.members.find((m) => m.id === this.state.selfId);
     if (hostMember) hostMember.status = 'ready';
     this.emitState();
+
+    const otherMembers = this.state.members.filter((m) => m.id !== this.state.selfId);
+    if (otherMembers.length === 0) {
+      this.hostStartParty();
+      return;
+    }
 
     if (this.readyCheckTimer) clearTimeout(this.readyCheckTimer);
     this.readyCheckTimer = setTimeout(() => {
@@ -2086,6 +2390,9 @@ class PartyServiceClass {
       skipVotes: [],
       autoSkipEnabled: false,
       queue: [],
+      history: [],
+      allowGuestQueue: false,
+      chatMessages: [],
       activeReactions: [],
       isReactionsMuted: this.state.isReactionsMuted,
       syncLogs: this.state.syncLogs || [],
