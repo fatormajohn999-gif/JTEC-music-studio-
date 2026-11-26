@@ -32,10 +32,15 @@ const artwork512Cache = new Map<string, string>();
 const MAX_ARTWORK_CACHE_ITEMS = 20;
 
 let activeSongId: string | null = null;
+let lastPublishedNormalSong: Song | null = null;
+let lastPublishedNormalOptions: PublishNowPlayingOptions = {};
 let lastPublishedCoverSource: string | null = null;
 let lastKnownDuration = 0;
 let lastKnownRate = 1.0;
 let currentCallbacks: MediaSessionCallbacks | null = null;
+let partyActionCallbacks: MediaSessionCallbacks | null = null;
+let partyMediaSessionActive = false;
+let partySessionToken = 0;
 let actionHandlersInitialized = false;
 let widgetActionListenerInitialized = false;
 
@@ -44,6 +49,21 @@ let lastPositionSyncTime = 0;
 let lastReportedPosition = -1;
 let currentIsPlaying = false;
 let suppressPausedUntil = 0;
+
+export interface PartyMediaSessionInfo {
+  roomCode: string;
+  track: {
+    id: string;
+    title: string;
+    artist: string;
+    cover?: string;
+    duration?: number;
+  } | null;
+  playing: boolean;
+  position?: number;
+  duration?: number;
+  memberCount?: number;
+}
 
 // Tiny emergency fallback only if canvas is unavailable (SSR/test)
 const EMERGENCY_1X1_PNG =
@@ -493,6 +513,11 @@ async function applyMediaSessionPosition(
     scheduleWidgetSync();
   }
 
+  // Do not overwrite active Party lockscreen banner while party media session owns OS controls
+  if (partyMediaSessionActive) {
+    return;
+  }
+
   const now = Date.now();
   const posJump = Math.abs(clampedPosition - lastReportedPosition);
   const dueForPlayingRefresh = currentIsPlaying && now - lastPositionSyncTime >= 10000;
@@ -517,12 +542,15 @@ async function applyMediaSessionPosition(
 
 export const MediaSessionManager = {
   /**
-   * Single source of truth for publishing the currently playing/loaded song across:
+   * Single source of truth for publishing the currently playing/loaded NORMAL song across:
    * - Android Notification & Lock Screen
    * - Bluetooth / Headset / Car metadata
    * - Home screen widget (WidgetBridge)
    */
   async publishNowPlaying(song: Song | null, options: PublishNowPlayingOptions = {}) {
+    lastPublishedNormalSong = song;
+    lastPublishedNormalOptions = { ...options };
+
     if (!song) {
       activeSongId = null;
       lastPublishedCoverSource = null;
@@ -540,6 +568,10 @@ export const MediaSessionManager = {
       lastSentArtworkTrackId = null;
       lastSentArtworkCoverUrl = null;
       scheduleWidgetSync();
+
+      if (partyMediaSessionActive) {
+        return;
+      }
 
       const fallbackCover = await buildFallbackCover512Jpeg();
       try {
@@ -613,6 +645,10 @@ export const MediaSessionManager = {
     }
     scheduleWidgetSync();
 
+    if (partyMediaSessionActive) {
+      return;
+    }
+
     // Ensure a 512x512 JPEG cover is always ready immediately (never stale from previous track, never blank)
     const cached512 = coverSource ? artwork512Cache.get(coverSource) : undefined;
     const immediateCover = cached512 || (await buildFallbackCover512Jpeg());
@@ -649,10 +685,10 @@ export const MediaSessionManager = {
     }
 
     // If cover wasn't cached yet, prepare 512x512 center-cropped JPEG (0.9) and push immediately
-    if (!cached512 && coverSource) {
+    if (!cached512 && coverSource && !partyMediaSessionActive) {
       try {
         const final512Cover = await prepareArtworkUrl(coverSource);
-        if (activeSongId === thisSongId && final512Cover !== immediateCover) {
+        if (activeSongId === thisSongId && !partyMediaSessionActive && final512Cover !== immediateCover) {
           await MediaSession.setMetadata({
             title: cleanTitle,
             artist: cleanArtist,
@@ -710,6 +746,10 @@ export const MediaSessionManager = {
       widgetSyncState.durationMs = Math.round(currentDur * 1000);
     }
     scheduleWidgetSync();
+
+    if (partyMediaSessionActive) {
+      return;
+    }
 
     try {
       await MediaSession.setPlaybackState({ playbackState });
@@ -813,6 +853,141 @@ export const MediaSessionManager = {
   },
 
   /**
+   * Publishes JTEC Party metadata ONLY to OS/browser lockscreen MediaSession without
+   * mutating normal playback metadata (`lastPublishedNormalSong`, `activeSongId`)
+   * or the Android Home Screen widget (`widgetSyncState`).
+   * If `info.track` is null while normal music is playing, normal MediaSession stays untouched.
+   */
+  async publishPartyNowPlaying(info: PartyMediaSessionInfo | null) {
+    if (!info) {
+      await this.clearPartyMediaSession();
+      return;
+    }
+
+    if (!info.track) {
+      if (partyMediaSessionActive) {
+        await this.clearPartyMediaSession();
+      }
+      return;
+    }
+
+    partyMediaSessionActive = true;
+    const token = ++partySessionToken;
+
+    const cleanTitle = cleanDisplayTitle(info.track.title);
+    const cleanArtist = `${cleanDisplayArtist(info.track.artist)} (In JTEC Party)`;
+    const album = `JTEC Party • ${info.memberCount || 1} Listeners`;
+    const coverSource = info.track.cover || '';
+
+    const cached512 = coverSource ? artwork512Cache.get(coverSource) : undefined;
+    const immediateCover = cached512 || (await buildFallbackCover512Jpeg());
+
+    if (!partyMediaSessionActive || token !== partySessionToken) return;
+
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: cleanTitle,
+          artist: cleanArtist,
+          album,
+          artwork: coverSource
+            ? [{ src: coverSource, sizes: '512x512', type: 'image/jpeg' }]
+            : [{ src: immediateCover, sizes: '512x512', type: 'image/jpeg' }],
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      await MediaSession.setMetadata({
+        title: cleanTitle,
+        artist: cleanArtist,
+        album,
+        artwork: [{ src: immediateCover, sizes: '512x512', type: 'image/jpeg' }],
+      });
+      await MediaSession.setPlaybackState({
+        playbackState: info.playing ? 'playing' : 'paused',
+      });
+      const dur = typeof info.duration === 'number' && isFinite(info.duration) && info.duration > 0
+        ? info.duration
+        : (typeof info.track.duration === 'number' && info.track.duration > 0 ? info.track.duration : 0);
+      const pos = typeof info.position === 'number' && isFinite(info.position) && info.position >= 0
+        ? info.position
+        : 0;
+      if (dur > 0) {
+        await MediaSession.setPositionState({
+          duration: dur,
+          position: Math.min(pos, dur),
+          playbackRate: 1.0,
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!cached512 && coverSource) {
+      try {
+        const final512 = await prepareArtworkUrl(coverSource);
+        if (partyMediaSessionActive && token === partySessionToken && final512 !== immediateCover) {
+          await MediaSession.setMetadata({
+            title: cleanTitle,
+            artist: cleanArtist,
+            album,
+            artwork: [{ src: final512, sizes: '512x512', type: 'image/jpeg' }],
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }
+  },
+
+  /**
+   * Clears party-specific lockscreen metadata/controls and immediately restores the preserved
+   * normal JTEC Music metadata, playback state, and position state.
+   */
+  async clearPartyMediaSession() {
+    partyMediaSessionActive = false;
+    partySessionToken += 1;
+    partyActionCallbacks = null;
+
+    if (lastPublishedNormalSong) {
+      const effects = audioEngine.getCurrentEffects();
+      await this.publishNowPlaying(lastPublishedNormalSong, {
+        ...lastPublishedNormalOptions,
+        playing: audioEngine.isPlaying,
+        position: typeof audioEngine.currentTime === 'number' && isFinite(audioEngine.currentTime)
+          ? audioEngine.currentTime
+          : 0,
+        duration: typeof audioEngine.duration === 'number' && isFinite(audioEngine.duration) && audioEngine.duration > 0
+          ? audioEngine.duration
+          : lastPublishedNormalSong.duration || 0,
+        playbackRate: effects.playbackRate || 1.0,
+      });
+      await this.updatePlaybackState(audioEngine.isPlaying ? 'playing' : 'paused');
+    } else {
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.metadata = null;
+        } catch {
+          // ignore
+        }
+      }
+      await this.publishNowPlaying(null, { playing: false });
+      await this.updatePlaybackState('none');
+    }
+  },
+
+  isPartyMediaSessionActive(): boolean {
+    return partyMediaSessionActive;
+  },
+
+  registerPartyActionHandlers(callbacks: MediaSessionCallbacks | null) {
+    partyActionCallbacks = callbacks;
+  },
+
+  /**
    * Registers media action handlers for:
    * play, pause, previoustrack, nexttrack, seekto, seekbackward, seekforward, stop,
    * and native Android home screen widget actions.
@@ -862,53 +1037,55 @@ export const MediaSessionManager = {
     for (const action of actions) {
       try {
         await MediaSession.setActionHandler({ action }, (details) => {
-          if (!currentCallbacks) return;
+          const activeCallbacks =
+            partyMediaSessionActive && partyActionCallbacks ? partyActionCallbacks : currentCallbacks;
+          if (!activeCallbacks) return;
 
           switch (action) {
             case 'play':
-              currentCallbacks.onPlay();
+              activeCallbacks.onPlay();
               break;
             case 'pause':
-              currentCallbacks.onPause();
+              activeCallbacks.onPause();
               break;
             case 'previoustrack':
-              currentCallbacks.onPrevious();
+              activeCallbacks.onPrevious();
               break;
             case 'nexttrack':
-              currentCallbacks.onNext();
+              activeCallbacks.onNext();
               break;
             case 'seekto':
               if (typeof details?.seekTime === 'number' && !isNaN(details.seekTime)) {
-                currentCallbacks.onSeek(details.seekTime);
+                activeCallbacks.onSeek(details.seekTime);
               }
               break;
             case 'seekbackward': {
               const offset = (details as any)?.seekOffset || 10;
-              if (currentCallbacks.onSeekBackward) {
-                currentCallbacks.onSeekBackward(offset);
+              if (activeCallbacks.onSeekBackward) {
+                activeCallbacks.onSeekBackward(offset);
               } else {
                 const target = Math.max(0, (audioEngine.currentTime || 0) - offset);
-                currentCallbacks.onSeek(target);
+                activeCallbacks.onSeek(target);
               }
               break;
             }
             case 'seekforward': {
               const offset = (details as any)?.seekOffset || 10;
-              if (currentCallbacks.onSeekForward) {
-                currentCallbacks.onSeekForward(offset);
+              if (activeCallbacks.onSeekForward) {
+                activeCallbacks.onSeekForward(offset);
               } else {
                 const maxDur = audioEngine.duration || lastKnownDuration || 0;
                 const rawTarget = (audioEngine.currentTime || 0) + offset;
                 const target = maxDur > 0 ? Math.min(maxDur, rawTarget) : rawTarget;
-                currentCallbacks.onSeek(target);
+                activeCallbacks.onSeek(target);
               }
               break;
             }
             case 'stop':
-              if (currentCallbacks.onStop) {
-                currentCallbacks.onStop();
+              if (activeCallbacks.onStop) {
+                activeCallbacks.onStop();
               } else {
-                currentCallbacks.onPause();
+                activeCallbacks.onPause();
               }
               break;
           }

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { PartyService, triggerHapticFeedback } from './PartyService';
 import { PartyState, PartyMember } from './types';
-import { audioEngine } from '../services/audioEngine';
+import { partyAudioEngine } from './PartyAudioEngine';
 import { registerBackHandler } from '../services/navigation';
 import { Song } from '../types/music';
 import {
@@ -336,11 +336,11 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       setCurrentPlaybackSec(0);
       return;
     }
-    setCurrentPlaybackSec(audioEngine.currentTime || 0);
+    setCurrentPlaybackSec(partyAudioEngine.currentTime || 0);
     if (partyState.playbackStatus !== 'playing') return;
 
     const interval = setInterval(() => {
-      setCurrentPlaybackSec(audioEngine.currentTime);
+      setCurrentPlaybackSec(partyAudioEngine.currentTime);
     }, 500);
 
     return () => clearInterval(interval);

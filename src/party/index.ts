@@ -1,5 +1,6 @@
 export * from './types';
 export * from './PartyService';
+export * from './PartyAudioEngine';
 export * from './PartyErrorBoundary';
 export * from './PartyScreen';
 export * from './PartyBanner';

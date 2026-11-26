@@ -60,7 +60,7 @@ import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen, SettingsSubView } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
-import { PartyBanner, PartyInviteBanner, usePartyPlayer, PartyService, isShareablePartyAudioUrl } from './party';
+import { PartyBanner, PartyInviteBanner, usePartyPlayer } from './party';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { useSleepTimer } from './hooks/useSleepTimer';
@@ -581,25 +581,8 @@ export default function App() {
     return 'main';
   });
 
-  // JTEC Party Listener & Host hook
-  const {
-    partyState,
-    isPartyActive,
-    isPartyHost,
-    isPartyGuest,
-  } = usePartyPlayer({
-    onSyncCurrentSong: (song) => {
-      setCurrentSong(song);
-      currentSongRef.current = song;
-      MediaSessionManager.publishNowPlaying(song, {
-        duration: song.duration || 0,
-        playbackRate: 1.0,
-      });
-      if (song.coverUrl) {
-        extractPaletteFromImage(song.coverUrl).then((pal) => setCurrentPalette(pal));
-      }
-    },
-  });
+  // JTEC Party state (playback uses isolated PartyAudioEngine and never overwrites normal currentSong)
+  const { partyState } = usePartyPlayer();
 
   // Initialize Global Android and Web Back Navigation
   useEffect(() => {
@@ -1252,34 +1235,6 @@ export default function App() {
   // Play a specific song with optional context queue and optional start position
   const playSong = async (song: Song, contextQueue?: Song[], startPosition?: number) => {
     try {
-      if (isPartyGuest) {
-        setGlobalError('Controlled by the host');
-        setTimeout(() => setGlobalError(null), 3000);
-        return;
-      }
-
-      if (isPartyHost) {
-        if (!song.isCloud || !isShareablePartyAudioUrl(song.audioUrl)) {
-          setGlobalError('Local device files cannot be shared in JTEC Party. Select a JTEC Cloud or Online song.');
-          setTimeout(() => setGlobalError(null), 4000);
-          return;
-        }
-
-        PartyService.hostSelectTrack({
-          source: song.source || 'cloud',
-          id: song.cloudId || song.id,
-          title: song.title,
-          artist: song.artist,
-          cover: song.coverUrl || song.artworkUrl,
-          audioUrl: song.audioUrl || '',
-          duration: song.duration,
-          size: song.size,
-        }).catch((err) => {
-          setGlobalError(err instanceof Error ? err.message : 'Unable to play song in Party.');
-          setTimeout(() => setGlobalError(null), 4000);
-        });
-      }
-
       NotificationPermissionManager.checkAndRequestOnFirstPlay();
       setCurrentSong(song);
       MediaSessionManager.publishNowPlaying(song, {
@@ -1432,21 +1387,6 @@ export default function App() {
 
   // Toggle Play / Pause
   const handleTogglePlay = async () => {
-    if (isPartyGuest) {
-      setGlobalError('Controlled by the host');
-      setTimeout(() => setGlobalError(null), 3000);
-      return;
-    }
-
-    if (isPartyHost) {
-      if (isPlaying) {
-        PartyService.hostPause();
-      } else {
-        PartyService.hostPlay();
-      }
-      return;
-    }
-
     if (!currentSong && songs.length > 0) {
       playSong(songs[0]);
       return;
@@ -1477,19 +1417,6 @@ export default function App() {
 
   // Next Track (advances strictly top-to-bottom through the active queue/list)
   const handleNextTrack = useCallback((isAutoAdvance = false) => {
-    if (isPartyGuest) {
-      if (!isAutoAdvance) {
-        setGlobalError('Controlled by the host');
-        setTimeout(() => setGlobalError(null), 3000);
-      }
-      return;
-    }
-
-    if (isPartyHost) {
-      PartyService.hostNextTrack(isAutoAdvance);
-      return;
-    }
-
     const cur = currentSongRef.current;
     const q = queueRef.current.length > 0 ? queueRef.current : songsRef.current;
     if (q.length === 0) return;
@@ -1543,21 +1470,10 @@ export default function App() {
       // Manual Next button: wrap around to first song
       playSong(q[0]);
     }
-  }, [isPartyGuest, isPartyHost]);
+  }, []);
 
   // Previous Track (goes to the song above in top-to-bottom order)
   const handlePreviousTrack = useCallback(() => {
-    if (isPartyGuest) {
-      setGlobalError('Controlled by the host');
-      setTimeout(() => setGlobalError(null), 3000);
-      return;
-    }
-
-    if (isPartyHost) {
-      PartyService.hostPreviousTrack();
-      return;
-    }
-
     if (currentTimeRef.current > 3) {
       audioEngine.seek(0);
       setCurrentTime(0);
@@ -1589,7 +1505,7 @@ export default function App() {
 
     // At the top song: wrap around to bottom
     playSong(q[q.length - 1]);
-  }, [isPartyGuest, isPartyHost]);
+  }, []);
 
   useEffect(() => {
     handleNextTrackRef.current = handleNextTrack;
@@ -1632,15 +1548,7 @@ export default function App() {
 
   // Seek
   const handleSeek = (seconds: number) => {
-    if (isPartyGuest) {
-      setGlobalError('Controlled by the host');
-      setTimeout(() => setGlobalError(null), 3000);
-      return;
-    }
     const targetSeconds = Math.max(0, duration > 0 ? Math.min(duration, seconds) : seconds);
-    if (isPartyHost) {
-      PartyService.hostSeek(targetSeconds);
-    }
     audioEngine.seek(targetSeconds);
     setCurrentTime(targetSeconds);
     currentTimeRef.current = targetSeconds;
@@ -1652,25 +1560,11 @@ export default function App() {
   useEffect(() => {
     MediaSessionManager.registerActionHandlers({
       onPlay: () => {
-        if (isPartyGuest) return;
-        if (isPartyHost) {
-          if (!audioEngine.isPlaying) {
-            PartyService.hostPlay();
-          }
-          return;
-        }
         if (!audioEngine.isPlaying) {
           handleTogglePlay();
         }
       },
       onPause: () => {
-        if (isPartyGuest) return;
-        if (isPartyHost) {
-          if (audioEngine.isPlaying) {
-            PartyService.hostPause();
-          }
-          return;
-        }
         audioEngine.pause();
       },
       onPrevious: () => handlePreviousTrack(),
@@ -1699,7 +1593,7 @@ export default function App() {
         }
       },
     });
-  }, [currentSong, queue, songs, playlists, isShuffle, repeatMode, currentTime, duration, effects.playbackRate, isPartyGuest, isPartyHost]);
+  }, [currentSong, queue, songs, playlists, isShuffle, repeatMode, currentTime, duration, effects.playbackRate]);
 
   // Sync extra widget metadata (accent color, favorite state, queue bounds)
   useEffect(() => {
@@ -2320,7 +2214,6 @@ export default function App() {
         onNext={handleNextTrack}
         onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
-        isPartyGuest={isPartyGuest}
       />
 
       {/* Bottom Navigation */}
@@ -2350,7 +2243,6 @@ export default function App() {
         onNext={handleNextTrack}
         onToggleFavorite={handleToggleFavorite}
         onToggleShuffle={handleToggleShuffle}
-        isPartyGuest={isPartyGuest}
         onCycleRepeat={() => {
           setRepeatMode((prev) => {
             const next = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';

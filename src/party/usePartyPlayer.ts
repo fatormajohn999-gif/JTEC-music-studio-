@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { PartyService } from './PartyService';
 import { PartyState, PartyTrack } from './types';
 import { isShareablePartyAudioUrl } from './utils/audioValidation';
-import { audioEngine } from '../services/audioEngine';
+import { partyAudioEngine } from './PartyAudioEngine';
+import { MediaSessionManager } from '../services/mediaSession';
 import { StorageService } from '../services/storage';
 import { Song } from '../types/music';
 
@@ -25,7 +26,6 @@ export function partyTrackToSong(track: PartyTrack): Song {
 }
 
 interface UsePartyPlayerOptions {
-  onSyncCurrentSong?: (song: Song) => void;
   onShowMobileDataNotice?: (message: string) => void;
 }
 
@@ -40,9 +40,9 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
     });
   }, []);
 
-  // Hook PartyService to audioEngine
+  // Hook PartyService exclusively to the dedicated PartyAudioEngine (never global audioEngine)
   useEffect(() => {
-    const unregister = PartyService.registerPlayerHandlers({
+    const unregisterHandlers = PartyService.registerPlayerHandlers({
       loadTrack: async (track: PartyTrack): Promise<boolean> => {
         try {
           if (!isShareablePartyAudioUrl(track?.audioUrl)) {
@@ -50,12 +50,7 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
             return false;
           }
 
-          const songObj = partyTrackToSong(track);
-          if (optionsRef.current?.onSyncCurrentSong) {
-            optionsRef.current.onSyncCurrentSong(songObj);
-          }
-
-          // Check if user already downloaded this song locally
+          // Check if user already downloaded this song locally so Party doesn't waste bandwidth
           let localBlob: Blob | null = null;
           try {
             const allSongs = await StorageService.getAllSongs();
@@ -69,13 +64,14 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
             if (match) {
               localBlob = await StorageService.getSongBlob(match.id);
             }
-          } catch {}
+          } catch {
+            // ignore IndexedDB lookup failure and stream HTTPS URL directly
+          }
 
           if (localBlob && localBlob.size > 0) {
-            await audioEngine.loadAudio(localBlob, 0);
+            await partyAudioEngine.loadTrack(localBlob, 0);
           } else {
-            // Stream authorized HTTPS audio address
-            await audioEngine.loadAudio(track.audioUrl, 0);
+            await partyAudioEngine.loadTrack(track.audioUrl, 0);
           }
 
           return true;
@@ -85,21 +81,32 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
         }
       },
       play: async () => {
-        await audioEngine.play();
+        await partyAudioEngine.play();
       },
       pause: () => {
-        audioEngine.pause();
+        partyAudioEngine.pause();
       },
       seek: (posSec: number) => {
-        audioEngine.seek(posSec);
+        partyAudioEngine.seek(posSec);
+      },
+      stopAndUnload: () => {
+        partyAudioEngine.stopAndUnload();
       },
       getCurrentPositionSeconds: () => {
-        return audioEngine.currentTime;
+        return partyAudioEngine.currentTime;
       },
     });
 
+    const unsubEnded = partyAudioEngine.onEnded(() => {
+      const current = PartyService.getState();
+      if (current.roomCode && current.role === 'host') {
+        PartyService.hostNextTrack(true);
+      }
+    });
+
     return () => {
-      unregister();
+      unregisterHandlers();
+      unsubEnded();
     };
   }, []);
 
@@ -107,6 +114,64 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
   const isPartyHost = isPartyActive && partyState.role === 'host';
   const isPartyGuest = isPartyActive && partyState.role === 'guest';
   const canControlPlayback = !isPartyActive || isPartyHost;
+
+  // Bind party-specific OS MediaSession controls ONLY when a party track is active,
+  // leaving normal JTEC Music controls & Android widget completely untouched.
+  useEffect(() => {
+    if (!isPartyActive || !partyState.currentTrack) {
+      MediaSessionManager.registerPartyActionHandlers(null);
+      return;
+    }
+
+    MediaSessionManager.registerPartyActionHandlers({
+      onPlay: () => {
+        if (isPartyHost && !partyAudioEngine.isPlaying) {
+          PartyService.hostPlay();
+        }
+      },
+      onPause: () => {
+        if (isPartyHost && partyAudioEngine.isPlaying) {
+          PartyService.hostPause();
+        }
+      },
+      onPrevious: () => {
+        if (isPartyHost) {
+          PartyService.hostPreviousTrack();
+        }
+      },
+      onNext: () => {
+        if (isPartyHost) {
+          PartyService.hostNextTrack(false);
+        }
+      },
+      onSeek: (seconds: number) => {
+        if (isPartyHost) {
+          PartyService.hostSeek(seconds);
+        }
+      },
+      onSeekBackward: (offset = 10) => {
+        if (isPartyHost) {
+          PartyService.hostSeek(Math.max(0, (partyAudioEngine.currentTime || 0) - offset));
+        }
+      },
+      onSeekForward: (offset = 10) => {
+        if (isPartyHost) {
+          const maxDur = partyAudioEngine.duration || partyState.currentTrack?.duration || 0;
+          const rawTarget = (partyAudioEngine.currentTime || 0) + offset;
+          PartyService.hostSeek(maxDur > 0 ? Math.min(maxDur, rawTarget) : rawTarget);
+        }
+      },
+      onStop: () => {
+        if (isPartyHost) {
+          PartyService.hostPause();
+        }
+      },
+    });
+
+    return () => {
+      MediaSessionManager.registerPartyActionHandlers(null);
+    };
+  }, [isPartyActive, isPartyHost, partyState.currentTrack?.id, partyState.currentTrack?.duration]);
 
   const playInParty = useCallback(async (track: PartyTrack) => {
     if (!isPartyHost) return;
