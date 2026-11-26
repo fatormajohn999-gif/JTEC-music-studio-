@@ -91,6 +91,177 @@ export const ArchiveGeneratedCover: React.FC<{
   );
 };
 
+const ArchiveItemCard: React.FC<{
+  doc: ArchiveItemDoc;
+  itemDetailsMap: Map<string, ArchiveItemDetail>;
+  getItemDetails: (identifier: string) => Promise<ArchiveItemDetail>;
+  isDownloaded: (identifier: string, fileName?: string) => boolean;
+  onOpenItem: (doc: ArchiveItemDoc) => void;
+  onTogglePreview: (item: ArchiveItemDoc | ArchiveItemDetail, file: ArchiveAudioFile) => void;
+  handleDirectDownloadDoc: (doc: ArchiveItemDoc) => void;
+  loadingDetailsId: string | null;
+  previewTrack: any;
+  isPreviewPlaying: boolean;
+}> = ({
+  doc,
+  itemDetailsMap,
+  getItemDetails,
+  isDownloaded,
+  onOpenItem,
+  onTogglePreview,
+  handleDirectDownloadDoc,
+  loadingDetailsId,
+  previewTrack,
+  isPreviewPlaying,
+}) => {
+  const [isCoverLoading, setIsCoverLoading] = useState(false);
+  const [coverError, setCoverError] = useState(false);
+  const detail = itemDetailsMap.get(doc.identifier);
+
+  useEffect(() => {
+    if (!detail && !itemDetailsMap.has(doc.identifier)) {
+      setIsCoverLoading(true);
+      getItemDetails(doc.identifier)
+        .catch(() => {})
+        .finally(() => setIsCoverLoading(false));
+    }
+  }, [doc.identifier, detail, itemDetailsMap, getItemDetails]);
+
+  const licenseText = formatArchiveLicense(doc.licenseurl);
+  const creatorText = formatArchiveCreator(doc.creator);
+  const audioCount = detail?.audioFiles?.length;
+  const isItemDownloaded = isDownloaded(doc.identifier);
+  const isSingleFile = audioCount === 1;
+  const singleAudioFile = isSingleFile ? detail?.audioFiles[0] : null;
+  const isFilePreviewing =
+    singleAudioFile && previewTrack?.file.downloadUrl === singleAudioFile.downloadUrl && isPreviewPlaying;
+  const isDetailLoading = loadingDetailsId === doc.identifier;
+
+  const hasRealCover = detail?.hasRealImage && detail?.coverUrl && !coverError;
+
+  return (
+    <div
+      className="group relative p-2.5 sm:p-3 rounded-2xl bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-cyan-500/30 transition-all duration-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 cursor-pointer shadow-sm"
+      onClick={() => onOpenItem(doc)}
+    >
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="w-14 h-14 rounded-2xl overflow-hidden bg-slate-800 shrink-0 border border-cyan-500/30 shadow-md relative flex items-center justify-center">
+          {hasRealCover ? (
+            <img
+              src={detail.coverUrl}
+              alt={doc.title}
+              className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+              onError={() => setCoverError(true)}
+              loading="lazy"
+            />
+          ) : isCoverLoading && !detail ? (
+            <div className="absolute inset-0 bg-slate-900/80 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+            </div>
+          ) : (
+            <ArchiveGeneratedCover title={doc.title} size="md" className="border-0 shadow-none w-full h-full" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <h3
+            dir="auto"
+            className="text-xs sm:text-sm font-bold text-white line-clamp-2 group-hover:text-cyan-300 transition text-start leading-snug"
+          >
+            {doc.title}
+          </h3>
+
+          <p dir="auto" className="text-[11px] text-slate-400 truncate text-start">
+            {creatorText}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-white/5 whitespace-nowrap">
+              {licenseText}
+            </span>
+
+            {audioCount !== undefined && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 whitespace-nowrap">
+                {audioCount} {audioCount === 1 ? 'track' : 'tracks'}
+              </span>
+            )}
+
+            {isItemDownloaded && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 whitespace-nowrap">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Offline</span>
+              </span>
+            )}
+
+            <a
+              href={`https://archive.org/details/${doc.identifier}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-[10px] text-slate-500 hover:text-cyan-400 flex items-center gap-0.5 ml-1 transition"
+              title="View on archive.org"
+            >
+              <ExternalLink className="w-2.5 h-2.5" />
+              <span>Archive</span>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="flex items-center gap-2 self-end sm:self-center shrink-0 pt-0.5 sm:pt-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {isDetailLoading ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 text-cyan-300 text-xs font-semibold">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span>Loading...</span>
+          </div>
+        ) : isSingleFile && singleAudioFile ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onTogglePreview(detail!, singleAudioFile)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer border ${
+                isFilePreviewing
+                  ? 'bg-cyan-400 text-slate-950 border-cyan-300 shadow-md shadow-cyan-500/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-white/10'
+              }`}
+              title="Preview audio"
+            >
+              {isFilePreviewing ? (
+                <Pause className="w-3.5 h-3.5 fill-current" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleDirectDownloadDoc(doc)}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-xs shadow-md shadow-cyan-500/20 active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
+              title="Download track for offline playback"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download</span>
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onOpenItem(doc)}
+            className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-cyan-300 hover:text-white font-semibold text-xs transition flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>View tracks</span>
+            <ChevronRight className="w-3.5 h-3.5 ml-0.5 text-slate-400" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps> = ({
   offlineSongs,
   isPlaying: isMainPlayerPlaying,
@@ -143,6 +314,16 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
   // Item details cache: identifier -> ArchiveItemDetail
   const [itemDetailsMap, setItemDetailsMap] = useState<Map<string, ArchiveItemDetail>>(new Map());
   const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
+
+  // Helper to fetch item details with caching
+  const getItemDetails = useCallback(async (identifier: string): Promise<ArchiveItemDetail> => {
+    if (itemDetailsMap.has(identifier)) {
+      return itemDetailsMap.get(identifier)!;
+    }
+    const detail = await ArchiveOrgService.getItemDetails(identifier);
+    setItemDetailsMap((prev) => new Map(prev).set(identifier, detail));
+    return detail;
+  }, [itemDetailsMap]);
 
   // Selected item modal for multi-file albums/collections
   const [activeDetailItem, setActiveDetailItem] = useState<ArchiveItemDetail | null>(
@@ -220,12 +401,29 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
   const getDownloadedSong = useCallback(
     (itemIdentifier: string, fileName?: string): Song | undefined => {
       if (fileName) {
-        const expectedId = `archive_${itemIdentifier}_${fileName.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-        if (offlineMap.has(expectedId)) return offlineMap.get(expectedId);
-      }
-      // Check partial match
-      for (const [key, song] of offlineMap.entries()) {
-        if (key.includes(itemIdentifier)) return song;
+        const cleanName = fileName.replace(/[^a-zA-Z0-9_]/g, '_');
+        const expectedId1 = `archive_${itemIdentifier}_${cleanName}`;
+        const expectedId2 = `archive_${itemIdentifier}_${fileName}`;
+        if (offlineMap.has(expectedId1)) return offlineMap.get(expectedId1);
+        if (offlineMap.has(expectedId2)) return offlineMap.get(expectedId2);
+        for (const [key, song] of offlineMap.entries()) {
+          if (key === expectedId1 || key === expectedId2 || song.cloudId === expectedId1 || song.cloudId === expectedId2) {
+            return song;
+          }
+        }
+      } else {
+        const prefix = `archive_${itemIdentifier}_`;
+        for (const [key, song] of offlineMap.entries()) {
+          if (
+            key === itemIdentifier ||
+            key === `archive_${itemIdentifier}` ||
+            key.startsWith(prefix) ||
+            song.cloudId === itemIdentifier ||
+            song.cloudId?.startsWith(prefix)
+          ) {
+            return song;
+          }
+        }
       }
       return undefined;
     },
@@ -513,6 +711,16 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
         return next;
       });
       setBannerError(err instanceof Error ? err.message : 'Download failed. Check your internet.');
+    }
+  };
+
+  const handleDownloadAll = async (item: ArchiveItemDetail) => {
+    if (!item.audioFiles || item.audioFiles.length === 0) return;
+    for (const file of item.audioFiles) {
+      if (!isDownloaded(item.identifier, file.name)) {
+        if (file.size > 150 * 1024 * 1024) continue;
+        await startDownloadProcess(item, file);
+      }
     }
   };
 
@@ -810,139 +1018,21 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
       {/* Items List */}
       {!isLoading && items.length > 0 && (
         <div className="space-y-2">
-          {items.map((doc) => {
-            const licenseText = formatArchiveLicense(doc.licenseurl);
-            const creatorText = formatArchiveCreator(doc.creator);
-            const cachedDetail = itemDetailsMap.get(doc.identifier);
-            const audioCount = cachedDetail?.audioFiles?.length;
-            const isItemDownloaded = isDownloaded(doc.identifier);
-            const isSingleFile = audioCount === 1;
-            const singleAudioFile = isSingleFile ? cachedDetail?.audioFiles[0] : null;
-            const isFilePreviewing =
-              singleAudioFile && previewTrack?.file.downloadUrl === singleAudioFile.downloadUrl && isPreviewPlaying;
-            const isDetailLoading = loadingDetailsId === doc.identifier;
-
-            return (
-              <div
-                key={doc.identifier}
-                className="group relative p-2.5 sm:p-3 rounded-2xl bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-cyan-500/30 transition-all duration-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 cursor-pointer shadow-sm"
-                onClick={() => handleOpenItem(doc)}
-              >
-                {/* Left: Cover & Title/Creator */}
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  {/* Generated Cover ALWAYS in results list */}
-                  <ArchiveGeneratedCover title={doc.title} size="md" />
-
-                  {/* Info */}
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <h3
-                      dir="auto"
-                      className="text-xs sm:text-sm font-bold text-white line-clamp-2 group-hover:text-cyan-300 transition text-start leading-snug"
-                    >
-                      {doc.title}
-                    </h3>
-
-                    <p
-                      dir="auto"
-                      className="text-[11px] text-slate-400 truncate text-start"
-                    >
-                      {creatorText}
-                    </p>
-
-                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      {/* Small muted license label that never wraps */}
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-white/5 whitespace-nowrap">
-                        {licenseText}
-                      </span>
-
-                      {/* Tracks count if known */}
-                      {audioCount !== undefined && (
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 whitespace-nowrap">
-                          {audioCount} {audioCount === 1 ? 'track' : 'tracks'}
-                        </span>
-                      )}
-
-                      {/* Downloaded indicator */}
-                      {isItemDownloaded && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 whitespace-nowrap">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Offline</span>
-                        </span>
-                      )}
-
-                      {/* External Archive link */}
-                      <a
-                        href={`https://archive.org/details/${doc.identifier}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-[10px] text-slate-500 hover:text-cyan-400 flex items-center gap-0.5 ml-1 transition"
-                        title="View on archive.org"
-                      >
-                        <ExternalLink className="w-2.5 h-2.5" />
-                        <span>Archive</span>
-                      </a>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right: Action Buttons */}
-                <div
-                  className="flex items-center gap-2 self-end sm:self-center shrink-0 pt-0.5 sm:pt-0"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {isDetailLoading ? (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 text-cyan-300 text-xs font-semibold">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Loading...</span>
-                    </div>
-                  ) : isSingleFile && singleAudioFile ? (
-                    <>
-                      {/* Direct Preview */}
-                      <button
-                        type="button"
-                        onClick={() => handleTogglePreview(doc, singleAudioFile)}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer border ${
-                          isFilePreviewing
-                            ? 'bg-cyan-400 text-slate-950 border-cyan-300 shadow-md shadow-cyan-500/30'
-                            : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-white/10'
-                        }`}
-                        title="Preview audio"
-                      >
-                        {isFilePreviewing ? (
-                          <Pause className="w-3.5 h-3.5 fill-current" />
-                        ) : (
-                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                        )}
-                      </button>
-
-                      {/* Direct Download */}
-                      <button
-                        type="button"
-                        onClick={() => handleDirectDownloadDoc(doc)}
-                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-xs shadow-md shadow-cyan-500/20 active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
-                        title="Download track for offline playback"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download</span>
-                      </button>
-                    </>
-                  ) : (
-                    /* Multi-track item button - compact */
-                    <button
-                      type="button"
-                      onClick={() => handleOpenItem(doc)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-cyan-300 hover:text-white font-semibold text-xs transition flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
-                    >
-                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>View tracks</span>
-                      <ChevronRight className="w-3.5 h-3.5 ml-0.5 text-slate-400" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {items.map((doc) => (
+            <ArchiveItemCard
+              key={doc.identifier}
+              doc={doc}
+              itemDetailsMap={itemDetailsMap}
+              getItemDetails={getItemDetails}
+              isDownloaded={isDownloaded}
+              onOpenItem={handleOpenItem}
+              onTogglePreview={handleTogglePreview}
+              handleDirectDownloadDoc={handleDirectDownloadDoc}
+              loadingDetailsId={loadingDetailsId}
+              previewTrack={previewTrack}
+              isPreviewPlaying={isPreviewPlaying}
+            />
+          ))}
         </div>
       )}
 
@@ -1025,6 +1115,19 @@ export const ArchiveNasheedCatalogView: React.FC<ArchiveNasheedCatalogViewProps>
 
             {/* Modal Track List */}
             <div className="p-4 sm:p-5 overflow-y-auto space-y-2 flex-1">
+              {activeDetailItem.audioFiles.length > 0 && (
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/5">
+                  <span className="text-xs text-slate-400 font-semibold">Tracks ({activeDetailItem.audioFiles.length})</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadAll(activeDetailItem)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download All Tracks</span>
+                  </button>
+                </div>
+              )}
               {activeDetailItem.audioFiles.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400">
                   No compatible audio files found for this collection.

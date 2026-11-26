@@ -20,6 +20,8 @@ export interface ArchiveAudioFile {
   format: string;
   downloadUrl: string;
   source?: string;
+  md5?: string;
+  sha1?: string;
 }
 
 export interface ArchiveItemDetail extends ArchiveItemDoc {
@@ -387,6 +389,8 @@ export const ArchiveOrgService = {
           format: (f.name.split('.').pop() || 'mp3').toLowerCase(),
           downloadUrl,
           source: f.source,
+          md5: f.md5,
+          sha1: f.sha1,
         };
       });
 
@@ -457,8 +461,14 @@ export const ArchiveOrgService = {
           audioBlob = response.data;
         } else if (typeof response.data === 'string') {
           audioBlob = base64ToBlob(response.data, 'audio/mpeg');
-        } else {
+        } else if (response.data instanceof ArrayBuffer) {
           audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+        } else if (response.data && typeof response.data === 'object' && 'buffer' in response.data) {
+          audioBlob = new Blob([response.data as any], { type: 'audio/mpeg' });
+        } else if (response.data) {
+          audioBlob = new Blob([String(response.data)], { type: 'audio/mpeg' });
+        } else {
+          throw new Error('Native Android download returned empty response data.');
         }
       } else {
         const response = await fetch(file.downloadUrl);
@@ -495,13 +505,37 @@ export const ArchiveOrgService = {
       }
 
       if (!audioBlob || audioBlob.size === 0) {
-        throw new Error('Downloaded file was empty.');
+        throw new Error('Download failed: downloaded file was empty (0 bytes).');
+      }
+
+      // Integrity validation 1: Compare actual Blob size against expected size from metadata
+      if (file.size > 0 && Math.abs(audioBlob.size - file.size) > 2048) {
+        throw new Error(`Download failed: incomplete or truncated file (expected ${file.size} bytes, got ${audioBlob.size} bytes).`);
+      }
+
+      // Integrity validation 2: Validate available SHA-1 / MD5 checksum where possible
+      if (file.sha1) {
+        try {
+          const arrayBuf = await audioBlob.arrayBuffer();
+          const hashBuf = await crypto.subtle.digest('SHA-1', arrayBuf);
+          const hashHex = Array.from(new Uint8Array(hashBuf))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+          if (hashHex.toLowerCase() !== file.sha1.toLowerCase()) {
+            throw new Error('Download failed: checksum verification failed.');
+          }
+        } catch (sumErr: any) {
+          if (sumErr instanceof Error && sumErr.message.includes('checksum')) {
+            throw sumErr;
+          }
+        }
       }
 
       if (onProgress) onProgress(90);
 
-      // Construct offline Song record
-      const songId = `archive_${item.identifier}_${file.name.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+      // Construct offline Song record with exact deterministic ID
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9_]/g, '_');
+      const songId = `archive_${item.identifier}_${cleanFileName}`;
       const localSong: Song = {
         id: songId,
         title: file.title || cleanTrackTitle(file.name),
@@ -552,7 +586,11 @@ export const ArchiveOrgService = {
       return { song: localSong, blob: audioBlob };
     } catch (err: unknown) {
       console.warn('[ArchiveOrgService] Download error:', err);
-      throw new Error("Can't download file right now. Check your internet.");
+      if (err instanceof Error && err.message.startsWith('Download failed')) {
+        throw err;
+      }
+      const msg = err instanceof Error ? err.message : 'Download failed';
+      throw new Error(`Download failed: ${msg}`);
     }
   },
 };
