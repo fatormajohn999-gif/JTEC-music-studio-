@@ -722,8 +722,13 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // VIEW RENDER
   // =========================================================================
 
+  const isInActiveRoom = Boolean(partyState.roomCode);
+  const hasTopBanner = Boolean(
+    incomingFriendRequestNotification || partyState.errorMessage || localError || socialActionMsg
+  );
+
   return (
-    <div className="fixed inset-0 z-50 bg-[#090B11] text-slate-100 flex flex-col font-sans select-none overflow-hidden pt-safe pb-safe pl-safe pr-safe animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-[#080A10] text-slate-100 flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-200">
       {/* Hidden file input for native image picker */}
       <input
         ref={fileInputRef}
@@ -804,184 +809,191 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       )}
 
       {/* Compact Consistent Top Header */}
-      <header className="h-14 border-b border-white/10 px-3 flex items-center justify-between gap-2 shrink-0 bg-[#0D1019]/95 backdrop-blur-md z-30">
-        <button
-          type="button"
-          onClick={handleBack}
-          aria-label={
-            partyState.roomCode
-              ? roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue'
-                ? 'Back to Room Menu'
-                : roomView === 'dashboard'
-                ? 'Back to Player'
-                : 'Back to Settings'
-              : 'Back to Settings'
-          }
-          className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1.5 cursor-pointer shrink-0"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back</span>
-        </button>
-
-        <div className="min-w-0 text-center flex-1">
-          {partyState.roomCode ? (
-            <div className="min-w-0">
-              <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate leading-tight">
-                {roomView === 'listen'
-                  ? `Room ${partyState.roomCode}`
+      <header className="pt-[env(safe-area-inset-top,0px)] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))] border-b border-white/10 bg-[#0B0E17]/95 backdrop-blur-md shrink-0 z-30">
+        <div className="h-12 flex items-center justify-between gap-2 max-w-5xl mx-auto w-full">
+          <button
+            type="button"
+            onClick={handleBack}
+            aria-label={
+              partyState.roomCode
+                ? roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue'
+                  ? 'Back to Room Menu'
                   : roomView === 'dashboard'
-                  ? 'Room Menu'
-                  : roomView === 'people'
-                  ? 'People'
-                  : roomView === 'invite'
-                  ? 'Invite'
-                  : roomView === 'chat'
-                  ? 'Room Chat'
-                  : 'Shared Queue'}
-              </h1>
-              {roomView !== 'listen' && (
-                <p className="text-[10px] font-mono text-cyan-300/80 tracking-wider truncate">
+                  ? 'Back to Player'
+                  : 'Back to Settings'
+                : 'Back to Settings'
+            }
+            className="h-8 sm:h-9 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.11] border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+            <span>Back</span>
+          </button>
+
+          <div className="min-w-0 text-center flex-1 px-1">
+            {partyState.roomCode ? (
+              <div className="min-w-0 flex flex-col items-center justify-center">
+                <h1 className="text-[13px] sm:text-sm font-bold text-white tracking-tight truncate leading-tight max-w-full">
+                  {roomView === 'listen'
+                    ? 'Now Listening'
+                    : roomView === 'dashboard'
+                    ? 'Room Menu'
+                    : roomView === 'people'
+                    ? 'People'
+                    : roomView === 'invite'
+                    ? 'Invite'
+                    : roomView === 'chat'
+                    ? 'Room Chat'
+                    : 'Shared Queue'}
+                </h1>
+                <p className="text-[10px] font-mono text-cyan-300/90 tracking-widest truncate leading-tight">
                   Room {partyState.roomCode}
                 </p>
-              )}
-            </div>
+              </div>
+            ) : (
+              <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
+                JTEC Party
+              </h1>
+            )}
+          </div>
+
+          {partyState.roomCode ? (
+            <button
+              type="button"
+              onClick={() => {
+                triggerHapticFeedback();
+                setShowLeaveConfirm(true);
+              }}
+              aria-label={partyState.role === 'host' ? 'End room' : 'Leave room'}
+              className="h-8 sm:h-9 px-2.5 rounded-lg bg-rose-500/12 hover:bg-rose-500/22 border border-rose-500/25 text-rose-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              <span>{partyState.role === 'host' ? 'End' : 'Leave'}</span>
+            </button>
+          ) : profile ? (
+            <button
+              type="button"
+              onClick={() => {
+                triggerHapticFeedback();
+                setLobbyTab('profile');
+              }}
+              aria-label="Open Profile"
+              className="w-9 h-9 flex items-center justify-center cursor-pointer active:scale-95 transition shrink-0"
+            >
+              <Avatar
+                url={profile.avatarUrl}
+                name={profile.username}
+                size={32}
+                className="border border-cyan-400/50"
+              />
+            </button>
           ) : (
-            <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
-              JTEC Party
-            </h1>
+            <div className="w-14 shrink-0" />
           )}
         </div>
-
-        {partyState.roomCode ? (
-          <button
-            type="button"
-            onClick={() => {
-              triggerHapticFeedback();
-              setShowLeaveConfirm(true);
-            }}
-            aria-label={partyState.role === 'host' ? 'End room' : 'Leave room'}
-            className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>{partyState.role === 'host' ? 'End' : 'Leave'}</span>
-          </button>
-        ) : profile ? (
-          <button
-            type="button"
-            onClick={() => {
-              triggerHapticFeedback();
-              setLobbyTab('profile');
-            }}
-            aria-label="Open Profile"
-            className="w-11 h-11 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer active:scale-95 transition shrink-0"
-          >
-            <Avatar
-              url={profile.avatarUrl}
-              name={profile.username}
-              size={36}
-              className="border border-cyan-400/50"
-            />
-          </button>
-        ) : (
-          <div className="w-11 min-w-[44px] shrink-0" />
-        )}
       </header>
 
       {/* Main Viewport */}
       <main
-        className={`flex-1 w-full min-h-0 px-3 sm:px-4 py-3 ${
-          partyState.roomCode && roomView === 'chat'
-            ? 'flex flex-col overflow-hidden'
-            : 'overflow-y-auto overflow-x-hidden'
-        }`}
+        className={
+          isInActiveRoom
+            ? 'relative flex-1 w-full min-h-0 flex flex-col overflow-hidden pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
+            : 'flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-3 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))]'
+        }
       >
         <div
-          className={`max-w-2xl mx-auto w-full ${
-            partyState.roomCode && roomView === 'chat'
-              ? 'flex-1 flex flex-col min-h-0 gap-3'
-              : 'space-y-4 pb-8'
-          }`}
+          className={
+            isInActiveRoom
+              ? 'flex-1 min-h-0 w-full flex flex-col'
+              : 'max-w-2xl mx-auto w-full space-y-4 pb-8'
+          }
         >
-          {/* Incoming Friend Request Notification Banner (Requirement 3) */}
-          {incomingFriendRequestNotification && (
-            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/90 via-slate-900 to-cyan-950/90 border border-cyan-400/50 shadow-xl flex items-center justify-between gap-3 animate-in slide-in-from-top duration-200">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0">
-                  <UserPlus className="w-4 h-4" />
+          {/* Top Notification & Status Banners */}
+          {hasTopBanner && (
+            <div className={isInActiveRoom ? 'px-3 sm:px-6 pt-2 space-y-2 shrink-0 max-w-3xl mx-auto w-full' : 'space-y-3'}>
+              {/* Incoming Friend Request Notification Banner (Requirement 3) */}
+              {incomingFriendRequestNotification && (
+                <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-950/90 via-slate-900 to-cyan-950/90 border border-cyan-400/50 shadow-xl flex items-center justify-between gap-3 animate-in slide-in-from-top duration-200">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0">
+                      <UserPlus className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">
+                        <strong className="text-cyan-300 font-bold">{incomingFriendRequestNotification.name}</strong> sent you a friend request
+                      </p>
+                      <p className="text-[10px] text-slate-400">Accept to listen to music together</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIncomingFriendRequestNotification(null);
+                        setLobbyTab('friends');
+                        setFriendsSubTab('requests');
+                      }}
+                      className="px-3 py-1.5 min-h-[36px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow cursor-pointer active:scale-95 transition"
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIncomingFriendRequestNotification(null)}
+                      className="p-1.5 text-slate-400 hover:text-white cursor-pointer rounded-lg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">
-                    <strong className="text-cyan-300 font-bold">{incomingFriendRequestNotification.name}</strong> sent you a friend request
-                  </p>
-                  <p className="text-[10px] text-slate-400">Accept to listen to music together</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIncomingFriendRequestNotification(null);
-                    setLobbyTab('friends');
-                    setFriendsSubTab('requests');
-                  }}
-                  className="px-3 py-1.5 min-h-[36px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow cursor-pointer active:scale-95 transition"
-                >
-                  View
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIncomingFriendRequestNotification(null)}
-                  className="p-1.5 text-slate-400 hover:text-white cursor-pointer rounded-lg"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Status or Error Banner */}
-          {(partyState.errorMessage || localError || socialActionMsg) && (
-            <div
-              className={`p-3.5 rounded-2xl border text-xs flex items-center justify-between gap-3 animate-in fade-in ${
-                socialActionMsg?.type === 'success'
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200'
-                  : 'bg-rose-500/15 border-rose-500/30 text-rose-200'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                {socialActionMsg?.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                )}
-                <span className="truncate">
-                  {socialActionMsg?.text || partyState.errorMessage || localError}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setLocalError(null);
-                  setSocialActionMsg(null);
-                  PartyService.clearErrorMessage();
-                }}
-                className="text-[11px] font-bold text-slate-300 hover:text-white px-2 py-0.5 rounded cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
-              >
-                Dismiss
-              </button>
+              {/* Status or Error Banner */}
+              {(partyState.errorMessage || localError || socialActionMsg) && (
+                <div
+                  className={`px-3.5 py-2.5 rounded-2xl border text-xs flex items-center justify-between gap-3 animate-in fade-in ${
+                    socialActionMsg?.type === 'success'
+                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200'
+                      : 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {socialActionMsg?.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {socialActionMsg?.text || partyState.errorMessage || localError}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocalError(null);
+                      setSocialActionMsg(null);
+                      PartyService.clearErrorMessage();
+                    }}
+                    className="text-[11px] font-bold text-slate-300 hover:text-white px-2 py-1 rounded cursor-pointer shrink-0"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {/* Synchronized 3-2-1 Countdown Overlay */}
           {partyState.playbackStatus === 'countdown' && partyState.countdownNumber !== null && (
-            <div className="p-8 rounded-3xl bg-gradient-to-b from-cyan-950/80 to-purple-950/90 border border-cyan-400/50 shadow-2xl text-center space-y-3 animate-pulse">
-              <p className="text-xs font-bold uppercase tracking-widest text-cyan-300">
-                Starting together in
-              </p>
-              <div className="text-7xl sm:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-pink-400 to-purple-400">
-                {partyState.countdownNumber}
+            <div className="absolute inset-0 z-20 bg-[#080A10]/90 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in">
+              <div className="w-full max-w-sm p-8 rounded-3xl bg-gradient-to-b from-cyan-950/80 to-purple-950/90 border border-cyan-400/50 shadow-2xl text-center space-y-3 animate-pulse">
+                <p className="text-xs font-bold uppercase tracking-widest text-cyan-300">
+                  Starting together in
+                </p>
+                <div className="text-7xl sm:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-pink-400 to-purple-400">
+                  {partyState.countdownNumber}
+                </div>
+                <p className="text-xs text-slate-300">Synchronizing audio clocks...</p>
               </div>
-              <p className="text-xs text-slate-300">Synchronizing audio clocks...</p>
             </div>
           )}
 
@@ -1018,7 +1030,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           {/* =========================================================================
               CASE 1: CREATE ACCOUNT SCREEN (If user has no profile yet & available)
           ========================================================================= */}
-          {!profile && !isLoadingProfile && !isBackendUnavailable && (
+          {!profile && !isLoadingProfile && !isBackendUnavailable && !partyState.roomCode && (
             <div className="space-y-4 animate-in fade-in duration-200">
               <div className="p-6 rounded-3xl bg-gradient-to-br from-cyan-950/40 via-purple-950/30 to-slate-900/80 border border-cyan-500/30 shadow-xl space-y-4">
                 <div className="flex items-center gap-3">
