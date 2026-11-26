@@ -1,32 +1,54 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Send, Smile } from 'lucide-react';
+import { MessageCircle, Send, Smile, AlertCircle, WifiOff, Loader2 } from 'lucide-react';
 import { PartyState, PARTY_REACTION_EMOJIS } from '../types';
-import { PartyService } from '../PartyService';
+import { PartyService, PartyServiceDiagnostics } from '../PartyService';
 import { Avatar } from './Avatar';
 
 interface PartyRoomChatTabProps {
   partyState: PartyState;
+  diagnostics: PartyServiceDiagnostics;
 }
 
 const CHAT_QUICK_EMOJIS = ['👍', '❤️', '🔥', '😂', '👏', '🎵'];
 
-export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }) => {
+export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState, diagnostics }) => {
   const [messageText, setMessageText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isChatConnected = diagnostics.isBotDemoRoom || partyState.isConnected;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [partyState.chatMessages.length]);
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = messageText.trim();
-    if (!clean) return;
-    PartyService.sendChatMessage(clean);
-    setMessageText('');
-    setShowEmojiPicker(false);
+    if (!clean || isSending) return;
+
+    setIsSending(true);
+    setSendError(null);
+    const res = await PartyService.sendChatMessage(clean);
+    setIsSending(false);
+
+    if (res.ok) {
+      setMessageText('');
+      setShowEmojiPicker(false);
+    } else {
+      setSendError(res.error || 'Message could not be sent.');
+    }
+  };
+
+  const handleReact = async (messageId: string, emoji: string) => {
+    setSendError(null);
+    const res = await PartyService.sendChatReaction(messageId, emoji);
+    if (!res.ok) {
+      setSendError(res.error || 'Could not send reaction.');
+    }
   };
 
   const formatTime = (ts: number) => {
@@ -38,30 +60,72 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-14.5rem)] min-h-[380px] max-h-[680px] rounded-3xl bg-[#121622]/90 border border-white/10 shadow-2xl overflow-hidden animate-in fade-in duration-200">
+    <div className="flex flex-col flex-1 min-h-0 rounded-3xl bg-[#121622]/95 border border-white/10 shadow-2xl overflow-hidden animate-in fade-in duration-200">
       {/* Chat Header */}
-      <div className="px-4 py-3 border-b border-white/10 bg-[#161B2A] flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <MessageCircle className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-xs font-bold uppercase tracking-wider text-white">
-            Room Chat
-          </h3>
+      <div className="px-4 py-3 border-b border-white/10 bg-[#161B2A] flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <MessageCircle className="w-4 h-4 text-cyan-400 shrink-0" />
+          <div className="min-w-0">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-white truncate">
+              Live Room Chat
+            </h3>
+            <p className="text-[10px] text-slate-400 truncate">
+              {diagnostics.isBotDemoRoom
+                ? 'Demo room session'
+                : 'Realtime messages shared while connected'}
+            </p>
+          </div>
         </div>
-        <span className="text-[11px] text-slate-400">
-          {partyState.members.length} listening
+        <span className="text-[11px] font-semibold text-slate-300 shrink-0">
+          {partyState.members.length} in room
         </span>
       </div>
+
+      {/* Disconnected / Delivery Error Banner */}
+      {(!isChatConnected || sendError) && (
+        <div
+          className={`px-3.5 py-2 border-b text-[11px] flex items-center justify-between gap-2 shrink-0 ${
+            sendError
+              ? 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+              : 'bg-amber-500/15 border-amber-500/30 text-amber-200'
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {sendError ? (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
+            )}
+            <span className="truncate">
+              {sendError ||
+                (partyState.isReconnecting
+                  ? 'Reconnecting realtime chat...'
+                  : 'Chat is offline until room connection resumes.')}
+            </span>
+          </div>
+          {sendError && (
+            <button
+              type="button"
+              onClick={() => setSendError(null)}
+              className="text-[11px] font-bold text-rose-100 hover:underline px-1.5 py-0.5 cursor-pointer shrink-0"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Messages Viewport */}
       <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 space-y-3 min-h-0">
         {partyState.chatMessages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center px-6 space-y-2 text-slate-400">
+          <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center px-6 space-y-2 text-slate-400">
             <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
               <MessageCircle className="w-6 h-6 text-cyan-400/70" />
             </div>
             <p className="text-xs font-semibold text-slate-200">No messages yet</p>
             <p className="text-[11px] text-slate-400 max-w-xs">
-              Say hello to the room or react to the song playing right now.
+              Send a message or tap an emoji to talk with everyone listening in room{' '}
+              <span className="font-mono text-cyan-300">{partyState.roomCode}</span>.
             </p>
           </div>
         ) : (
@@ -110,7 +174,6 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
                     {msg.text}
                   </button>
 
-                  {/* Reaction badges */}
                   {reactionEntries.length > 0 && (
                     <div className="flex items-center gap-1 flex-wrap px-1">
                       {reactionEntries.map(([emoji, ids]) => {
@@ -119,8 +182,8 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
                           <button
                             key={emoji}
                             type="button"
-                            onClick={() => PartyService.sendChatReaction(msg.id, emoji)}
-                            className={`px-2 py-0.5 rounded-full text-[11px] flex items-center gap-1 border transition cursor-pointer ${
+                            onClick={() => handleReact(msg.id, emoji)}
+                            className={`min-h-[28px] px-2 py-0.5 rounded-full text-[11px] flex items-center gap-1 border transition cursor-pointer ${
                               selfReacted
                                 ? 'bg-cyan-500/20 border-cyan-400/40 text-cyan-200'
                                 : 'bg-white/5 border-white/10 text-slate-300'
@@ -134,7 +197,6 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
                     </div>
                   )}
 
-                  {/* Quick emoji reaction picker for tapped message */}
                   {activeReactionMsgId === msg.id && (
                     <div className="flex items-center gap-1 p-1 rounded-full bg-[#0D1019] border border-white/15 shadow-xl animate-in fade-in zoom-in-95">
                       {PARTY_REACTION_EMOJIS.map((emoji) => (
@@ -142,7 +204,7 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
                           key={emoji}
                           type="button"
                           onClick={() => {
-                            PartyService.sendChatReaction(msg.id, emoji);
+                            handleReact(msg.id, emoji);
                             setActiveReactionMsgId(null);
                           }}
                           className="w-8 h-8 rounded-full hover:bg-white/10 text-base flex items-center justify-center active:scale-90 transition cursor-pointer"
@@ -160,15 +222,15 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick Emoji Insert Bar (toggleable) */}
+      {/* Quick Emoji Insert Bar */}
       {showEmojiPicker && (
-        <div className="px-3 py-2 border-t border-white/10 bg-[#161B2A] flex items-center justify-around gap-1">
+        <div className="px-3 py-2 border-t border-white/10 bg-[#161B2A] flex items-center justify-around gap-1 shrink-0">
           {CHAT_QUICK_EMOJIS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               onClick={() => setMessageText((prev) => prev + emoji)}
-              className="min-h-[40px] min-w-[40px] rounded-xl bg-white/5 hover:bg-white/10 text-lg flex items-center justify-center active:scale-90 transition cursor-pointer"
+              className="min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 text-lg flex items-center justify-center active:scale-90 transition cursor-pointer"
             >
               {emoji}
             </button>
@@ -185,7 +247,7 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
           type="button"
           onClick={() => setShowEmojiPicker((v) => !v)}
           aria-label="Toggle emoji picker"
-          className={`min-h-[44px] min-w-[44px] rounded-xl border flex items-center justify-center transition cursor-pointer ${
+          className={`min-h-[44px] min-w-[44px] rounded-xl border flex items-center justify-center transition cursor-pointer shrink-0 ${
             showEmojiPicker
               ? 'bg-cyan-500/20 border-cyan-400/40 text-cyan-300'
               : 'bg-[#0C0F18] border-white/10 text-slate-400 hover:text-white'
@@ -198,18 +260,21 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState }
           type="text"
           maxLength={400}
           value={messageText}
-          onChange={(e) => setMessageText(e.target.value)}
-          placeholder="Message the room..."
+          onChange={(e) => {
+            setMessageText(e.target.value);
+            if (sendError) setSendError(null);
+          }}
+          placeholder={isChatConnected ? 'Message the room...' : 'Reconnecting to chat...'}
           className="flex-1 min-w-0 min-h-[44px] px-3.5 py-2 rounded-xl bg-[#0C0F18] border border-white/10 text-white placeholder-slate-500 text-xs sm:text-sm focus:outline-none focus:border-cyan-400 transition"
         />
 
         <button
           type="submit"
-          disabled={!messageText.trim()}
+          disabled={!messageText.trim() || isSending || !isChatConnected}
           aria-label="Send message"
-          className="min-h-[44px] min-w-[44px] px-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 disabled:opacity-40 text-white flex items-center justify-center active:scale-95 transition cursor-pointer"
+          className="min-h-[44px] min-w-[44px] px-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 disabled:opacity-40 text-white flex items-center justify-center active:scale-95 transition cursor-pointer shrink-0"
         >
-          <Send className="w-4 h-4" />
+          {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>
       </form>
     </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { PartyService } from './PartyService';
 import { PartyState, PartyTrack } from './types';
+import { isShareablePartyAudioUrl } from './utils/audioValidation';
 import { audioEngine } from '../services/audioEngine';
 import { StorageService } from '../services/storage';
 import { Song } from '../types/music';
@@ -44,6 +45,11 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
     const unregister = PartyService.registerPlayerHandlers({
       loadTrack: async (track: PartyTrack): Promise<boolean> => {
         try {
+          if (!isShareablePartyAudioUrl(track?.audioUrl)) {
+            console.warn('[usePartyPlayer] Rejected non-HTTPS or local audio URL for Party track');
+            return false;
+          }
+
           const songObj = partyTrackToSong(track);
           if (optionsRef.current?.onSyncCurrentSong) {
             optionsRef.current.onSyncCurrentSong(songObj);
@@ -68,7 +74,7 @@ export function usePartyPlayer(options?: UsePartyPlayerOptions) {
           if (localBlob && localBlob.size > 0) {
             await audioEngine.loadAudio(localBlob, 0);
           } else {
-            // Stream audio address
+            // Stream authorized HTTPS audio address
             await audioEngine.loadAudio(track.audioUrl, 0);
           }
 

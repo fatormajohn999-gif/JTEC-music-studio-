@@ -60,7 +60,7 @@ import { SearchScreen } from './screens/SearchScreen';
 import { PlaylistsScreen } from './screens/PlaylistsScreen';
 import { SettingsScreen, SettingsSubView } from './screens/SettingsScreen';
 import { CloudScreen } from './screens/CloudScreen';
-import { PartyBanner, PartyInviteBanner, usePartyPlayer, PartyService } from './party';
+import { PartyBanner, PartyInviteBanner, usePartyPlayer, PartyService, isShareablePartyAudioUrl } from './party';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { useSleepTimer } from './hooks/useSleepTimer';
@@ -1259,9 +1259,9 @@ export default function App() {
       }
 
       if (isPartyHost) {
-        if (!song.isCloud && !song.audioUrl) {
-          setGlobalError('Only cloud songs can be played in a party.');
-          setTimeout(() => setGlobalError(null), 3000);
+        if (!song.isCloud || !isShareablePartyAudioUrl(song.audioUrl)) {
+          setGlobalError('Local device files cannot be shared in JTEC Party. Select a JTEC Cloud or Online song.');
+          setTimeout(() => setGlobalError(null), 4000);
           return;
         }
 
@@ -1274,6 +1274,9 @@ export default function App() {
           audioUrl: song.audioUrl || '',
           duration: song.duration,
           size: song.size,
+        }).catch((err) => {
+          setGlobalError(err instanceof Error ? err.message : 'Unable to play song in Party.');
+          setTimeout(() => setGlobalError(null), 4000);
         });
       }
 

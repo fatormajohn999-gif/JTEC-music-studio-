@@ -29,6 +29,27 @@ import {
   cleanTrackTitle,
 } from '../../services/archiveOrg';
 import { triggerHapticFeedback } from '../PartyService';
+import { isShareablePartyAudioUrl } from '../utils/audioValidation';
+
+const CoverThumb: React.FC<{ src?: string; alt: string }> = ({ src, alt }) => {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="w-11 h-11 rounded-xl bg-[#0B0F1A] border border-white/10 flex items-center justify-center shrink-0">
+        <Music className="w-4 h-4 text-cyan-400/70" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/10 bg-[#0B0F1A]"
+    />
+  );
+};
 
 type MusicSourceTab = 'downloaded' | 'jtec_cloud' | 'online';
 type OnlineSubSource = 'jamendo' | 'archive';
@@ -186,14 +207,26 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
 
   const filteredDownloadedSongs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return songs;
-    return songs.filter(
-      (s) =>
-        s.title.toLowerCase().includes(q) ||
-        s.artist.toLowerCase().includes(q) ||
-        (s.album && s.album.toLowerCase().includes(q))
-    );
+    const list = !q
+      ? songs
+      : songs.filter(
+          (s) =>
+            s.title.toLowerCase().includes(q) ||
+            s.artist.toLowerCase().includes(q) ||
+            (s.album && s.album.toLowerCase().includes(q))
+        );
+    // Show shareable cloud downloads before local-only phone files
+    return [...list].sort((a, b) => {
+      const aShare = a.isCloud && isShareablePartyAudioUrl(a.audioUrl) ? 1 : 0;
+      const bShare = b.isCloud && isShareablePartyAudioUrl(b.audioUrl) ? 1 : 0;
+      return bShare - aShare;
+    });
   }, [songs, searchQuery]);
+
+  const hasLocalOnlySongs = useMemo(
+    () => filteredDownloadedSongs.some((s) => !(s.isCloud && isShareablePartyAudioUrl(s.audioUrl))),
+    [filteredDownloadedSongs]
+  );
 
   const filteredCloudSongs = useMemo(() => {
     const list = cloudCache[cloudCategory] || [];
@@ -372,6 +405,15 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
           {/* SOURCE 1: DOWNLOADED MUSIC */}
           {sourceTab === 'downloaded' && (
             <>
+              {hasLocalOnlySongs && (
+                <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    Local phone files stay on your device and cannot be streamed to friends. Downloaded JTEC Cloud songs or tracks from JTEC Cloud / Online tabs can be shared in Party.
+                  </span>
+                </div>
+              )}
+
               {filteredDownloadedSongs.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-400 space-y-2">
                   <p>No matching downloaded songs found.</p>
@@ -382,7 +424,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                         onClose();
                         onNavigateToCloud();
                       }}
-                      className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs cursor-pointer"
+                      className="min-h-[44px] px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs cursor-pointer"
                     >
                       Browse Cloud Catalog
                     </button>
@@ -390,7 +432,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                 </div>
               ) : (
                 filteredDownloadedSongs.map((song) => {
-                  const isSyncable = Boolean(song.isCloud && song.audioUrl);
+                  const isSyncable = Boolean(song.isCloud && isShareablePartyAudioUrl(song.audioUrl));
                   const trackKey = `dl_${song.id}`;
                   const isSelected = selectedTracksMap.has(trackKey);
                   const partyTrack: PartyTrack = {
@@ -410,20 +452,16 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                       type="button"
                       disabled={!isSyncable}
                       onClick={() => isSyncable && toggleTrackSelection(trackKey, partyTrack)}
-                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[58px] ${
+                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[60px] ${
                         !isSyncable
-                          ? 'bg-[#0C0F18]/50 border-white/5 opacity-50 cursor-not-allowed'
+                          ? 'bg-[#0C0F18]/50 border-white/5 opacity-55 cursor-not-allowed'
                           : isSelected
                           ? 'bg-cyan-500/15 border-cyan-400/50 cursor-pointer'
                           : 'bg-[#171C2B]/90 border-white/10 hover:border-cyan-500/35 cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                        <img
-                          src={song.artworkUrl || './pwa-192x192.png'}
-                          alt={song.title}
-                          className="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/10"
-                        />
+                        <CoverThumb src={song.coverUrl || song.artworkUrl} alt={song.title} />
                         <div className="min-w-0">
                           <p className="text-xs sm:text-sm font-bold text-white truncate">{song.title}</p>
                           <p className="text-[11px] text-slate-400 truncate">
@@ -432,7 +470,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                           </p>
                           {!isSyncable && (
                             <span className="text-[10px] text-amber-300/90 font-medium block mt-0.5">
-                              Local file — sync requires downloaded cloud song
+                              Local file — cannot stream across devices
                             </span>
                           )}
                         </div>
@@ -449,8 +487,8 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                           {isSelected && <Check className="w-4 h-4 stroke-[3]" />}
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-500 px-2 py-1 bg-white/5 rounded-lg shrink-0">
-                          Local
+                        <span className="text-[10px] text-slate-400 px-2 py-1 bg-white/5 border border-white/10 rounded-lg shrink-0">
+                          Device Only
                         </span>
                       )}
                     </button>
@@ -479,6 +517,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                 </div>
               ) : (
                 filteredCloudSongs.map((song) => {
+                  const isPlayable = isShareablePartyAudioUrl(song.audio_url);
                   const trackKey = `cloud_${cloudCategory}_${song.id}`;
                   const isSelected = selectedTracksMap.has(trackKey);
                   const partyTrack: PartyTrack = {
@@ -496,26 +535,29 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                     <button
                       key={song.id}
                       type="button"
-                      disabled={!song.audio_url}
-                      onClick={() => song.audio_url && toggleTrackSelection(trackKey, partyTrack)}
-                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[58px] cursor-pointer ${
-                        isSelected
-                          ? 'bg-cyan-500/15 border-cyan-400/50'
-                          : 'bg-[#171C2B]/90 border-white/10 hover:border-cyan-500/35'
+                      disabled={!isPlayable}
+                      onClick={() => isPlayable && toggleTrackSelection(trackKey, partyTrack)}
+                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[60px] ${
+                        !isPlayable
+                          ? 'bg-[#0C0F18]/50 border-white/5 opacity-55 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-cyan-500/15 border-cyan-400/50 cursor-pointer'
+                          : 'bg-[#171C2B]/90 border-white/10 hover:border-cyan-500/35 cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                        <img
-                          src={song.cover_url || './pwa-192x192.png'}
-                          alt={song.title}
-                          className="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/10"
-                        />
+                        <CoverThumb src={song.cover_url} alt={song.title} />
                         <div className="min-w-0">
                           <p className="text-xs sm:text-sm font-bold text-white truncate">{song.title}</p>
                           <p className="text-[11px] text-slate-400 truncate">
                             {song.artist}
                             {song.duration ? ` • ${formatDuration(song.duration)}` : ''}
                           </p>
+                          {!isPlayable && (
+                            <span className="text-[10px] text-rose-300/90 font-medium block mt-0.5">
+                              Audio stream unavailable
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -554,6 +596,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                 </div>
               ) : (
                 jamendoTracks.map((track) => {
+                  const isPlayable = isShareablePartyAudioUrl(track.audio);
                   const trackKey = `jamendo_${track.id}`;
                   const isSelected = selectedTracksMap.has(trackKey);
                   const partyTrack: PartyTrack = {
@@ -570,20 +613,18 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                     <button
                       key={track.id}
                       type="button"
-                      disabled={!track.audio}
-                      onClick={() => track.audio && toggleTrackSelection(trackKey, partyTrack)}
-                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[58px] cursor-pointer ${
-                        isSelected
-                          ? 'bg-purple-500/20 border-purple-400/50'
-                          : 'bg-[#171C2B]/90 border-white/10 hover:border-purple-500/35'
+                      disabled={!isPlayable}
+                      onClick={() => isPlayable && toggleTrackSelection(trackKey, partyTrack)}
+                      className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[60px] ${
+                        !isPlayable
+                          ? 'bg-[#0C0F18]/50 border-white/5 opacity-55 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-purple-500/20 border-purple-400/50 cursor-pointer'
+                          : 'bg-[#171C2B]/90 border-white/10 hover:border-purple-500/35 cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                        <img
-                          src={track.image || track.album_image || './pwa-192x192.png'}
-                          alt={track.name}
-                          className="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/10"
-                        />
+                        <CoverThumb src={track.image || track.album_image} alt={track.name} />
                         <div className="min-w-0">
                           <p className="text-xs sm:text-sm font-bold text-white truncate">{track.name}</p>
                           <p className="text-[11px] text-slate-400 truncate">
@@ -615,7 +656,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setArchiveDetail(null)}
-                  className="mb-2 min-h-[38px] px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-cyan-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  className="mb-2 min-h-[44px] px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-cyan-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Archive results</span>
@@ -639,6 +680,7 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                   </div>
                 ) : (
                   archiveDetail.audioFiles.map((file) => {
+                    const isPlayable = isShareablePartyAudioUrl(file.downloadUrl);
                     const trackId = `${archiveDetail.identifier}::${file.name}`;
                     const trackKey = `archive_${trackId}`;
                     const isSelected = selectedTracksMap.has(trackKey);
@@ -659,11 +701,14 @@ export const PartyAddMusicModal: React.FC<PartyAddMusicModalProps> = ({
                       <button
                         key={trackId}
                         type="button"
-                        onClick={() => toggleTrackSelection(trackKey, partyTrack)}
-                        className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[58px] cursor-pointer ${
-                          isSelected
-                            ? 'bg-cyan-500/15 border-cyan-400/50'
-                            : 'bg-[#171C2B]/90 border-white/10 hover:border-cyan-500/35'
+                        disabled={!isPlayable}
+                        onClick={() => isPlayable && toggleTrackSelection(trackKey, partyTrack)}
+                        className={`w-full text-left flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition min-h-[60px] ${
+                          !isPlayable
+                            ? 'bg-[#0C0F18]/50 border-white/5 opacity-55 cursor-not-allowed'
+                            : isSelected
+                            ? 'bg-cyan-500/15 border-cyan-400/50 cursor-pointer'
+                            : 'bg-[#171C2B]/90 border-white/10 hover:border-cyan-500/35 cursor-pointer'
                         }`}
                       >
                         <div className="min-w-0 flex-1 pr-2">

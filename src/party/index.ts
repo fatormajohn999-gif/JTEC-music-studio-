@@ -7,5 +7,6 @@ export * from './PartyInviteBanner';
 export * from './usePartyPlayer';
 export * from './backend';
 export * from './components/Avatar';
+export * from './utils/audioValidation';
 export { generateRoomCode } from './PartyService';
 

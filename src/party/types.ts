@@ -156,6 +156,7 @@ export type PartyBroadcastPayload =
   | { type: 'set_guest_queue_permission'; enabled: boolean; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'skip_track'; nextTrack?: PartyTrack | null; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'chat_msg'; id: string; senderId: string; senderName: string; senderAvatar?: string; text: string; timestamp: number; seq: number; targetMemberId?: string }
+  | { type: 'chat_history_sync'; messages: ChatMessage[]; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'chat_reaction'; messageId: string; emoji: string; memberId: string; senderId: string; seq: number; targetMemberId?: string };
 
 export type PartyListener = (state: PartyState) => void;

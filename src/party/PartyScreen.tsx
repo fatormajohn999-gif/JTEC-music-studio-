@@ -4,8 +4,7 @@ import {
   Radio, AlertCircle, LogOut, Sparkles,
   Loader2, UserMinus, UserPlus,
   Trash2, Camera, Edit3, Shield,
-  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity,
-  Headphones, MessageCircle, ListMusic
+  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity
 } from 'lucide-react';
 import { PartyService, triggerHapticFeedback } from './PartyService';
 import { PartyState, PartyMember } from './types';
@@ -25,6 +24,7 @@ import { AppLogger } from '../services/appLogger';
 import { Avatar } from './components/Avatar';
 import { processProfilePhoto } from './utils/photoProcessor';
 import { PartyRoomListenTab } from './components/PartyRoomListenTab';
+import { PartyRoomDashboard } from './components/PartyRoomDashboard';
 import { PartyRoomPeopleTab } from './components/PartyRoomPeopleTab';
 import { PartyRoomInviteTab } from './components/PartyRoomInviteTab';
 import { PartyRoomChatTab } from './components/PartyRoomChatTab';
@@ -39,7 +39,7 @@ interface PartyScreenProps {
 
 type LobbyTab = 'rooms' | 'friends' | 'profile';
 type FriendsSubTab = 'friends' | 'requests' | 'blocked';
-type RoomTab = 'listen' | 'people' | 'invite' | 'chat' | 'queue';
+type RoomView = 'listen' | 'dashboard' | 'people' | 'invite' | 'chat' | 'queue';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9 ._-]{2,20}$/;
 
@@ -100,8 +100,8 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // Add Songs to Party modal
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
 
-  // Active Room 5-tab navigation & unread chat indicator
-  const [activeRoomTab, setActiveRoomTab] = useState<RoomTab>('listen');
+  // Active Room navigation (Immersive Listen -> Room Dashboard -> Sub-screens) & unread chat
+  const [roomView, setRoomView] = useState<RoomView>('listen');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const prevChatCountRef = useRef(0);
   const [invitedFriendIds, setInvitedFriendIds] = useState<Set<string>>(new Set());
@@ -281,25 +281,41 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     };
   }, [backend, profile, refreshSocialLists]);
 
-  // Register Android back gesture to exit full-screen party without disconnecting
+  // Handle Back consistently across active room screens & lobby
+  const handleBack = useCallback(() => {
+    triggerHapticFeedback();
+    if (partyState.roomCode) {
+      if (roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue') {
+        setRoomView('dashboard');
+        return;
+      }
+      if (roomView === 'dashboard') {
+        setRoomView('listen');
+        return;
+      }
+    }
+    onBack();
+  }, [partyState.roomCode, roomView, onBack]);
+
+  // Register Android back gesture
   useEffect(() => {
     return registerBackHandler('party_fullscreen', 85, () => {
       handleBack();
       return true;
     });
-  }, [onBack]);
+  }, [handleBack]);
 
-  // Reset room tab when entering or leaving a room
+  // Reset room view to immersive Listen player when entering or leaving a room
   useEffect(() => {
-    setActiveRoomTab('listen');
+    setRoomView('listen');
     setUnreadChatCount(0);
     prevChatCountRef.current = 0;
   }, [partyState.roomCode]);
 
-  // Track unread chat messages when user is on another tab
+  // Track unread chat messages when user is not on the Chat screen
   useEffect(() => {
     const count = partyState.chatMessages.length;
-    if (activeRoomTab === 'chat') {
+    if (roomView === 'chat') {
       setUnreadChatCount(0);
       prevChatCountRef.current = count;
     } else if (count > prevChatCountRef.current) {
@@ -312,7 +328,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     } else {
       prevChatCountRef.current = count;
     }
-  }, [partyState.chatMessages, activeRoomTab, partyState.selfId]);
+  }, [partyState.chatMessages, roomView, partyState.selfId]);
 
   // Update progress bar while playing (and sync immediately on pause/track change)
   useEffect(() => {
@@ -329,12 +345,6 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
 
     return () => clearInterval(interval);
   }, [partyState.roomCode, partyState.playbackStatus, partyState.currentTrack?.id]);
-
-  // Handle Back: leaves full-screen without leaving active room
-  const handleBack = () => {
-    triggerHapticFeedback();
-    onBack();
-  };
 
   // =========================================================================
   // PROFILE ACTIONS
@@ -793,22 +803,53 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
         </div>
       )}
 
-      {/* Top Bar */}
-      <header className="h-14 border-b border-white/10 px-3 flex items-center justify-between shrink-0 bg-[#0D1019]/95 backdrop-blur-md z-30">
+      {/* Compact Consistent Top Header */}
+      <header className="h-14 border-b border-white/10 px-3 flex items-center justify-between gap-2 shrink-0 bg-[#0D1019]/95 backdrop-blur-md z-30">
         <button
           type="button"
           onClick={handleBack}
-          aria-label="Back to Settings"
-          className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
+          aria-label={
+            partyState.roomCode
+              ? roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue'
+                ? 'Back to Room Menu'
+                : roomView === 'dashboard'
+                ? 'Back to Player'
+                : 'Back to Settings'
+              : 'Back to Settings'
+          }
+          className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1.5 cursor-pointer shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Back</span>
         </button>
 
-        <div className="min-w-0 text-center">
-          <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
-            {partyState.roomCode ? `Room ${partyState.roomCode}` : 'JTEC Party'}
-          </h1>
+        <div className="min-w-0 text-center flex-1">
+          {partyState.roomCode ? (
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate leading-tight">
+                {roomView === 'listen'
+                  ? `Room ${partyState.roomCode}`
+                  : roomView === 'dashboard'
+                  ? 'Room Menu'
+                  : roomView === 'people'
+                  ? 'People'
+                  : roomView === 'invite'
+                  ? 'Invite'
+                  : roomView === 'chat'
+                  ? 'Room Chat'
+                  : 'Shared Queue'}
+              </h1>
+              {roomView !== 'listen' && (
+                <p className="text-[10px] font-mono text-cyan-300/80 tracking-wider truncate">
+                  Room {partyState.roomCode}
+                </p>
+              )}
+            </div>
+          ) : (
+            <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
+              JTEC Party
+            </h1>
+          )}
         </div>
 
         {partyState.roomCode ? (
@@ -818,8 +859,8 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
               triggerHapticFeedback();
               setShowLeaveConfirm(true);
             }}
-            aria-label={partyState.role === 'host' ? 'End party' : 'Leave party'}
-            className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer"
+            aria-label={partyState.role === 'host' ? 'End room' : 'Leave room'}
+            className="h-11 min-h-[44px] min-w-[44px] px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>{partyState.role === 'host' ? 'End' : 'Leave'}</span>
@@ -832,7 +873,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
               setLobbyTab('profile');
             }}
             aria-label="Open Profile"
-            className="w-11 h-11 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer active:scale-95 transition"
+            className="w-11 h-11 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer active:scale-95 transition shrink-0"
           >
             <Avatar
               url={profile.avatarUrl}
@@ -842,13 +883,25 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
             />
           </button>
         ) : (
-          <div className="w-11 min-w-[44px]" />
+          <div className="w-11 min-w-[44px] shrink-0" />
         )}
       </header>
 
-      {/* Main Scrollable Viewport (Requirement 5: safe padding, min 44px touch targets) */}
-      <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0 px-3 sm:px-4 py-3">
-        <div className="max-w-2xl mx-auto space-y-4 pb-32">
+      {/* Main Viewport */}
+      <main
+        className={`flex-1 w-full min-h-0 px-3 sm:px-4 py-3 ${
+          partyState.roomCode && roomView === 'chat'
+            ? 'flex flex-col overflow-hidden'
+            : 'overflow-y-auto overflow-x-hidden'
+        }`}
+      >
+        <div
+          className={`max-w-2xl mx-auto w-full ${
+            partyState.roomCode && roomView === 'chat'
+              ? 'flex-1 flex flex-col min-h-0 gap-3'
+              : 'space-y-4 pb-8'
+          }`}
+        >
           {/* Incoming Friend Request Notification Banner (Requirement 3) */}
           {incomingFriendRequestNotification && (
             <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/90 via-slate-900 to-cyan-950/90 border border-cyan-400/50 shadow-xl flex items-center justify-between gap-3 animate-in slide-in-from-top duration-200">
@@ -1565,98 +1618,38 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           )}
 
           {/* =========================================================================
-              CASE 3: ACTIVE ROOM VIEW (Clean 5-Tab Social Listening Experience)
+              CASE 3: ACTIVE ROOM VIEW (Immersive Player -> Room Dashboard -> Sub-screens)
           ========================================================================= */}
           {partyState.roomCode && (() => {
             const diagnostics = PartyService.getDiagnostics();
-            const roomTabs: Array<{
-              id: RoomTab;
-              label: string;
-              icon: React.ReactNode;
-              badge?: number;
-            }> = [
-              { id: 'listen', label: 'Listen', icon: <Headphones className="w-4 h-4" /> },
-              {
-                id: 'people',
-                label: 'People',
-                icon: <Users className="w-4 h-4" />,
-                badge: partyState.members.length > 0 ? partyState.members.length : undefined,
-              },
-              { id: 'invite', label: 'Invite', icon: <Share2 className="w-4 h-4" /> },
-              {
-                id: 'chat',
-                label: 'Chat',
-                icon: <MessageCircle className="w-4 h-4" />,
-                badge: unreadChatCount > 0 ? unreadChatCount : undefined,
-              },
-              {
-                id: 'queue',
-                label: 'Queue',
-                icon: <ListMusic className="w-4 h-4" />,
-                badge: partyState.queue.length > 0 ? partyState.queue.length : undefined,
-              },
-            ];
 
             return (
-              <div className="space-y-4">
-                {/* Five-Tab Room Navigation */}
-                <nav
-                  aria-label="Party room navigation"
-                  className="grid grid-cols-5 gap-1 p-1.5 rounded-2xl bg-[#121622]/95 border border-white/10 shadow-xl sticky top-0 z-20 backdrop-blur-md"
-                >
-                  {roomTabs.map((tab) => {
-                    const isActive = activeRoomTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => {
-                          triggerHapticFeedback();
-                          setActiveRoomTab(tab.id);
-                        }}
-                        aria-current={isActive ? 'page' : undefined}
-                        className={`relative min-h-[48px] px-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] sm:text-xs font-bold transition-all cursor-pointer ${
-                          isActive
-                            ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-lg shadow-cyan-500/20'
-                            : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <div className="relative flex items-center justify-center">
-                          {tab.icon}
-                          {tab.badge !== undefined && (
-                            <span
-                              className={`absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center ${
-                                tab.id === 'chat' && !isActive
-                                  ? 'bg-rose-500 text-white animate-pulse'
-                                  : isActive
-                                  ? 'bg-slate-950/70 text-cyan-200'
-                                  : 'bg-white/15 text-slate-200'
-                              }`}
-                            >
-                              {tab.badge > 99 ? '99+' : tab.badge}
-                            </span>
-                          )}
-                        </div>
-                        <span className="truncate max-w-full">{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
-
-                {/* Tab 1: Listen */}
-                {activeRoomTab === 'listen' && (
+              <>
+                {/* 1. Immersive Listening Screen (Default) */}
+                {roomView === 'listen' && (
                   <PartyRoomListenTab
                     partyState={partyState}
                     diagnostics={diagnostics}
                     currentPlaybackSec={currentPlaybackSec}
-                    onOpenPeopleTab={() => setActiveRoomTab('people')}
-                    onOpenQueueTab={() => setActiveRoomTab('queue')}
+                    unreadChatCount={unreadChatCount}
+                    onOpenDashboard={() => setRoomView('dashboard')}
+                    onOpenPeople={() => setRoomView('people')}
                     onOpenAddMusic={() => setShowAddSongsModal(true)}
                   />
                 )}
 
-                {/* Tab 2: People */}
-                {activeRoomTab === 'people' && (
+                {/* 2. Room Dashboard (5 Large Cards) */}
+                {roomView === 'dashboard' && (
+                  <PartyRoomDashboard
+                    partyState={partyState}
+                    diagnostics={diagnostics}
+                    unreadChatCount={unreadChatCount}
+                    onSelectView={(nextView) => setRoomView(nextView)}
+                  />
+                )}
+
+                {/* 3. Dedicated People Screen */}
+                {roomView === 'people' && (
                   <PartyRoomPeopleTab
                     partyState={partyState}
                     diagnostics={diagnostics}
@@ -1666,8 +1659,8 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   />
                 )}
 
-                {/* Tab 3: Invite */}
-                {activeRoomTab === 'invite' && (
+                {/* 4. Dedicated Invite Screen */}
+                {roomView === 'invite' && (
                   <PartyRoomInviteTab
                     partyState={partyState}
                     friends={friends}
@@ -1680,19 +1673,19 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   />
                 )}
 
-                {/* Tab 4: Chat */}
-                {activeRoomTab === 'chat' && (
-                  <PartyRoomChatTab partyState={partyState} />
+                {/* 5. Dedicated Chat Screen */}
+                {roomView === 'chat' && (
+                  <PartyRoomChatTab partyState={partyState} diagnostics={diagnostics} />
                 )}
 
-                {/* Tab 5: Queue */}
-                {activeRoomTab === 'queue' && (
+                {/* 6. Dedicated Queue Screen */}
+                {roomView === 'queue' && (
                   <PartyRoomQueueTab
                     partyState={partyState}
                     onOpenAddMusic={() => setShowAddSongsModal(true)}
                   />
                 )}
-              </div>
+              </>
             );
           })()}
         </div>
@@ -1706,11 +1699,20 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
         onClose={() => setShowAddSongsModal(false)}
         songs={songs}
         onAddTracks={(tracks) => {
-          PartyService.addTracksToQueue(tracks);
-          setSocialActionMsg({
-            type: 'success',
-            text: `Added ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'} to Party!`,
-          });
+          const result = PartyService.addTracksToQueue(tracks);
+          if (result.error && result.addedCount === 0) {
+            setSocialActionMsg({ type: 'error', text: result.error });
+            return;
+          }
+          if (result.addedCount > 0) {
+            setSocialActionMsg({
+              type: 'success',
+              text:
+                result.rejectedCount > 0
+                  ? `Added ${result.addedCount} shareable ${result.addedCount === 1 ? 'song' : 'songs'} (${result.rejectedCount} local/unverified skipped).`
+                  : `Added ${result.addedCount} ${result.addedCount === 1 ? 'song' : 'songs'} to Party!`,
+            });
+          }
         }}
         onNavigateToCloud={onNavigateToCloud}
       />

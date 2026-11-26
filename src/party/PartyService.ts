@@ -20,8 +20,10 @@ import {
   PartyBroadcastPayload,
   PartyBroadcastInput,
   FloatingReaction,
+  ChatMessage,
   SyncLogEntry,
 } from './types';
+import { isShareablePartyAudioUrl } from './utils/audioValidation';
 import { MockPartyBackend, DEMO_BOT_TRACKS } from './MockPartyBackend';
 
 export type PartyRealtimeStatus =
@@ -228,14 +230,14 @@ class PartyServiceClass {
   }
 
   private getOrCreateSelfId(): string {
-    const key = 'jtec_party_self_id';
+    const key = 'jtec_party_session_self_id';
     try {
-      let id = localStorage.getItem(key);
+      let id = sessionStorage.getItem(key);
       if (!id) {
         const rand = new Uint8Array(8);
         crypto.getRandomValues(rand);
         id = Array.from(rand, (b) => b.toString(16).padStart(2, '0')).join('');
-        localStorage.setItem(key, id);
+        sessionStorage.setItem(key, id);
       }
       return id;
     } catch {
@@ -534,12 +536,21 @@ class PartyServiceClass {
     this.emitState();
   }
 
-  public sendChatMessage(text: string): void {
-    const clean = (text || '').trim();
-    if (!clean) return;
+  public async sendChatMessage(text: string): Promise<{ ok: boolean; error?: string }> {
+    const clean = (text || '').trim().slice(0, 400);
+    if (!clean) {
+      return { ok: false, error: 'Message cannot be empty.' };
+    }
+    if (!this.state.roomCode) {
+      return { ok: false, error: 'Join a party room before sending messages.' };
+    }
+    if (!this.isBotDemoRoom && (!this.channel || !this.state.isConnected)) {
+      return { ok: false, error: 'Room chat is disconnected. Wait for realtime sync to reconnect.' };
+    }
+
     triggerHapticFeedback();
-    const msgId = 'chat_' + Math.random().toString(36).slice(2, 9);
-    const chatMsg = {
+    const msgId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const chatMsg: ChatMessage = {
       id: msgId,
       senderId: this.state.selfId,
       senderName: this.state.nickname,
@@ -547,10 +558,8 @@ class PartyServiceClass {
       text: clean,
       timestamp: Date.now(),
     };
-    this.state.chatMessages = [...this.state.chatMessages, chatMsg].slice(-100);
-    this.emitState();
 
-    this.broadcastMessage({
+    const delivery = await this.broadcastMessageWithResult({
       type: 'chat_msg',
       id: chatMsg.id,
       senderId: this.state.selfId,
@@ -559,13 +568,28 @@ class PartyServiceClass {
       text: clean,
       timestamp: chatMsg.timestamp,
     });
+
+    if (!delivery.ok) {
+      return delivery;
+    }
+
+    if (!this.state.chatMessages.some((m) => m.id === chatMsg.id)) {
+      this.state.chatMessages = [...this.state.chatMessages, chatMsg].slice(-100);
+      this.emitState();
+    }
+    return { ok: true };
   }
 
-  public sendChatReaction(messageId: string, emoji: string): void {
-    if (!messageId || !emoji) return;
+  public async sendChatReaction(messageId: string, emoji: string): Promise<{ ok: boolean; error?: string }> {
+    if (!messageId || !emoji || !this.state.roomCode) {
+      return { ok: false, error: 'Unable to send reaction right now.' };
+    }
+    if (!this.isBotDemoRoom && (!this.channel || !this.state.isConnected)) {
+      return { ok: false, error: 'Room chat is disconnected.' };
+    }
     triggerHapticFeedback();
     this.applyChatReaction(messageId, emoji, this.state.selfId);
-    this.broadcastMessage({
+    return this.broadcastMessageWithResult({
       type: 'chat_reaction',
       messageId,
       emoji,
@@ -773,13 +797,29 @@ class PartyServiceClass {
     });
   }
 
-  public addTracksToQueue(tracks: PartyTrack[]): void {
-    if (!Array.isArray(tracks) || tracks.length === 0) return;
-    const stamped = tracks
-      .filter((t) => Boolean(t && t.audioUrl))
-      .map((t) => this.stampTrackAddedBy(t));
+  public addTracksToQueue(tracks: PartyTrack[]): { addedCount: number; rejectedCount: number; error?: string } {
+    if (!Array.isArray(tracks) || tracks.length === 0) {
+      return { addedCount: 0, rejectedCount: 0 };
+    }
 
-    if (stamped.length === 0) return;
+    if (this.state.role !== 'host' && !this.state.allowGuestQueue) {
+      const error = 'Only the host can add songs to the queue right now.';
+      this.state.errorMessage = error;
+      this.emitState();
+      return { addedCount: 0, rejectedCount: tracks.length, error };
+    }
+
+    const shareable = tracks.filter((t) => Boolean(t && isShareablePartyAudioUrl(t.audioUrl)));
+    const rejectedCount = tracks.length - shareable.length;
+    const stamped = shareable.map((t) => this.stampTrackAddedBy(t));
+
+    if (stamped.length === 0) {
+      const error = 'Selected local or unverified files cannot be shared in a Party room. Choose JTEC Cloud or Online tracks.';
+      this.state.errorMessage = error;
+      this.emitState();
+      return { addedCount: 0, rejectedCount, error };
+    }
+
     triggerHapticFeedback();
 
     if (this.state.role === 'host') {
@@ -792,7 +832,10 @@ class PartyServiceClass {
             queue: this.state.queue,
           });
         }
-        this.hostSelectTrack(first);
+        this.hostSelectTrack(first).catch((err) => {
+          this.state.errorMessage = err instanceof Error ? err.message : 'Unable to load selected song.';
+          this.emitState();
+        });
       } else {
         this.state.queue = [...this.state.queue, ...stamped];
         this.emitState();
@@ -801,19 +844,23 @@ class PartyServiceClass {
           queue: this.state.queue,
         });
       }
-      return;
+      return { addedCount: stamped.length, rejectedCount };
     }
 
-    if (this.state.allowGuestQueue) {
-      this.broadcastMessage({
-        type: 'guest_add_queue',
-        tracks: stamped,
-      });
-    }
+    this.broadcastMessage({
+      type: 'guest_add_queue',
+      tracks: stamped,
+    });
+    return { addedCount: stamped.length, rejectedCount };
   }
 
   public hostAddToQueue(track: PartyTrack): void {
     if (this.state.role !== 'host') return;
+    if (!isShareablePartyAudioUrl(track?.audioUrl)) {
+      this.state.errorMessage = 'Cannot queue a local or non-HTTPS audio path.';
+      this.emitState();
+      return;
+    }
     const stamped = this.stampTrackAddedBy(track);
     triggerHapticFeedback();
     this.state.queue = [...this.state.queue, stamped];
@@ -1422,43 +1469,56 @@ class PartyServiceClass {
     this.handlePresenceSync();
   }
 
-  private sendBroadcast(payload: PartyBroadcastPayload): void {
+  private broadcastMessageWithResult(payload: PartyBroadcastInput): Promise<{ ok: boolean; error?: string }> {
+    const fullPayload = {
+      ...payload,
+      senderId: payload.senderId || this.state.selfId,
+      seq: payload.seq || ++this.broadcastSeq,
+    } as PartyBroadcastPayload;
+    return this.sendBroadcast(fullPayload);
+  }
+
+  private async sendBroadcast(payload: PartyBroadcastPayload): Promise<{ ok: boolean; error?: string }> {
     MockPartyBackend.handleHostBroadcast(payload);
 
-    if (this.isBotDemoRoom) return;
-    if (!this.channel || !this.state.isConnected) return;
+    if (this.isBotDemoRoom) return { ok: true };
+    if (!this.channel || !this.state.isConnected) {
+      return { ok: false, error: 'Not connected to the party room.' };
+    }
 
-    this.channel
-      .send({
+    try {
+      const status = await this.channel.send({
         type: 'broadcast',
         event: 'party_msg',
         payload,
-      })
-      .then((status) => {
-        if (status === 'ok') {
-          this.lastSuccessfulBroadcastAt = Date.now();
-          this.lastSuccessfulBroadcastType = payload.type;
-        } else {
-          const reason = `Broadcast "${payload.type}" returned status "${String(status)}"`;
-          this.lastFailedBroadcastAt = Date.now();
-          this.lastFailedBroadcastError = reason;
-          this.addSyncLog('info', reason, { type: payload.type, status });
-          this.recordDiagnosticError(reason, 'party_broadcast_status_failed', {
-            messageType: payload.type,
-            sendStatus: status,
-          });
-        }
-      })
-      .catch((err) => {
-        const reason = `Broadcast "${payload.type}" failed: ${sanitizeLogText(err)}`;
-        this.lastFailedBroadcastAt = Date.now();
-        this.lastFailedBroadcastError = reason;
-        console.warn('[PartyService] Failed to send broadcast:', err);
-        this.addSyncLog('info', reason, { type: payload.type });
-        this.recordDiagnosticError(reason, 'party_broadcast_exception', {
-          messageType: payload.type,
-        });
       });
+
+      if (status === 'ok') {
+        this.lastSuccessfulBroadcastAt = Date.now();
+        this.lastSuccessfulBroadcastType = payload.type;
+        return { ok: true };
+      }
+
+      const reason = `Broadcast "${payload.type}" returned status "${String(status)}"`;
+      this.lastFailedBroadcastAt = Date.now();
+      this.lastFailedBroadcastError = reason;
+      this.addSyncLog('info', reason, { type: payload.type, status });
+      this.recordDiagnosticError(reason, 'party_broadcast_status_failed', {
+        messageType: payload.type,
+        sendStatus: status,
+      });
+      return { ok: false, error: 'Message could not be delivered right now. Please try again.' };
+    } catch (err) {
+      const reason = `Broadcast "${payload.type}" failed: ${sanitizeLogText(err)}`;
+      this.lastFailedBroadcastAt = Date.now();
+      this.lastFailedBroadcastError = reason;
+      console.warn('[PartyService] Failed to send broadcast:', err);
+      this.addSyncLog('info', reason, { type: payload.type });
+      this.recordDiagnosticError(reason, 'party_broadcast_exception', {
+        messageType: payload.type,
+      });
+      return { ok: false, error: 'Network error while sending message.' };
+    }
   }
 
   private handleBroadcastMessage(msg: PartyBroadcastPayload): void {
@@ -1506,6 +1566,11 @@ class PartyServiceClass {
     switch (msg.type) {
       case 'load': {
         if (this.state.role !== 'guest') return;
+        if (!isShareablePartyAudioUrl(msg.track?.audioUrl)) {
+          this.state.errorMessage = 'Blocked an unverified or local audio path from loading.';
+          this.emitState();
+          return;
+        }
 
         // Requirement 4: "load" has a unique commandId. Repeated commandId is ignored (idempotent).
         if (msg.commandId && msg.commandId === this.lastProcessedLoadCommandId) {
@@ -1606,7 +1671,9 @@ class PartyServiceClass {
       }
 
       case 'queue_update': {
-        this.state.queue = msg.queue;
+        this.state.queue = Array.isArray(msg.queue)
+          ? msg.queue.filter((t) => Boolean(t && isShareablePartyAudioUrl(t.audioUrl)))
+          : [];
         this.emitState();
         break;
       }
@@ -1697,6 +1764,14 @@ class PartyServiceClass {
             enabled: this.state.allowGuestQueue,
             targetMemberId: msg.memberId,
           });
+
+          if (this.state.chatMessages.length > 0) {
+            this.broadcastMessage({
+              type: 'chat_history_sync',
+              messages: this.state.chatMessages.slice(-100),
+              targetMemberId: msg.memberId,
+            });
+          }
         }
         break;
       }
@@ -1727,15 +1802,37 @@ class PartyServiceClass {
       }
 
       case 'chat_msg': {
-        const chatMsg = {
+        const cleanText = typeof msg.text === 'string' ? msg.text.trim().slice(0, 400) : '';
+        if (!cleanText || !msg.id) break;
+        if (this.state.chatMessages.some((m) => m.id === msg.id)) break;
+        const chatMsg: ChatMessage = {
           id: msg.id,
           senderId: msg.senderId,
-          senderName: msg.senderName,
+          senderName: msg.senderName || 'Listener',
           senderAvatar: msg.senderAvatar,
-          text: msg.text,
-          timestamp: msg.timestamp,
+          text: cleanText,
+          timestamp: msg.timestamp || Date.now(),
         };
         this.state.chatMessages = [...this.state.chatMessages, chatMsg].slice(-100);
+        this.emitState();
+        break;
+      }
+
+      case 'chat_history_sync': {
+        if (!Array.isArray(msg.messages) || msg.messages.length === 0) break;
+        const mergedMap = new Map<string, ChatMessage>();
+        this.state.chatMessages.forEach((m) => mergedMap.set(m.id, m));
+        msg.messages.forEach((m) => {
+          if (m && m.id && typeof m.text === 'string' && m.text.trim() && !mergedMap.has(m.id)) {
+            mergedMap.set(m.id, {
+              ...m,
+              text: m.text.trim().slice(0, 400),
+            });
+          }
+        });
+        this.state.chatMessages = Array.from(mergedMap.values())
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .slice(-100);
         this.emitState();
         break;
       }
@@ -1746,7 +1843,9 @@ class PartyServiceClass {
       }
 
       case 'history_update': {
-        this.state.history = msg.history;
+        this.state.history = Array.isArray(msg.history)
+          ? msg.history.filter((t) => Boolean(t && isShareablePartyAudioUrl(t.audioUrl)))
+          : [];
         this.emitState();
         break;
       }
@@ -1759,7 +1858,7 @@ class PartyServiceClass {
 
       case 'guest_add_queue': {
         if (this.state.role === 'host' && this.state.allowGuestQueue && Array.isArray(msg.tracks)) {
-          const valid = msg.tracks.filter((t) => Boolean(t && t.audioUrl));
+          const valid = msg.tracks.filter((t) => Boolean(t && isShareablePartyAudioUrl(t.audioUrl)));
           if (valid.length > 0) {
             if (!this.state.currentTrack) {
               const [first, ...rest] = valid;
@@ -1770,7 +1869,10 @@ class PartyServiceClass {
                   queue: this.state.queue,
                 });
               }
-              this.hostSelectTrack(first);
+              this.hostSelectTrack(first).catch((err) => {
+                this.state.errorMessage = err instanceof Error ? err.message : 'Unable to load guest track.';
+                this.emitState();
+              });
             } else {
               this.state.queue = [...this.state.queue, ...valid];
               this.emitState();
@@ -1857,8 +1959,11 @@ class PartyServiceClass {
   public async hostSelectTrack(track: PartyTrack, options?: { skipHistoryPush?: boolean }): Promise<void> {
     if (this.state.role !== 'host') return;
 
-    if (!track.audioUrl) {
-      throw new Error('This track does not have a streamable audio address.');
+    if (!isShareablePartyAudioUrl(track?.audioUrl)) {
+      const errMsg = 'This song cannot be shared in Party because it uses a local path or lacks an authorized HTTPS audio URL.';
+      this.state.errorMessage = errMsg;
+      this.emitState();
+      throw new Error(errMsg);
     }
 
     const stampedTrack = this.stampTrackAddedBy(track);
@@ -1875,6 +1980,7 @@ class PartyServiceClass {
     this.currentCommandId = 'cmd_load_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     this.state.currentTrack = stampedTrack;
     this.state.playbackStatus = 'loading';
+    this.state.errorMessage = null;
     this.state.skipVotes = []; // Reset votes on track change
     this.emitState();
 
@@ -1886,7 +1992,14 @@ class PartyServiceClass {
     });
 
     if (this.playerHandlers.loadTrack) {
-      await this.playerHandlers.loadTrack(stampedTrack);
+      const loaded = await this.playerHandlers.loadTrack(stampedTrack);
+      if (!loaded) {
+        this.state.playbackStatus = 'paused';
+        this.state.errorMessage = `Unable to stream "${stampedTrack.title}". The audio may be unavailable or unauthorized.`;
+        this.emitState();
+        this.broadcastCurrentHostState();
+        return;
+      }
     }
 
     const hostMember = this.state.members.find((m) => m.id === this.state.selfId);
@@ -1975,9 +2088,26 @@ class PartyServiceClass {
   }
 
   private async bufferTrackAsGuest(track: PartyTrack): Promise<void> {
+    if (!isShareablePartyAudioUrl(track?.audioUrl)) {
+      this.state.playbackStatus = 'idle';
+      this.state.errorMessage = 'Blocked an unverified or local audio track.';
+      this.emitState();
+      return;
+    }
     try {
       if (this.playerHandlers.loadTrack) {
-        await this.playerHandlers.loadTrack(track);
+        const loaded = await this.playerHandlers.loadTrack(track);
+        if (!loaded) {
+          this.state.playbackStatus = 'idle';
+          this.state.errorMessage = `Unable to load "${track.title}". The audio file may be unavailable or unauthorized.`;
+          this.emitState();
+          this.broadcastMessage({
+            type: 'member_status',
+            memberId: this.state.selfId,
+            status: 'idle',
+          });
+          return;
+        }
       }
       this.state.playbackStatus = 'ready';
       this.emitState();
@@ -1990,6 +2120,7 @@ class PartyServiceClass {
     } catch (err) {
       console.warn('[PartyService] Guest buffering failed:', err);
       this.state.playbackStatus = 'idle';
+      this.state.errorMessage = `Unable to buffer "${track.title}".`;
       this.emitState();
     }
   }
