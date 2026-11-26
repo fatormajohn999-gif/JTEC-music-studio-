@@ -435,12 +435,24 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
     window.addEventListener('scroll', handleActivity, { passive: true });
 
     const idleCheckTimer = setInterval(async () => {
-      const check = await assertActiveAdminSession(adminClient);
-      if (!check.ok) {
-        clearSensitivePortalState();
-        setAccessDenied(true);
-        setAuthErrorMessage(check.reason || 'Admin session expired due to inactivity. Please sign in again.');
+      const res = await verifyAdminAuthorization(adminClient, { checkInactivity: true });
+      if (res.stage === 'authorized') {
+        if (res.session) setSession(res.session);
+        return;
       }
+      if (res.enforcementMode === 'unavailable') {
+        // Brief network/edge blip: keep current UI state intact instead of forcing a login loop
+        return;
+      }
+      if (res.stage === 'mfa_required') {
+        setSession(null);
+        setAuthStage('mfa_required');
+        setAuthResult(res);
+        return;
+      }
+      clearSensitivePortalState();
+      setAccessDenied(true);
+      setAuthErrorMessage(res.reason || 'Admin session expired due to inactivity. Please sign in again.');
     }, 60 * 1000);
 
     return () => {
@@ -3418,10 +3430,20 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({ isOpen, onClose })
             {activeTab === 'music_manager' && (
               <MusicManagerPanel
                 adminClient={adminClient}
-                onUnauthorized={() => {
+                onUnauthorized={async () => {
+                  const res = await verifyAdminAuthorization(adminClient, { checkInactivity: true });
+                  if (res.stage === 'authorized' || res.enforcementMode === 'unavailable') {
+                    return;
+                  }
+                  if (res.stage === 'mfa_required') {
+                    setSession(null);
+                    setAuthStage('mfa_required');
+                    setAuthResult(res);
+                    return;
+                  }
                   clearSensitivePortalState();
                   setAccessDenied(true);
-                  setAuthErrorMessage('Admin session expired or missing 2FA (AAL2). Please sign in again.');
+                  setAuthErrorMessage(res.reason || 'Admin session expired or missing 2FA (AAL2). Please sign in again.');
                 }}
               />
             )}

@@ -6,6 +6,7 @@ import { downloadAndConvertCover } from './imageUtils';
 import { generateProceduralArtwork } from './id3Parser';
 import { extractPaletteFromImage } from './colorExtractor';
 import { AppLogger, LogProjectScope } from './appLogger';
+import { isMissingCreatedAtError, normalizeCloudSongRow } from './musicAdminCore';
 
 // Storage Bucket Names
 export const BUCKET_MUSIC = 'music';
@@ -251,6 +252,11 @@ export async function clearAdminAuthTokens(
       await targetClient.auth.signOut({ scope });
     }
   } catch {}
+  // Only purge JTEC Main persisted admin keys when clearing the JTEC Main admin client
+  // (prevents unrelated project/category clients from erasing the owner's persisted session).
+  if (client && jtecAdminClient && client !== jtecAdminClient) {
+    return;
+  }
   const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
   try {
     if (isNative) {
@@ -1078,66 +1084,75 @@ export const SupabaseService = {
     }
 
     try {
-      const res = await withRetry(
-        () => client
-          .from(config.tableName || 'songs')
-          .select('*')
-          .order('created_at', { ascending: false }),
-        3,
-        500,
-        `fetchSongsForCategory.${categoryKey}`
-      );
-      const { data, error, status } = res as { data: any[]; error: any; status: number };
+      const tableName = config.tableName || 'songs';
+      const pageSize = 1000;
+      const allRows: any[] = [];
+      let offset = 0;
+      let orderByCreatedAt = true;
 
-      if (error) {
-        logSupabaseError(`fetchSongsForCategory.${categoryKey}`, {
-          errorMessage: error.message,
-          errorCode: error.code,
-          httpStatus: status,
-        });
-        AppLogger.error(
-          'SupabaseService',
-          'catalog_fetch_error',
-          `Failed to load ${categoryTitle} tracks: ${sanitizeSecretText(error.message, [config.anonKey])}`,
-          { code: error.code, httpStatus: status },
-          categoryKey
+      while (true) {
+        const res = await withRetry(
+          async () => {
+            const baseQuery = client.from(tableName).select('*');
+            const orderedQuery = orderByCreatedAt
+              ? baseQuery.order('created_at', { ascending: false })
+              : baseQuery;
+            return await orderedQuery.range(offset, offset + pageSize - 1);
+          },
+          3,
+          500,
+          `fetchSongsForCategory.${categoryKey}`
         );
+        const { data, error, status } = res as { data: any[]; error: any; status: number };
 
-        // Keep technical details only in console.log / developer logs
-        throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
+        if (error) {
+          // Preserve compatibility with legacy `songs` tables that lack a `created_at` column
+          if (orderByCreatedAt && offset === 0 && isMissingCreatedAtError(error)) {
+            orderByCreatedAt = false;
+            continue;
+          }
+
+          logSupabaseError(`fetchSongsForCategory.${categoryKey}`, {
+            errorMessage: error.message,
+            errorCode: error.code,
+            httpStatus: status,
+          });
+          AppLogger.error(
+            'SupabaseService',
+            'catalog_fetch_error',
+            `Failed to load ${categoryTitle} tracks: ${sanitizeSecretText(error.message, [config.anonKey])}`,
+            { code: error.code, httpStatus: status },
+            categoryKey
+          );
+
+          // Keep technical details only in console.log / developer logs
+          throw new Error("Can't reach JTEC Cloud right now. Check your internet and try again.");
+        }
+
+        const batch = data || [];
+        allRows.push(...batch);
+        if (batch.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
       }
 
-      const songs: CloudSong[] = (data || []).map((row) => {
-        const filePath = row.storage_path || row.file_path || '';
-        let audioUrl = row.public_url || row.audio_url || '';
+      if (!orderByCreatedAt) {
+        allRows.sort((a, b) => {
+          const ta = Date.parse(a?.created_at || a?.updated_at || '') || 0;
+          const tb = Date.parse(b?.created_at || b?.updated_at || '') || 0;
+          return tb - ta;
+        });
+      }
 
-        // If audio_url is missing from the database row, construct it from the configured bucket
-        if (!audioUrl && filePath) {
+      const songs: CloudSong[] = allRows.map((row) =>
+        normalizeCloudSongRow(row, (filePath) => {
           const { data: publicUrlData } = client.storage
             .from(config.bucket || BUCKET_MUSIC)
             .getPublicUrl(filePath);
-          audioUrl = publicUrlData?.publicUrl || '';
-        }
-
-        const coverUrl = row.artwork_url || row.cover_url || '';
-
-        return {
-          id: String(row.id),
-          title: row.title || 'Untitled',
-          artist: row.artist || 'Unknown Artist',
-          album: row.album || 'Single',
-          genre: row.genre || 'Music',
-          duration: Number(row.duration) || 0,
-          file_name: row.file_name || 'track.mp3',
-          file_path: filePath,
-          file_size: Number(row.file_size) || 0,
-          audio_url: audioUrl,
-          cover_url: coverUrl,
-          file_hash: row.file_hash || '',
-          created_at: row.created_at || new Date().toISOString(),
-          updated_at: row.updated_at,
-        };
-      });
+          return publicUrlData?.publicUrl || '';
+        })
+      );
 
       AppLogger.success(
         'SupabaseService',

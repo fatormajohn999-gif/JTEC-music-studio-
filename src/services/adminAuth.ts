@@ -241,19 +241,30 @@ export async function verifyAdminAuthorization(
 
     let activeSession = sessionData.session;
 
-    // 3. Refresh token if expired or expiring soon
+    // 3. Refresh token if expired, missing expires_at, or expiring soon
     const expiresAtMs = activeSession.expires_at ? activeSession.expires_at * 1000 : 0;
-    if (expiresAtMs > 0 && expiresAtMs <= Date.now() + ADMIN_TOKEN_REFRESH_BUFFER_MS) {
+    let refreshedInPass = false;
+    if ((expiresAtMs === 0 || expiresAtMs <= Date.now() + ADMIN_TOKEN_REFRESH_BUFFER_MS) && activeSession.refresh_token) {
       const { data: refreshData, error: refreshErr } = await client.auth.refreshSession();
       if (refreshErr || !refreshData?.session) {
         await clearAdminAuthTokens('local', client);
         return makeClosedResult('unauthenticated', 'Session expired. Please sign in again.');
       }
       activeSession = refreshData.session;
+      refreshedInPass = true;
     }
 
     // 4. Server-verify JWT via auth.getUser() (prevents forged/revoked localStorage sessions)
-    const { data: userData, error: userErr } = await client.auth.getUser(activeSession.access_token);
+    let { data: userData, error: userErr } = await client.auth.getUser(activeSession.access_token);
+    if ((userErr || !userData?.user) && !refreshedInPass && activeSession.refresh_token) {
+      const { data: refreshData, error: refreshErr } = await client.auth.refreshSession();
+      if (!refreshErr && refreshData?.session?.access_token && refreshData.session.access_token !== activeSession.access_token) {
+        activeSession = refreshData.session;
+        const retry = await client.auth.getUser(activeSession.access_token);
+        userData = retry.data;
+        userErr = retry.error;
+      }
+    }
     const verifiedUser = userData?.user;
     if (userErr || !verifiedUser) {
       await clearAdminAuthTokens('local', client);
