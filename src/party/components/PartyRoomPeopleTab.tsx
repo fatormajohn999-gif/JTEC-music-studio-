@@ -3,17 +3,14 @@ import {
   Users,
   Crown,
   Lock,
-  Unlock,
   UserMinus,
   Activity,
-  ListPlus,
-  SkipForward,
   Wifi,
   WifiOff,
   RefreshCw,
 } from 'lucide-react';
 import { PartyMember, PartyState } from '../types';
-import { PartyService, PartyServiceDiagnostics, triggerHapticFeedback } from '../PartyService';
+import { PartyServiceDiagnostics, triggerHapticFeedback } from '../PartyService';
 import { Avatar } from './Avatar';
 
 interface PartyRoomPeopleTabProps {
@@ -112,76 +109,8 @@ export const PartyRoomPeopleTab: React.FC<PartyRoomPeopleTabProps> = ({
         </div>
       </div>
 
-      {/* Host Room Controls */}
-      {isHost && (
-        <div className="border-b border-white/10 bg-[#0B0F1A] px-4 sm:px-6 py-3.5 shrink-0">
-          <div className="max-w-3xl mx-auto w-full space-y-2.5">
-            <div className="flex items-center gap-2">
-              <Crown className="w-4 h-4 text-amber-400" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white">
-                Host Controls
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => PartyService.toggleRoomLock()}
-                className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 transition active:scale-[0.98] cursor-pointer ${
-                  partyState.isLocked
-                    ? 'bg-rose-500/15 border-rose-500/35 text-rose-200'
-                    : 'bg-white/[0.04] border-white/10 text-slate-200 hover:border-cyan-500/30'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  {partyState.isLocked ? (
-                    <Lock className="w-4 h-4 text-rose-400" />
-                  ) : (
-                    <Unlock className="w-4 h-4 text-cyan-400" />
-                  )}
-                  <span>{partyState.isLocked ? 'Room Locked' : 'Room Open'}</span>
-                </span>
-                <span className="text-[10px] opacity-75">{partyState.isLocked ? 'Tap to open' : 'Tap to lock'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => PartyService.hostSetGuestQueueAllowed(!partyState.allowGuestQueue)}
-                className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 transition active:scale-[0.98] cursor-pointer ${
-                  partyState.allowGuestQueue
-                    ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-200'
-                    : 'bg-white/[0.04] border-white/10 text-slate-300 hover:border-cyan-500/30'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <ListPlus className="w-4 h-4 text-cyan-400" />
-                  <span>Guest Queue</span>
-                </span>
-                <span className="text-[10px] font-bold">{partyState.allowGuestQueue ? 'ON' : 'OFF'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => PartyService.hostSetAutoSkip(!partyState.autoSkipEnabled)}
-                className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 transition active:scale-[0.98] cursor-pointer ${
-                  partyState.autoSkipEnabled
-                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-200'
-                    : 'bg-white/[0.04] border-white/10 text-slate-300 hover:border-purple-500/30'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <SkipForward className="w-4 h-4 text-purple-400" />
-                  <span>Vote Auto-Skip</span>
-                </span>
-                <span className="text-[10px] font-bold">{partyState.autoSkipEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Full-Height Room Members List */}
-      <div className="flex-1 px-4 sm:px-6 pt-3.5 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))]">
+      <div className="flex-1 px-4 sm:px-6 pt-3.5 pb-5">
         <div className="max-w-3xl mx-auto w-full space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

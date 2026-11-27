@@ -9,5 +9,6 @@ export * from './usePartyPlayer';
 export * from './backend';
 export * from './components/Avatar';
 export * from './utils/audioValidation';
+export * from './partyPreferences';
 export { generateRoomCode } from './PartyService';
 

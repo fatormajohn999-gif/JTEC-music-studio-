@@ -23,7 +23,10 @@ import {
   FloatingReaction,
   ChatMessage,
   SyncLogEntry,
+  CreateRoomOptions,
+  PartyHostPreferences,
 } from './types';
+import { validatePartyHostPreferences } from './partyPreferences';
 import { isShareablePartyAudioUrl } from './utils/audioValidation';
 import { MockPartyBackend, DEMO_BOT_TRACKS } from './MockPartyBackend';
 
@@ -969,11 +972,12 @@ class PartyServiceClass {
   }
 
   /**
-   * Create a new room as Host
+   * Create a new room as Host with optional pre-configured room settings
    */
-  public async createRoom(): Promise<string> {
+  public async createRoom(options?: CreateRoomOptions): Promise<string> {
+    const validated = validatePartyHostPreferences(options);
     const code = generateRoomCode();
-    await this.initRoom(code, 'host');
+    await this.initRoom(code, 'host', validated);
     return code;
   }
 
@@ -1008,6 +1012,7 @@ class PartyServiceClass {
     this.state.currentTrack = null;
     this.state.countdownNumber = null;
     this.state.isLocked = false;
+    this.state.autoSkipEnabled = false;
     this.state.skipVotes = [];
     this.state.queue = [];
     this.state.history = [];
@@ -1043,9 +1048,7 @@ class PartyServiceClass {
     this.startHostHeartbeatChecker();
   }
 
-  private async initRoom(code: string, role: PartyRole): Promise<void> {
-    await this.leaveRoom(false);
-
+  private resolvePartyClient(): { client: SupabaseClient; maskedHost: string } {
     // STRICT ISOLATION: Only use the dedicated JTEC Party Supabase client (VITE_PARTY_SUPABASE_URL/ANON_KEY).
     // Never fall back to the JTEC Music main Supabase client.
     const cfg = getPartySupabaseConfigStatus();
@@ -1060,8 +1063,8 @@ class PartyServiceClass {
       throw new Error(this.state.errorMessage);
     }
 
-    this.client = getPartySupabaseClient();
-    if (!this.client) {
+    const client = getPartySupabaseClient();
+    if (!client) {
       const msg = 'Failed to initialize dedicated JTEC Party Supabase client.';
       this.roomChannelStatus = 'CHANNEL_ERROR';
       this.state.isConnected = false;
@@ -1072,15 +1075,27 @@ class PartyServiceClass {
       throw new Error(this.state.errorMessage);
     }
 
+    return { client, maskedHost: cfg.maskedHost };
+  }
+
+  private async initRoom(code: string, role: PartyRole, hostOptions?: PartyHostPreferences): Promise<void> {
+    await this.leaveRoom(false);
+
+    const { client, maskedHost } = this.resolvePartyClient();
+    this.client = client;
+
+    const appliedHostOptions = role === 'host' ? validatePartyHostPreferences(hostOptions) : null;
+
     this.state.roomCode = code;
     this.state.role = role;
     this.state.isConnected = false;
     this.state.errorMessage = null;
-    this.state.isLocked = false;
+    this.state.isLocked = appliedHostOptions ? !appliedHostOptions.allowNewMembers : false;
     this.state.skipVotes = [];
+    this.state.autoSkipEnabled = appliedHostOptions ? appliedHostOptions.autoSkipEnabled : false;
     this.state.queue = [];
     this.state.history = [];
-    this.state.allowGuestQueue = false;
+    this.state.allowGuestQueue = appliedHostOptions ? appliedHostOptions.allowGuestQueue : false;
     this.state.chatMessages = [];
     this.state.activeReactions = [];
     this.realPresenceMembers = [];
@@ -1110,8 +1125,8 @@ class PartyServiceClass {
     AppLogger.info(
       'JTECParty',
       'party_room_connecting',
-      `Connecting to room ${code} as ${role} on ${cfg.maskedHost}`,
-      { roomCode: code, role, maskedHost: cfg.maskedHost },
+      `Connecting to room ${code} as ${role} on ${maskedHost}`,
+      { roomCode: code, role, maskedHost },
       'jtec_party'
     );
 
@@ -1274,6 +1289,8 @@ class PartyServiceClass {
               });
               this.startPingTimer();
             } else {
+              this.broadcastHostRoomSettings();
+              this.broadcastCurrentHostState();
               this.startHostStateBroadcastTimer();
             }
 
@@ -1750,6 +1767,9 @@ class PartyServiceClass {
             positionMs: Math.round(posSec * 1000),
             hostTimestamp: Date.now(),
             commandId: this.currentCommandId,
+            isLocked: this.state.isLocked,
+            autoSkipEnabled: this.state.autoSkipEnabled,
+            allowGuestQueue: this.state.allowGuestQueue,
             targetMemberId: msg.memberId,
           });
 
@@ -2223,6 +2243,29 @@ class PartyServiceClass {
     });
   }
 
+  private broadcastHostRoomSettings(targetMemberId?: string): void {
+    if (this.state.role !== 'host' || !this.state.roomCode) return;
+
+    this.broadcastMessage({
+      type: 'room_lock',
+      isLocked: this.state.isLocked,
+      targetMemberId,
+    });
+
+    this.broadcastMessage({
+      type: 'skip_votes_update',
+      skipVotes: this.state.skipVotes,
+      autoSkipEnabled: this.state.autoSkipEnabled,
+      targetMemberId,
+    });
+
+    this.broadcastMessage({
+      type: 'set_guest_queue_permission',
+      enabled: this.state.allowGuestQueue,
+      targetMemberId,
+    });
+  }
+
   private broadcastCurrentHostState(): void {
     if (this.state.role !== 'host' || !this.state.roomCode) return;
     const posSec = this.playerHandlers.getCurrentPositionSeconds
@@ -2236,6 +2279,9 @@ class PartyServiceClass {
       positionMs: Math.round(posSec * 1000),
       hostTimestamp: Date.now(),
       commandId: this.currentCommandId,
+      isLocked: this.state.isLocked,
+      autoSkipEnabled: this.state.autoSkipEnabled,
+      allowGuestQueue: this.state.allowGuestQueue,
     });
   }
 
@@ -2247,8 +2293,25 @@ class PartyServiceClass {
     commandId?: string;
     isSeek?: boolean;
     seekCommandId?: string;
+    isLocked?: boolean;
+    autoSkipEnabled?: boolean;
+    allowGuestQueue?: boolean;
   }): void {
     if (this.state.role !== 'guest' || !this.state.roomCode || this.isIntentionalDisconnect) return;
+
+    let settingsChanged = false;
+    if (typeof msg.isLocked === 'boolean' && this.state.isLocked !== msg.isLocked) {
+      this.state.isLocked = msg.isLocked;
+      settingsChanged = true;
+    }
+    if (typeof msg.autoSkipEnabled === 'boolean' && this.state.autoSkipEnabled !== msg.autoSkipEnabled) {
+      this.state.autoSkipEnabled = msg.autoSkipEnabled;
+      settingsChanged = true;
+    }
+    if (typeof msg.allowGuestQueue === 'boolean' && this.state.allowGuestQueue !== msg.allowGuestQueue) {
+      this.state.allowGuestQueue = msg.allowGuestQueue;
+      settingsChanged = true;
+    }
 
     // Track change via state (for newly joined guest or reconnect)
     if (msg.track && (!this.state.currentTrack || this.state.currentTrack.id !== msg.track.id)) {
@@ -2265,6 +2328,10 @@ class PartyServiceClass {
       partyAudioEngine.setDriftSpeed(1.0);
       this.emitState();
       return;
+    }
+
+    if (settingsChanged && msg.status !== 'playing') {
+      this.emitState();
     }
 
     if (msg.status === 'playing') {

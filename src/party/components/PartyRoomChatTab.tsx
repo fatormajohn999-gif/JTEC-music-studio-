@@ -231,13 +231,18 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState, 
       {/* Fixed Bottom Composer */}
       <form
         onSubmit={handleSend}
-        className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-3 sm:px-6 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom,0px))]"
+        className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-3 sm:px-6 py-2.5"
       >
         <div className="max-w-3xl mx-auto w-full flex items-center gap-2">
           <input
             type="text"
             maxLength={400}
             value={messageText}
+            onFocus={() => {
+              setTimeout(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+              }, 120);
+            }}
             onChange={(e) => {
               setMessageText(e.target.value);
               if (sendError) setSendError(null);

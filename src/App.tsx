@@ -616,6 +616,7 @@ export default function App() {
       saveScrollPosition('settings:root', mainContainerRef.current.scrollTop);
     }
     setIsSettingsView(false);
+    setSettingsSubView('main');
     const target = getSavedScrollPosition('tab:' + currentTab);
     restoreScroll(mainContainerRef.current, target);
   }, [currentTab]);
@@ -630,6 +631,7 @@ export default function App() {
         saveScrollPosition('settings:root', mainContainerRef.current.scrollTop);
       }
       setIsSettingsView(false);
+      setSettingsSubView('main');
       if (targetTab === currentTab) {
         const target = getSavedScrollPosition('tab:' + targetTab);
         restoreScroll(mainContainerRef.current, target);
@@ -2087,6 +2089,7 @@ export default function App() {
         <div style={{ display: isSettingsView ? 'block' : 'none' }}>
           <SettingsScreen
             settings={settings}
+            effects={effects}
             storageStats={storageStats}
             songs={songs}
             onDeleteSong={handleDeleteDownloadedSong}
@@ -2098,8 +2101,10 @@ export default function App() {
             onStartSleepTimer={handleStartSleepTimer}
             onCancelSleepTimer={handleCancelSleepTimer}
             onExtendSleepTimer={handleExtendSleepTimer}
+            onOpenEffects={() => setIsEffectsModalOpen(true)}
             onNavigateToCloud={() => handleSelectTab('cloud')}
             initialSubView={settingsSubView}
+            onSubViewChange={setSettingsSubView}
           />
         </div>
 
@@ -2111,12 +2116,17 @@ export default function App() {
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={(song, contextQueue) => playSong(song, contextQueue || songs)}
+            onTogglePlay={handleTogglePlay}
+            onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
             onOpenImport={() => setIsImportOpen(true)}
             onOpenPlaylists={() => handleSelectTab('playlists')}
             onSelectPlaylist={handlePlayPlaylist}
             onOpenSongOptions={(song) => setOptionsMenuSong(song)}
             onToggleFavorite={handleToggleFavorite}
             onOpenCloud={() => handleSelectTab('cloud')}
+            onOpenParty={handleOpenPartyScreen}
+            partyRoomCode={partyState.roomCode}
+            partyMemberCount={partyState.members.length}
             nativeUpdateInfo={isNativeAndroid() ? nativeUpdateInfo : null}
             isDownloadingUpdate={isDownloadingNativeUpdate}
             updateDownloadProgress={nativeDownloadProgress}

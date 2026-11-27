@@ -99,6 +99,14 @@ export interface SyncLogEntry {
   details?: Record<string, any>;
 }
 
+export interface PartyHostPreferences {
+  allowGuestQueue: boolean;
+  autoSkipEnabled: boolean;
+  allowNewMembers: boolean;
+}
+
+export type CreateRoomOptions = Partial<PartyHostPreferences>;
+
 export interface PartyState {
   roomCode: string | null;
   role: PartyRole;
@@ -138,7 +146,7 @@ export type PartyBroadcastPayload =
   | { type: 'load'; track: PartyTrack; commandId: string; hostTimestamp: number; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'member_status'; memberId: string; status: PartyMemberStatus; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'start_countdown'; commandId: string; targetStartTime: number; hostTimestamp: number; senderId: string; seq: number; targetMemberId?: string }
-  | { type: 'state'; track: PartyTrack | null; status: PartyPlaybackStatus; positionMs: number; hostTimestamp: number; commandId?: string; isSeek?: boolean; seekCommandId?: string; senderId: string; seq: number; targetMemberId?: string }
+  | { type: 'state'; track: PartyTrack | null; status: PartyPlaybackStatus; positionMs: number; hostTimestamp: number; commandId?: string; isSeek?: boolean; seekCommandId?: string; isLocked?: boolean; autoSkipEnabled?: boolean; allowGuestQueue?: boolean; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'ping'; fromId: string; t0: number; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'pong'; forId: string; t0: number; t_host: number; senderId: string; seq: number; targetMemberId?: string }
   | { type: 'guest_diag'; memberId: string; nickname: string; avatar?: string; tag?: string; latencyMs: number; clockOffsetMs: number; driftMs: number; senderId: string; seq: number; targetMemberId?: string }

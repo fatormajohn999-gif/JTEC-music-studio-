@@ -1,5 +1,18 @@
 import React, { useEffect, useRef } from 'react';
-import { ArrowLeft, Shield, HardDrive, Cloud, Key, Trash2, Eye, Lock, FileText, CheckCircle2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Shield,
+  HardDrive,
+  Cloud,
+  Key,
+  Trash2,
+  Lock,
+  FileText,
+  Radio,
+  BarChart3,
+  Globe,
+  ShieldCheck,
+} from 'lucide-react';
 
 interface PrivacyPolicyViewProps {
   onBack: () => void;
@@ -17,185 +30,262 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBack }) 
   }, []);
 
   return (
-    <div ref={containerRef} className="space-y-6 pb-48 px-4 pt-2 max-w-3xl mx-auto animate-in fade-in">
-      {/* Top Navigation Bar with Back Button */}
-      <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+    <div
+      ref={containerRef}
+      className="min-h-full bg-gradient-to-b from-[#0E1320] via-[#0A0D15] to-[#080A10] pb-40 px-4 sm:px-6 pt-3 max-w-3xl mx-auto animate-in fade-in duration-200 space-y-5"
+    >
+      {/* Top Navigation Header */}
+      <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition cursor-pointer"
+          className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1.5 cursor-pointer shrink-0"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to Settings</span>
+          <span>Back</span>
         </button>
-        <div className="flex items-center gap-2">
-          <Shield className="w-5 h-5 text-cyan-400" />
-          <h2 className="text-lg font-bold text-white tracking-wide">Privacy Policy</h2>
+
+        <div className="flex items-center gap-2 min-w-0">
+          <Shield className="w-4 h-4 text-cyan-400 shrink-0" />
+          <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
+            Privacy Policy
+          </h2>
         </div>
+
+        <div className="w-14 shrink-0" />
       </div>
 
-      {/* Summary Highlight Box */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-purple-950/30 to-slate-900/60 border border-cyan-500/30 space-y-2">
-        <div className="flex items-center gap-2 text-cyan-300 font-bold text-sm">
-          <Lock className="w-4 h-4 text-cyan-400" />
-          <span>Offline-First & Privacy By Design</span>
+      {/* Summary Banner */}
+      <div className="p-5 rounded-3xl bg-gradient-to-br from-[#142338] via-[#151A2E] to-[#241536] border border-cyan-400/35 shadow-xl space-y-2.5">
+        <div className="flex items-center gap-2.5 text-cyan-300 font-extrabold text-sm">
+          <Lock className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span>Privacy First & Transparent by Design</span>
         </div>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          JTEC MUSIC is engineered as a local-first offline music player. Your personal audio files, playlists, and listening habits remain strictly on your physical device. The application does not track your identity, require a user account, or upload your private audio files to remote servers.
+        <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
+          JTEC MUSIC is built as an offline-first music player with optional cloud catalogs and real-time group listening. Your imported audio files, custom playlists, and sound settings stay on your device. Ordinary listening requires no user account, email address, or phone number.
         </p>
       </div>
 
-      {/* Section 1: Local Device Storage */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+      {/* Section 1: Ordinary Listeners & JTEC Cloud */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <HardDrive className="w-4 h-4 text-cyan-400" />
-          <h3>1. What Information is Stored Locally on Your Device</h3>
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center justify-center shrink-0">
+            <Cloud className="w-4 h-4" />
+          </div>
+          <h3>1. JTEC Cloud Browsing & Streaming (Listeners)</h3>
         </div>
         <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
           <p>
-            When you import music files or configure JTEC MUSIC, the following data is saved exclusively inside your browser or device storage:
+            JTEC MUSIC connects to curated cloud music catalogs (such as <strong>NASHEED</strong>, <strong>LOVE &amp; CHILL</strong>, and <strong>JTEC MUSIC</strong>) over HTTPS so listeners can browse, stream, and download tracks for offline playback.
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
             <li>
-              <strong className="text-slate-200">Local Audio Blobs (IndexedDB):</strong> Imported music files (MP3, WAV, FLAC, M4A, AAC, OGG) and custom album art blobs are stored in the client-side <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded font-mono">jtec_music_database</code> database.
+              <strong className="text-slate-200">Public Catalog Queries:</strong> For listeners, JTEC Cloud reads public song metadata and streams or downloads audio files from cloud storage without requiring any sign-in or personal profile.
             </li>
             <li>
-              <strong className="text-slate-200">Library Metadata:</strong> Song titles, artist names, album names, durations, year, and date added extracted from file headers.
-            </li>
-            <li>
-              <strong className="text-slate-200">Playlists & Favorites:</strong> Custom playlist groupings, track order, and songs marked as favorites.
-            </li>
-            <li>
-              <strong className="text-slate-200">User Preferences (localStorage):</strong> Selected visualizer mode, performance preset (60fps vs power saving), audio DSP effects (slow+reverb, bass boost, equalizer), and sleep timer durations.
+              <strong className="text-slate-200">Offline Caching:</strong> When you choose to download a cloud track, the audio file and artwork are saved locally inside your device&apos;s storage so you can play them without an internet connection.
             </li>
           </ul>
         </div>
       </section>
 
-      {/* Section 2: Audio Metadata Processing */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+      {/* Section 2: Authorized Administrator Cloud Management */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Eye className="w-4 h-4 text-purple-400" />
-          <h3>2. How Offline Music & Metadata Are Handled</h3>
+          <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <h3>2. Authorized Administrator Cloud Management</h3>
         </div>
         <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
           <p>
-            Audio metadata parsing (ID3v1, ID3v2, MP4/M4A tags, FLAC headers) occurs entirely in client-side JavaScript on your device. Your audio files are never sent to external servers or cloud APIs for analysis or identification. Audio rendering and visualizer frequency transformations utilize the local browser Web Audio API (<code className="text-purple-300 bg-black/40 px-1 py-0.5 rounded font-mono">AudioContext</code> & <code className="text-purple-300 bg-black/40 px-1 py-0.5 rounded font-mono">AnalyserNode</code>).
+            Public users cannot upload audio files from their devices to JTEC Cloud. Any music files you import from your phone or computer remain strictly private on your device.
+          </p>
+          <p className="text-slate-400">
+            Adding, editing, replacing, or deleting tracks in the public JTEC Cloud catalogs is restricted exclusively to the authorized app administrator through a protected, authenticated administrator portal verified with multi-factor authentication (TOTP).
           </p>
         </div>
       </section>
 
-      {/* Section 3: Cloud Features & Cloud Service Interaction */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+      {/* Section 3: Local Imports, Metadata & Preferences */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Cloud className="w-4 h-4 text-emerald-400" />
-          <h3>3. How Cloud Features Interact with the Cloud Service</h3>
+          <div className="w-8 h-8 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 flex items-center justify-center shrink-0">
+            <HardDrive className="w-4 h-4" />
+          </div>
+          <h3>3. Local Music Imports & On-Device Storage</h3>
         </div>
         <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
           <p>
-            JTEC MUSIC includes an optional <strong>Cloud Catalog</strong> feature that connects to our secure cloud service via HTTPS endpoints. Here is how this interaction works:
+            When you import local tracks or customize player settings, data is processed and saved locally on your device:
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
             <li>
-              <strong className="text-slate-200">Read-Only Catalog Access:</strong> The app queries the public <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">songs</code> table in the cloud service solely to display available tracks across curated categories (NASHEED, LOVE & CHILL, and JTEC MUSIC).
+              <strong className="text-slate-200">Audio &amp; Library Database (IndexedDB):</strong> Imported audio files, offline downloads, track metadata, custom album art, playlists, favorites, and playback position are stored inside your local <code className="text-cyan-300 bg-black/40 px-1 py-0.5 rounded font-mono">jtec_music_database</code> store.
             </li>
             <li>
-              <strong className="text-slate-200">Streaming & Downloading:</strong> When you stream or download a cloud track, audio is fetched from the public cloud service storage bucket (<code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded font-mono">music</code>). Downloaded tracks are cached locally into your device's IndexedDB for offline playback.
+              <strong className="text-slate-200">On-Device Tag &amp; Audio Processing:</strong> Embedded song metadata (ID3, MP4, FLAC headers) and Web Audio API effects (Slow + Reverb, Echo, Equalizer, and playback speed) run entirely on your device. Your local files are never uploaded for scanning or identification.
             </li>
             <li>
-              <strong className="text-slate-200">No Cloud Music Uploading:</strong> Cloud music uploading is not supported. Users cannot upload personal audio files from their device to the cloud service or any other remote storage through JTEC MUSIC.
-            </li>
-            <li>
-              <strong className="text-slate-200">No Authentication Required:</strong> You do not need to sign in, create an account, or share personal contact information to browse or stream public cloud music.
+              <strong className="text-slate-200">Settings Persistence:</strong> Playback preferences, Slow + Reverb settings, Wi-Fi-only download rules, and display options are stored locally via browser storage and Android native preferences.
             </li>
           </ul>
         </div>
       </section>
 
-      {/* Section 4: Device Permissions */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+      {/* Section 4: JTEC Party Profiles, Rooms, Messages & Activity */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#17192B] to-[#101320] border border-white/10 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Key className="w-4 h-4 text-amber-400" />
-          <h3>4. Permissions Requested by the Application</h3>
-        </div>
-        <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
-          <p>Depending on whether you use the Web PWA or Android application, the following system capabilities may be requested:</p>
-          <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
-            <li>
-              <strong className="text-slate-200">Notifications (Android / PWA):</strong> Used exclusively to show persistent playback controls (Play, Pause, Skip, Track Title, and Artist) in your device's notification shade during background playback.
-            </li>
-            <li>
-              <strong className="text-slate-200">Media Session & Wake Lock:</strong> Used to maintain continuous background music playback when the screen is locked and integrate with hardware media keys or Bluetooth accessories.
-            </li>
-            <li>
-              <strong className="text-slate-200">File Access:</strong> Triggered only through the standard operating system file picker when you manually choose to import audio tracks or select custom album art.
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      {/* Section 5: Data Deletion & User Rights */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
-        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Trash2 className="w-4 h-4 text-rose-400" />
-          <h3>5. Data Deletion & Complete User Control</h3>
+          <div className="w-8 h-8 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center shrink-0">
+            <Radio className="w-4 h-4" />
+          </div>
+          <h3>4. JTEC Party Profiles, Chat &amp; Room Activity</h3>
         </div>
         <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
           <p>
-            Because all your data lives locally, you have total control over data deletion at any time:
+            JTEC Party is optional and only connects when you open JTEC Party to create a profile, manage friends, or join a listening room:
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
             <li>
-              <strong className="text-slate-200">Individual Track Deletion:</strong> Tap the three dots (<code className="text-slate-200">⋮</code>) on any song and select <span className="text-rose-300">"Remove from Library"</span> to immediately delete the song record and its cached audio file.
+              <strong className="text-slate-200">Party Profile Data:</strong> Creating a JTEC Party profile uses an anonymous session and stores your chosen <strong>username</strong>, a generated <strong>8-character Party ID</strong>, and an <strong>optional profile picture</strong> (compressed locally before saving).
             </li>
             <li>
-              <strong className="text-slate-200">Clear Offline Music Library:</strong> Tap the button in Settings to permanently wipe all imported songs, downloaded cloud tracks, custom playlists, and cached audio data from IndexedDB.
+              <strong className="text-slate-200">Friends, Invites &amp; Presence:</strong> JTEC Party stores friend lists, friend requests, blocked user choices, room invites, and online/last-seen presence so friends can invite you to listen together.
             </li>
             <li>
-              <strong className="text-slate-200">Browser / App Data Reset:</strong> Clearing your browser storage or uninstalling the Android app instantly removes all JTEC MUSIC files and settings with no trace remaining.
+              <strong className="text-slate-200">Live Room Activity &amp; Messages:</strong> Inside a room, room codes, member listening status, shared queue items, live chat messages, emoji reactions, and playback synchronization timestamps are shared in real time with participants in that room.
+            </li>
+            <li>
+              <strong className="text-slate-200">Profile Deletion &amp; Leaving Rooms:</strong> Leaving or ending a room disconnects you from the room channel and stops Party audio immediately. You can permanently delete your JTEC Party profile at any time from the JTEC Party Profile tab.
             </li>
           </ul>
         </div>
       </section>
 
-      {/* Section 6: Anonymous Install Counting */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+      {/* Section 5: Anonymous Installation Counting */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
         <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Shield className="w-4 h-4 text-cyan-400" />
-          <h3>6. Anonymous Install Counting</h3>
+          <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0">
+            <BarChart3 className="w-4 h-4" />
+          </div>
+          <h3>5. Anonymous Installation Counting &amp; Update Checks</h3>
+        </div>
+        <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+          <p>
+            To understand app adoption and compatibility across devices, JTEC MUSIC sends a lightweight anonymous install ping when the app starts or returns to the foreground:
+          </p>
+          <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
+            <li>
+              <strong className="text-slate-200">Data Sent:</strong> A randomly generated anonymous install ID, app version, build number, platform (Android, Web, or iOS), device manufacturer, device model, OS version, and the device display name (or browser/OS type on web), along with anonymous open/last-seen counters.
+            </li>
+            <li>
+              <strong className="text-slate-200">Never Collected:</strong> Install counting does not collect your name, email address, phone number, contacts, GPS location, or the music you listen to.
+            </li>
+            <li>
+              <strong className="text-slate-200">Android Update Checks:</strong> On Android, the app also checks minimum supported build requirements and release availability so you can stay on compatible versions.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Section 6: Device Permissions & Notifications */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center justify-center shrink-0">
+            <Key className="w-4 h-4" />
+          </div>
+          <h3>6. Device Permissions, Notifications &amp; Home Widget</h3>
+        </div>
+        <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+          <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
+            <li>
+              <strong className="text-slate-200">Notifications:</strong> Requested on Android or web only so JTEC MUSIC can display persistent lock-screen and notification shade playback controls, track titles, and cover art during playback.
+            </li>
+            <li>
+              <strong className="text-slate-200">Media Session &amp; Background Playback:</strong> Integrates with lock-screen controls, Android home-screen widget state, and Bluetooth/headset media keys without collecting listening history externally.
+            </li>
+            <li>
+              <strong className="text-slate-200">File &amp; Photo Selection:</strong> System file and photo pickers open only when you manually import local songs, set custom album covers, or pick a JTEC Party profile picture.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Section 7: Local Storage & Data Deletion */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <div className="w-8 h-8 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 flex items-center justify-center shrink-0">
+            <Trash2 className="w-4 h-4" />
+          </div>
+          <h3>7. Managing &amp; Deleting Your Data</h3>
+        </div>
+        <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+          <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
+            <li>
+              <strong className="text-slate-200">Manage Downloads &amp; Songs:</strong> Remove individual tracks from your Library or delete specific offline downloads inside <strong>Settings → Downloads &amp; Storage → Manage downloads</strong>.
+            </li>
+            <li>
+              <strong className="text-slate-200">Clear Offline Music Library:</strong> Permanently wipe all imported songs, downloaded audio files, playlists, and cached local data from IndexedDB in <strong>Settings → Downloads &amp; Storage</strong>.
+            </li>
+            <li>
+              <strong className="text-slate-200">Uninstall or Clear App Data:</strong> Clearing your browser site data or uninstalling the Android app deletes all offline tracks, playlists, and local preferences saved inside the app.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Section 8: Third-Party Services & External Music Providers */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <div className="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 flex items-center justify-center shrink-0">
+            <Globe className="w-4 h-4" />
+          </div>
+          <h3>8. Third-Party Services &amp; External Music Providers</h3>
+        </div>
+        <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+          <p>
+            When you use online features, JTEC MUSIC communicates directly over HTTPS with the following services (which may process standard network request information such as your IP address according to their own privacy policies):
+          </p>
+          <ul className="list-disc list-inside space-y-1.5 text-slate-400 pl-1">
+            <li>
+              <strong className="text-slate-200">Supabase:</strong> Hosts public JTEC Cloud music catalogs, anonymous install counting, app update configuration checks, and JTEC Party real-time rooms, chat, and social profiles.
+            </li>
+            <li>
+              <strong className="text-slate-200">Jamendo:</strong> Provides Creative Commons independent music searches, artwork, streams, and permitted downloads in the Jamendo Indie section.
+            </li>
+            <li>
+              <strong className="text-slate-200">Internet Archive (Archive.org):</strong> Provides public Nasheed Archive searches, metadata, cover images, and audio streams/downloads.
+            </li>
+            <li>
+              <strong className="text-slate-200">GitHub Releases:</strong> Provides official Android release metadata and APK download packages when checking for or downloading app updates.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Section 9: Contact & Policy Updates */}
+      <section className="p-5 rounded-2xl bg-gradient-to-br from-[#141A29] to-[#0F131F] border border-white/10 space-y-3">
+        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
+          <FileText className="w-4 h-4 text-cyan-400 shrink-0" />
+          <h3>9. Policy Updates &amp; Contact</h3>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          JTEC MUSIC counts installs with a random anonymous ID, the app version, the phone model, the Android version and the phone name set in the phone's settings. It does not collect your email, phone number or location.
+          Updates to this policy are published directly inside this screen. If you have questions about how JTEC MUSIC handles your data or device storage, contact Johnny TEC (JTEC) at{' '}
+          <a
+            href="mailto:fatormajohn999@gmail.com"
+            className="text-cyan-400 hover:underline font-mono"
+          >
+            fatormajohn999@gmail.com
+          </a>.
         </p>
-      </section>
 
-      {/* Section 7: JTEC Party Listening & Profiles */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
-        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <Shield className="w-4 h-4 text-purple-400" />
-          <h3>7. JTEC Party Rooms & Profiles</h3>
-        </div>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          JTEC Party profiles contain a username, an ID and an optional picture. They are only used for JTEC Party, and you can delete your profile at any time.
-        </p>
-      </section>
-
-      {/* Section 8: Contact & Updates */}
-      <section className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
-        <div className="flex items-center gap-2.5 text-white font-bold text-sm">
-          <FileText className="w-4 h-4 text-cyan-400" />
-          <h3>8. Policy Updates & Inquiries</h3>
-        </div>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          Any future revisions to this policy will be documented within this screen. If you have questions about how JTEC MUSIC handles data or device storage, contact the developer at <a href="mailto:fatormajohn999@gmail.com" className="text-cyan-400 hover:underline font-mono">fatormajohn999@gmail.com</a>.
-        </p>
         <div className="pt-2">
           <button
             type="button"
             onClick={onBack}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 active:scale-98 transition cursor-pointer"
+            className="w-full min-h-[46px] py-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition cursor-pointer"
           >
-            ← Return to Player Settings
+            ← Return to Settings
           </button>
         </div>
       </section>
