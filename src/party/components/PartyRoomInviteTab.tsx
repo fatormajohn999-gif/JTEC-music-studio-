@@ -174,7 +174,7 @@ export const PartyRoomInviteTab: React.FC<PartyRoomInviteTabProps> = ({
       </section>
 
       {/* Invite JTEC Friends Section (No Nested Scrollbar) */}
-      <section className="flex-1 px-4 sm:px-6 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))]">
+      <section className="flex-1 px-4 sm:px-6 pt-4 pb-5">
         <div className="max-w-3xl mx-auto w-full space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

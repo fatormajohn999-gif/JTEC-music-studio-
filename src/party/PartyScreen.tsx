@@ -4,10 +4,12 @@ import {
   Radio, AlertCircle, LogOut, Sparkles,
   Loader2, UserMinus, UserPlus,
   Trash2, Camera, Edit3, Shield,
-  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity
+  CheckCircle2, UserX, Ban, User as UserIcon, X, Activity,
+  Headphones, MessageCircle, ListMusic, ListPlus, SkipForward, Lock,
+  SlidersHorizontal
 } from 'lucide-react';
 import { PartyService, triggerHapticFeedback } from './PartyService';
-import { PartyState, PartyMember } from './types';
+import { PartyState, PartyMember, PartyRoomSettings } from './types';
 import { partyAudioEngine } from './PartyAudioEngine';
 import { registerBackHandler } from '../services/navigation';
 import { Song } from '../types/music';
@@ -23,8 +25,14 @@ import {
 import { AppLogger } from '../services/appLogger';
 import { Avatar } from './components/Avatar';
 import { processProfilePhoto } from './utils/photoProcessor';
+import {
+  loadSavedPartyPreferences,
+  savePartyPreferences,
+  resetPartyPreferences,
+  validatePartyRoomSettings,
+} from './utils/partyPreferences';
+import { PartySettingToggle } from './components/PartySettingToggle';
 import { PartyRoomListenTab } from './components/PartyRoomListenTab';
-import { PartyRoomDashboard } from './components/PartyRoomDashboard';
 import { PartyRoomPeopleTab } from './components/PartyRoomPeopleTab';
 import { PartyRoomInviteTab } from './components/PartyRoomInviteTab';
 import { PartyRoomChatTab } from './components/PartyRoomChatTab';
@@ -39,7 +47,7 @@ interface PartyScreenProps {
 
 type LobbyTab = 'rooms' | 'friends' | 'profile';
 type FriendsSubTab = 'friends' | 'requests' | 'blocked';
-type RoomView = 'listen' | 'dashboard' | 'people' | 'invite' | 'chat' | 'queue';
+type RoomView = 'listen' | 'people' | 'invite' | 'chat' | 'queue';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9 ._-]{2,20}$/;
 
@@ -100,11 +108,20 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // Add Songs to Party modal
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
 
-  // Active Room navigation (Immersive Listen -> Room Dashboard -> Sub-screens) & unread chat
+  // Active Room navigation & unread chat
   const [roomView, setRoomView] = useState<RoomView>('listen');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const prevChatCountRef = useRef(0);
   const [invitedFriendIds, setInvitedFriendIds] = useState<Set<string>>(new Set());
+
+  // Host Party Preferences & Pre-Create Party Setup
+  const [partyPreferences, setPartyPreferences] = useState<PartyRoomSettings>(() =>
+    loadSavedPartyPreferences()
+  );
+  const [showPartySetupSheet, setShowPartySetupSheet] = useState(false);
+  const [partySetupDraft, setPartySetupDraft] = useState<PartyRoomSettings>(() =>
+    loadSavedPartyPreferences()
+  );
 
   // Leave / End confirmation modal
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
@@ -281,15 +298,11 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     };
   }, [backend, profile, refreshSocialLists]);
 
-  // Handle Back consistently across active room screens & lobby
+  // Handle Back consistently across active room tabs & lobby
   const handleBack = useCallback(() => {
     triggerHapticFeedback();
     if (partyState.roomCode) {
-      if (roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue') {
-        setRoomView('dashboard');
-        return;
-      }
-      if (roomView === 'dashboard') {
+      if (roomView !== 'listen') {
         setRoomView('listen');
         return;
       }
@@ -475,11 +488,21 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
     handleCopyMyId();
   };
 
+  const handleUpdatePartyPreference = (patch: Partial<PartyRoomSettings>) => {
+    triggerHapticFeedback();
+    const updated = savePartyPreferences(patch);
+    setPartyPreferences(updated);
+    setPartySetupDraft(updated);
+  };
+
   const handleDeleteAccount = async () => {
     triggerHapticFeedback();
     setIsDeletingAccount(true);
     try {
       await backend.deleteProfile();
+      const resetPrefs = resetPartyPreferences();
+      setPartyPreferences(resetPrefs);
+      setPartySetupDraft(resetPrefs);
       setProfile(null);
       setShowDeleteAccountConfirm(false);
       setLobbyTab('rooms');
@@ -591,13 +614,23 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
   // ROOM ACTIONS
   // =========================================================================
 
-  const handleCreateRoom = async () => {
+  const handleOpenPartySetup = () => {
+    triggerHapticFeedback();
+    setLocalError(null);
+    PartyService.clearErrorMessage();
+    setPartySetupDraft(loadSavedPartyPreferences());
+    setShowPartySetupSheet(true);
+  };
+
+  const handleCreateRoom = async (settingsOverride?: PartyRoomSettings) => {
     triggerHapticFeedback();
     setIsCreating(true);
     setLocalError(null);
     PartyService.clearErrorMessage();
+    const validated = validatePartyRoomSettings(settingsOverride || partySetupDraft);
     try {
-      await PartyService.createRoom();
+      await PartyService.createRoom(validated);
+      setShowPartySetupSheet(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create party room.';
       setLocalError(msg);
@@ -809,19 +842,13 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
       )}
 
       {/* Compact Consistent Top Header */}
-      <header className="pt-[env(safe-area-inset-top,0px)] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))] border-b border-white/10 bg-[#0B0E17]/95 backdrop-blur-md shrink-0 z-30">
+      <header className="pt-[env(safe-area-inset-top,0px)] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))] border-b border-white/10 bg-[#0B0F1A]/95 backdrop-blur-md shrink-0 z-30">
         <div className="h-12 flex items-center justify-between gap-2 max-w-5xl mx-auto w-full">
           <button
             type="button"
             onClick={handleBack}
             aria-label={
-              partyState.roomCode
-                ? roomView === 'people' || roomView === 'invite' || roomView === 'chat' || roomView === 'queue'
-                  ? 'Back to Room Menu'
-                  : roomView === 'dashboard'
-                  ? 'Back to Player'
-                  : 'Back to Settings'
-                : 'Back to Settings'
+              partyState.roomCode && roomView !== 'listen' ? 'Back to Listen' : 'Back to Settings'
             }
             className="h-8 sm:h-9 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.11] border border-white/10 text-cyan-300 font-semibold text-xs active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
           >
@@ -832,22 +859,38 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           <div className="min-w-0 text-center flex-1 px-1">
             {partyState.roomCode ? (
               <div className="min-w-0 flex flex-col items-center justify-center">
-                <h1 className="text-[13px] sm:text-sm font-bold text-white tracking-tight truncate leading-tight max-w-full">
-                  {roomView === 'listen'
-                    ? 'Now Listening'
-                    : roomView === 'dashboard'
-                    ? 'Room Menu'
-                    : roomView === 'people'
-                    ? 'People'
-                    : roomView === 'invite'
-                    ? 'Invite'
-                    : roomView === 'chat'
-                    ? 'Room Chat'
-                    : 'Shared Queue'}
-                </h1>
-                <p className="text-[10px] font-mono text-cyan-300/90 tracking-widest truncate leading-tight">
-                  Room {partyState.roomCode}
-                </p>
+                <div className="flex items-center justify-center gap-1.5 max-w-full">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      partyState.isReconnecting
+                        ? 'bg-amber-400 animate-pulse'
+                        : partyState.isConnected
+                        ? 'bg-emerald-400'
+                        : 'bg-rose-400'
+                    }`}
+                  />
+                  <h1 className="text-[13px] sm:text-sm font-bold text-white tracking-tight truncate leading-tight">
+                    {roomView === 'listen'
+                      ? 'Now Listening'
+                      : roomView === 'people'
+                      ? 'People'
+                      : roomView === 'invite'
+                      ? 'Invite'
+                      : roomView === 'chat'
+                      ? 'Room Chat'
+                      : 'Shared Queue'}
+                  </h1>
+                </div>
+                <div className="flex items-center justify-center gap-1.5 text-[10px] leading-tight mt-0.5">
+                  <span className="font-mono text-cyan-300/95 tracking-widest font-semibold">
+                    Room {partyState.roomCode}
+                  </span>
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-300 font-medium inline-flex items-center gap-0.5">
+                    {partyState.role === 'host' && <Crown className="w-2.5 h-2.5 text-amber-400" />}
+                    <span>{partyState.role === 'host' ? 'Host' : 'Guest'}</span>
+                  </span>
+                </div>
               </div>
             ) : (
               <h1 className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
@@ -897,14 +940,14 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
         className={
           isInActiveRoom
             ? 'relative flex-1 w-full min-h-0 flex flex-col overflow-hidden pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
-            : 'flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-3 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))]'
+            : 'flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-3.5 pb-6 pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))]'
         }
       >
         <div
           className={
             isInActiveRoom
               ? 'flex-1 min-h-0 w-full flex flex-col'
-              : 'max-w-2xl mx-auto w-full space-y-4 pb-8'
+              : 'max-w-2xl mx-auto w-full space-y-4 pb-2'
           }
         >
           {/* Top Notification & Status Banners */}
@@ -1111,57 +1154,12 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
               CASE 2: NOT IN ROOM LOBBY (When profile exists & not inside an active room)
           ========================================================================= */}
           {profile && !partyState.roomCode && (
-            <div className="space-y-4 animate-in fade-in">
-              {/* Tab Selector: Rooms | Friends | Profile */}
-              <div className="flex items-center p-1 bg-slate-900/80 border border-white/10 rounded-2xl">
-                <button
-                  type="button"
-                  onClick={() => setLobbyTab('rooms')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 min-h-[44px] py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    lobbyTab === 'rooms'
-                      ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Radio className="w-3.5 h-3.5" />
-                  <span>Rooms</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setLobbyTab('friends')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 min-h-[44px] py-2 rounded-xl text-xs font-bold transition cursor-pointer relative ${
-                    lobbyTab === 'friends'
-                      ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>Friends</span>
-                  {friendRequests.length > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setLobbyTab('profile')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 min-h-[44px] py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    lobbyTab === 'profile'
-                      ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <UserIcon className="w-3.5 h-3.5" />
-                  <span>Profile</span>
-                </button>
-              </div>
-
+            <div className="space-y-4 animate-in fade-in duration-150">
               {/* -------------------------------------------------------------------
                   TAB A: ROOMS
               ------------------------------------------------------------------- */}
               {lobbyTab === 'rooms' && (
-                <div className="space-y-4 animate-in fade-in">
+                <div className="space-y-4 animate-in fade-in duration-150">
                   {/* Incoming Pending Invites Section */}
                   {pendingInvites.length > 0 && (
                     <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/60 to-cyan-950/60 border border-cyan-500/30 space-y-3">
@@ -1212,19 +1210,56 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                     </div>
                   )}
 
-                  {/* Create Room Button */}
-                  <div className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
-                    <div>
-                      <h4 className="text-sm font-bold text-white">Host a Party</h4>
-                      <p className="text-xs text-slate-400">
-                        Create a room and control the music for your group.
-                      </p>
+                  {/* Host a Party Card with Pre-Create Party Setup Trigger */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-br from-[#12192D] via-[#0F1524] to-[#1A132C] border border-cyan-500/20 space-y-4 shadow-lg">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-white">Host a Party</h4>
+                        <p className="text-xs text-slate-400">
+                          Configure room rules and listen in real-time sync with friends.
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-purple-500/25 border border-cyan-400/30 flex items-center justify-center shrink-0">
+                        <Radio className="w-5 h-5 text-cyan-300" />
+                      </div>
                     </div>
+
+                    {/* Preview of active Party Preferences defaults */}
+                    <div className="p-3 rounded-2xl bg-[#090D18]/80 border border-white/10 space-y-1.5 text-[11px]">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                          <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Saved Party Defaults</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerHapticFeedback();
+                            setLobbyTab('profile');
+                          }}
+                          className="text-cyan-300 font-semibold hover:underline cursor-pointer"
+                        >
+                          Edit defaults
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5 text-[11px] text-slate-300">
+                        <span className="px-2 py-0.5 rounded-lg bg-white/[0.05] border border-white/10">
+                          {partyPreferences.allowGuestQueue ? 'Members can add music' : 'Host-only queue'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-lg bg-white/[0.05] border border-white/10">
+                          {partyPreferences.autoSkipEnabled ? 'Auto vote-skip ON' : 'Auto vote-skip OFF'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-lg bg-white/[0.05] border border-white/10">
+                          {partyPreferences.allowNewMembers ? 'Open to new members' : 'Room closed'}
+                        </span>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
                       disabled={isCreating}
-                      onClick={handleCreateRoom}
-                      className="w-full min-h-[44px] py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-slate-950 font-bold text-sm shadow-lg shadow-cyan-500/20 hover:brightness-110 active:scale-98 transition cursor-pointer flex items-center justify-center gap-2"
+                      onClick={handleOpenPartySetup}
+                      className="w-full min-h-[48px] py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 text-slate-950 font-extrabold text-sm shadow-lg shadow-cyan-500/20 hover:brightness-110 active:scale-[0.99] transition cursor-pointer flex items-center justify-center gap-2"
                     >
                       {isCreating ? (
                         <>
@@ -1234,7 +1269,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 text-slate-950" />
-                          <span>Create Room</span>
+                          <span>Create Party</span>
                         </>
                       )}
                     </button>
@@ -1502,11 +1537,24 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
               )}
 
               {/* -------------------------------------------------------------------
-                  TAB C: PROFILE
+                  TAB C: PROFILE (My Profile · Party Preferences · Account Management)
               ------------------------------------------------------------------- */}
               {lobbyTab === 'profile' && (
-                <div className="space-y-4 animate-in fade-in">
-                  <div className="p-6 rounded-3xl bg-slate-900/60 border border-white/5 space-y-5 text-center">
+                <div className="space-y-4 animate-in fade-in duration-150">
+                  {/* Section 1: My Profile */}
+                  <section className="p-5 sm:p-6 rounded-3xl bg-[#0E1322]/90 border border-white/10 space-y-5 text-center shadow-lg">
+                    <div className="flex items-center justify-between text-left border-b border-white/10 pb-3">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white tracking-wide">
+                          My Profile
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Manage your Party identity and share ID
+                        </p>
+                      </div>
+                      <UserIcon className="w-4 h-4 text-cyan-400" />
+                    </div>
+
                     {/* Avatar with Camera Trigger */}
                     <div className="relative w-24 h-24 mx-auto">
                       <Avatar
@@ -1547,14 +1595,14 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                             type="button"
                             disabled={isSavingUsername}
                             onClick={handleSaveUsername}
-                            className="min-h-[44px] px-3 rounded-xl bg-cyan-500 text-slate-950 text-xs font-bold"
+                            className="min-h-[44px] px-3 rounded-xl bg-cyan-500 text-slate-950 text-xs font-bold cursor-pointer"
                           >
                             <Check className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
                             onClick={() => setIsEditingUsername(false)}
-                            className="min-h-[44px] px-3 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+                            className="min-h-[44px] px-3 rounded-xl bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
                           >
                             <UserX className="w-4 h-4" />
                           </button>
@@ -1568,7 +1616,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                               setEditUsernameVal(profile.username);
                               setIsEditingUsername(true);
                             }}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-white transition"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
                             title="Edit username"
                           >
                             <Edit3 className="w-4 h-4" />
@@ -1576,7 +1624,7 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                         </div>
                       )}
 
-                      {/* Requirement 2: Monospace ID with Copy and Share */}
+                      {/* Monospace Party ID with Copy and Share */}
                       <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1 w-full max-w-sm mx-auto">
                         <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 w-full sm:w-auto">
                           <span className="font-mono text-cyan-300 font-bold text-sm tracking-widest select-all">
@@ -1612,55 +1660,98 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                     <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
                       Share your Party ID with friends so they can add you.
                     </p>
+                  </section>
 
-                    {/* Danger Zone: Delete Account */}
-                    <div className="pt-4 border-t border-white/5">
-                      <button
-                        type="button"
-                        onClick={() => setShowDeleteAccountConfirm(true)}
-                        className="px-4 py-2.5 min-h-[44px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-semibold transition cursor-pointer"
-                      >
-                        Delete My Account
-                      </button>
+                  {/* Section 2: Party Preferences (Default Host Room Settings) */}
+                  <section className="p-5 sm:p-6 rounded-3xl bg-[#0E1322]/90 border border-white/10 space-y-3.5 shadow-lg">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white tracking-wide">
+                          Party Preferences
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Default host settings applied when you create a new party
+                        </p>
+                      </div>
+                      <SlidersHorizontal className="w-4 h-4 text-purple-400" />
                     </div>
-                  </div>
+
+                    <div className="space-y-2.5">
+                      <PartySettingToggle
+                        icon={<ListPlus className="w-4 h-4 text-cyan-400" />}
+                        title="Allow members to add music"
+                        description="Let guests queue shareable songs into Up Next"
+                        checked={partyPreferences.allowGuestQueue}
+                        onChange={(next) => handleUpdatePartyPreference({ allowGuestQueue: next })}
+                        accent="cyan"
+                      />
+
+                      <PartySettingToggle
+                        icon={<SkipForward className="w-4 h-4 text-purple-400" />}
+                        title="Enable automatic vote-to-skip"
+                        description="Advance to the next track when more than half vote"
+                        checked={partyPreferences.autoSkipEnabled}
+                        onChange={(next) => handleUpdatePartyPreference({ autoSkipEnabled: next })}
+                        accent="purple"
+                      />
+
+                      <PartySettingToggle
+                        icon={<Lock className="w-4 h-4 text-emerald-400" />}
+                        title="Allow new members to join"
+                        description="Keep your room open to friends with the room code"
+                        checked={partyPreferences.allowNewMembers}
+                        onChange={(next) => handleUpdatePartyPreference({ allowNewMembers: next })}
+                        accent="emerald"
+                      />
+                    </div>
+                  </section>
+
+                  {/* Section 3: Account Management */}
+                  <section className="p-5 sm:p-6 rounded-3xl bg-[#0E1322]/90 border border-rose-500/20 space-y-3 shadow-lg">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white tracking-wide">
+                          Account Management
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Remove your local JTEC Party profile and friends list
+                        </p>
+                      </div>
+                      <Shield className="w-4 h-4 text-rose-400" />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteAccountConfirm(true)}
+                      className="w-full px-4 py-2.5 min-h-[44px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/25 text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete My Account</span>
+                    </button>
+                  </section>
                 </div>
               )}
             </div>
           )}
 
           {/* =========================================================================
-              CASE 3: ACTIVE ROOM VIEW (Immersive Player -> Room Dashboard -> Sub-screens)
+              CASE 3: ACTIVE ROOM VIEW (Persistent 5-Tab Navigation Layout)
           ========================================================================= */}
           {partyState.roomCode && (() => {
             const diagnostics = PartyService.getDiagnostics();
 
             return (
               <>
-                {/* 1. Immersive Listening Screen (Default) */}
                 {roomView === 'listen' && (
                   <PartyRoomListenTab
                     partyState={partyState}
                     diagnostics={diagnostics}
                     currentPlaybackSec={currentPlaybackSec}
-                    unreadChatCount={unreadChatCount}
-                    onOpenDashboard={() => setRoomView('dashboard')}
                     onOpenPeople={() => setRoomView('people')}
                     onOpenAddMusic={() => setShowAddSongsModal(true)}
                   />
                 )}
 
-                {/* 2. Room Dashboard (5 Large Cards) */}
-                {roomView === 'dashboard' && (
-                  <PartyRoomDashboard
-                    partyState={partyState}
-                    diagnostics={diagnostics}
-                    unreadChatCount={unreadChatCount}
-                    onSelectView={(nextView) => setRoomView(nextView)}
-                  />
-                )}
-
-                {/* 3. Dedicated People Screen */}
                 {roomView === 'people' && (
                   <PartyRoomPeopleTab
                     partyState={partyState}
@@ -1671,7 +1762,6 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   />
                 )}
 
-                {/* 4. Dedicated Invite Screen */}
                 {roomView === 'invite' && (
                   <PartyRoomInviteTab
                     partyState={partyState}
@@ -1685,12 +1775,10 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
                   />
                 )}
 
-                {/* 5. Dedicated Chat Screen */}
                 {roomView === 'chat' && (
                   <PartyRoomChatTab partyState={partyState} diagnostics={diagnostics} />
                 )}
 
-                {/* 6. Dedicated Queue Screen */}
                 {roomView === 'queue' && (
                   <PartyRoomQueueTab
                     partyState={partyState}
@@ -1702,6 +1790,268 @@ export const PartyScreen: React.FC<PartyScreenProps> = ({ onBack, onNavigateToCl
           })()}
         </div>
       </main>
+
+      {/* =========================================================================
+          LOBBY FIXED BOTTOM NAVIGATION BAR (Rooms · Friends · Profile)
+      ========================================================================= */}
+      {profile && !partyState.roomCode && (
+        <nav
+          aria-label="Party Lobby Navigation"
+          className="shrink-0 z-30 border-t border-white/10 bg-[#0B0F1A]/95 backdrop-blur-md pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)] pb-[max(0.45rem,env(safe-area-inset-bottom,0px))]"
+        >
+          <div className="max-w-2xl mx-auto grid grid-cols-3 gap-1 px-2 pt-1.5">
+            {(
+              [
+                {
+                  key: 'rooms' as const,
+                  label: 'Rooms',
+                  icon: Radio,
+                  badge: pendingInvites.length > 0 ? pendingInvites.length : 0,
+                },
+                {
+                  key: 'friends' as const,
+                  label: 'Friends',
+                  icon: Users,
+                  badge: friendRequests.length > 0 ? friendRequests.length : 0,
+                },
+                {
+                  key: 'profile' as const,
+                  label: 'Profile',
+                  icon: UserIcon,
+                  badge: 0,
+                },
+              ] as const
+            ).map((item) => {
+              const Icon = item.icon;
+              const isActive = lobbyTab === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    triggerHapticFeedback();
+                    setLobbyTab(item.key);
+                  }}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative min-h-[50px] py-1.5 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition cursor-pointer active:scale-95 ${
+                    isActive ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {isActive && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-gradient-to-r from-cyan-400 to-purple-500"
+                    />
+                  )}
+                  <div
+                    className={`relative flex items-center justify-center w-8 h-6 rounded-xl transition ${
+                      isActive ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/25 text-cyan-300' : ''
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {item.badge > 0 && (
+                      <span className="absolute -top-1 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center leading-none shadow">
+                        {item.badge > 9 ? '9+' : item.badge}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`text-[11px] leading-none tracking-tight ${
+                      isActive ? 'font-bold text-cyan-200' : 'font-medium'
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
+
+      {/* =========================================================================
+          ACTIVE PARTY FIXED BOTTOM NAVIGATION BAR (Listen · People · Invite · Chat · Queue)
+      ========================================================================= */}
+      {partyState.roomCode && (
+        <nav
+          aria-label="Active Party Room Navigation"
+          className="shrink-0 z-30 border-t border-white/10 bg-[#0B0F1A]/95 backdrop-blur-md pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)] pb-[max(0.45rem,env(safe-area-inset-bottom,0px))]"
+        >
+          <div className="max-w-3xl mx-auto grid grid-cols-5 gap-1 px-1.5 pt-1.5">
+            {(
+              [
+                { key: 'listen' as const, label: 'Listen', icon: Headphones, badge: 0, badgeTone: 'cyan' },
+                { key: 'people' as const, label: 'People', icon: Users, badge: 0, badgeTone: 'cyan' },
+                { key: 'invite' as const, label: 'Invite', icon: Share2, badge: 0, badgeTone: 'cyan' },
+                {
+                  key: 'chat' as const,
+                  label: 'Chat',
+                  icon: MessageCircle,
+                  badge: unreadChatCount,
+                  badgeTone: 'rose',
+                },
+                {
+                  key: 'queue' as const,
+                  label: 'Queue',
+                  icon: ListMusic,
+                  badge: partyState.queue.length,
+                  badgeTone: 'purple',
+                },
+              ] as const
+            ).map((item) => {
+              const Icon = item.icon;
+              const isActive = roomView === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    triggerHapticFeedback();
+                    setRoomView(item.key);
+                  }}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative min-h-[50px] py-1.5 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition cursor-pointer active:scale-95 ${
+                    isActive ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {isActive && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-0 left-1/2 -translate-x-1/2 w-7 h-0.5 rounded-full bg-gradient-to-r from-cyan-400 to-purple-500"
+                    />
+                  )}
+                  <div
+                    className={`relative flex items-center justify-center w-8 h-6 rounded-xl transition ${
+                      isActive ? 'bg-gradient-to-r from-cyan-500/25 to-purple-500/25 text-cyan-300' : ''
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {item.badge > 0 && (
+                      <span
+                        className={`absolute -top-1 -right-2 min-w-[16px] h-4 px-1 rounded-full text-white text-[9px] font-extrabold flex items-center justify-center leading-none shadow ${
+                          item.badgeTone === 'rose' ? 'bg-rose-500' : 'bg-purple-600'
+                        }`}
+                      >
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`text-[10px] sm:text-[11px] leading-none tracking-tight ${
+                      isActive ? 'font-bold text-cyan-200' : 'font-medium'
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
+
+      {/* =========================================================================
+          PRE-CREATE PARTY SETUP BOTTOM SHEET
+      ========================================================================= */}
+      {showPartySetupSheet && !partyState.roomCode && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="party-setup-title"
+        >
+          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[#0F1524] border-t sm:border border-cyan-500/30 p-5 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500/25 to-purple-500/25 border border-cyan-400/35 flex items-center justify-center">
+                  <SlidersHorizontal className="w-4 h-4 text-cyan-300" />
+                </div>
+                <div>
+                  <h3 id="party-setup-title" className="text-base font-extrabold text-white">
+                    Party Setup
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Initialized from your Party Preferences
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isCreating}
+                onClick={() => setShowPartySetupSheet(false)}
+                aria-label="Close Party Setup"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              <PartySettingToggle
+                icon={<ListPlus className="w-4 h-4 text-cyan-400" />}
+                title="Allow members to add music"
+                description="Let listeners add shareable songs to the queue"
+                checked={partySetupDraft.allowGuestQueue}
+                onChange={(next) =>
+                  setPartySetupDraft((prev) => ({ ...prev, allowGuestQueue: next }))
+                }
+                accent="cyan"
+              />
+
+              <PartySettingToggle
+                icon={<SkipForward className="w-4 h-4 text-purple-400" />}
+                title="Enable automatic vote-to-skip"
+                description="Skip tracks automatically when over half vote"
+                checked={partySetupDraft.autoSkipEnabled}
+                onChange={(next) =>
+                  setPartySetupDraft((prev) => ({ ...prev, autoSkipEnabled: next }))
+                }
+                accent="purple"
+              />
+
+              <PartySettingToggle
+                icon={<Lock className="w-4 h-4 text-emerald-400" />}
+                title="Allow new members to join"
+                description="Keep room open for friends entering your code"
+                checked={partySetupDraft.allowNewMembers}
+                onChange={(next) =>
+                  setPartySetupDraft((prev) => ({ ...prev, allowNewMembers: next }))
+                }
+                accent="emerald"
+              />
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                disabled={isCreating}
+                onClick={() => setShowPartySetupSheet(false)}
+                className="min-h-[46px] px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isCreating}
+                onClick={() => handleCreateRoom(partySetupDraft)}
+                className="flex-1 min-h-[46px] px-5 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 disabled:opacity-60 text-slate-950 font-extrabold text-sm shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isCreating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Creating Room...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Create Room</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =========================================================================
           MULTI-SOURCE ADD MUSIC MODAL (Downloaded, JTEC Cloud, Online Catalogs)

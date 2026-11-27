@@ -23,8 +23,11 @@ import {
   FloatingReaction,
   ChatMessage,
   SyncLogEntry,
+  PartyRoomSettings,
+  PartyCreateRoomOptions,
 } from './types';
 import { isShareablePartyAudioUrl } from './utils/audioValidation';
+import { validatePartyRoomSettings } from './utils/partyPreferences';
 import { MockPartyBackend, DEMO_BOT_TRACKS } from './MockPartyBackend';
 
 export type PartyRealtimeStatus =
@@ -969,11 +972,12 @@ class PartyServiceClass {
   }
 
   /**
-   * Create a new room as Host
+   * Create a new room as Host with optional validated pre-create room settings
    */
-  public async createRoom(): Promise<string> {
+  public async createRoom(options?: PartyCreateRoomOptions): Promise<string> {
+    const validatedSettings = validatePartyRoomSettings(options);
     const code = generateRoomCode();
-    await this.initRoom(code, 'host');
+    await this.initRoom(code, 'host', validatedSettings);
     return code;
   }
 
@@ -1043,7 +1047,11 @@ class PartyServiceClass {
     this.startHostHeartbeatChecker();
   }
 
-  private async initRoom(code: string, role: PartyRole): Promise<void> {
+  private async initRoom(
+    code: string,
+    role: PartyRole,
+    hostSettings?: PartyRoomSettings
+  ): Promise<void> {
     await this.leaveRoom(false);
 
     // STRICT ISOLATION: Only use the dedicated JTEC Party Supabase client (VITE_PARTY_SUPABASE_URL/ANON_KEY).
@@ -1072,15 +1080,18 @@ class PartyServiceClass {
       throw new Error(this.state.errorMessage);
     }
 
+    const appliedSettings = role === 'host' ? validatePartyRoomSettings(hostSettings) : null;
+
     this.state.roomCode = code;
     this.state.role = role;
     this.state.isConnected = false;
     this.state.errorMessage = null;
-    this.state.isLocked = false;
+    this.state.isLocked = appliedSettings ? !appliedSettings.allowNewMembers : false;
     this.state.skipVotes = [];
+    this.state.autoSkipEnabled = appliedSettings ? appliedSettings.autoSkipEnabled : false;
     this.state.queue = [];
     this.state.history = [];
-    this.state.allowGuestQueue = false;
+    this.state.allowGuestQueue = appliedSettings ? appliedSettings.allowGuestQueue : false;
     this.state.chatMessages = [];
     this.state.activeReactions = [];
     this.realPresenceMembers = [];
@@ -1275,6 +1286,7 @@ class PartyServiceClass {
               this.startPingTimer();
             } else {
               this.startHostStateBroadcastTimer();
+              this.broadcastCurrentHostState();
             }
 
             this.startHostHeartbeatChecker();
@@ -1750,6 +1762,9 @@ class PartyServiceClass {
             positionMs: Math.round(posSec * 1000),
             hostTimestamp: Date.now(),
             commandId: this.currentCommandId,
+            isLocked: this.state.isLocked,
+            autoSkipEnabled: this.state.autoSkipEnabled,
+            allowGuestQueue: this.state.allowGuestQueue,
             targetMemberId: msg.memberId,
           });
 
@@ -2236,6 +2251,9 @@ class PartyServiceClass {
       positionMs: Math.round(posSec * 1000),
       hostTimestamp: Date.now(),
       commandId: this.currentCommandId,
+      isLocked: this.state.isLocked,
+      autoSkipEnabled: this.state.autoSkipEnabled,
+      allowGuestQueue: this.state.allowGuestQueue,
     });
   }
 
@@ -2247,8 +2265,28 @@ class PartyServiceClass {
     commandId?: string;
     isSeek?: boolean;
     seekCommandId?: string;
+    isLocked?: boolean;
+    autoSkipEnabled?: boolean;
+    allowGuestQueue?: boolean;
   }): void {
     if (this.state.role !== 'guest' || !this.state.roomCode || this.isIntentionalDisconnect) return;
+
+    let settingsChanged = false;
+    if (typeof msg.isLocked === 'boolean' && this.state.isLocked !== msg.isLocked) {
+      this.state.isLocked = msg.isLocked;
+      settingsChanged = true;
+    }
+    if (typeof msg.autoSkipEnabled === 'boolean' && this.state.autoSkipEnabled !== msg.autoSkipEnabled) {
+      this.state.autoSkipEnabled = msg.autoSkipEnabled;
+      settingsChanged = true;
+    }
+    if (typeof msg.allowGuestQueue === 'boolean' && this.state.allowGuestQueue !== msg.allowGuestQueue) {
+      this.state.allowGuestQueue = msg.allowGuestQueue;
+      settingsChanged = true;
+    }
+    if (settingsChanged) {
+      this.emitState();
+    }
 
     // Track change via state (for newly joined guest or reconnect)
     if (msg.track && (!this.state.currentTrack || this.state.currentTrack.id !== msg.track.id)) {

@@ -59,7 +59,7 @@ interface SettingsScreenProps {
   initialSubView?: SettingsSubView;
 }
 
-type SettingsGroup = 'playback' | 'visualizer' | 'storage' | 'notifications' | 'about';
+type SettingsGroup = 'playback' | 'appearance' | 'storage' | 'notifications' | 'about';
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   settings,
@@ -164,10 +164,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   // Wi-Fi only download setting (default off)
   const wifiOnly = settings.downloadOnWifiOnly ?? false;
 
-  // Collapsible cards: first two (playback and visualizer) are open by default
+  // Collapsible category cards: first two (playback and appearance) are open by default
   const [openGroups, setOpenGroups] = useState<Record<SettingsGroup, boolean>>({
     playback: true,
-    visualizer: true,
+    appearance: true,
     storage: false,
     notifications: false,
     about: false,
@@ -288,7 +288,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       <div
         ref={containerRef}
         style={{ display: activeSubView === 'main' ? 'block' : 'none' }}
-        className="space-y-4 pb-48 px-4 pt-3 max-w-3xl mx-auto animate-in fade-in"
+        className="space-y-3 pb-48 px-4 pt-3 max-w-3xl mx-auto animate-in fade-in"
       >
       {/* Header */}
       <div className="flex items-center gap-3 pb-1">
@@ -359,11 +359,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       <button
         type="button"
         onClick={() => handleOpenSubView('party')}
-        className="w-full flex items-center justify-between p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-cyan-950/40 via-purple-950/40 to-slate-900/80 border border-cyan-500/30 hover:border-cyan-400/60 shadow-lg shadow-cyan-500/10 text-left cursor-pointer group active:scale-[0.99] transition select-none"
+        className="w-full flex items-center justify-between p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl bg-gradient-to-r from-cyan-950/40 via-purple-950/40 to-slate-900/80 border border-cyan-500/30 hover:border-cyan-400/60 shadow-lg shadow-cyan-500/10 text-left cursor-pointer group active:scale-[0.99] transition select-none"
       >
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/25 to-purple-600/30 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition shadow-md shadow-cyan-500/20">
-            <Radio className="w-5 h-5 text-cyan-400 animate-pulse" />
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/25 to-purple-600/30 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition shadow-md shadow-cyan-500/20">
+            <Radio className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400 animate-pulse" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -390,102 +390,27 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
       </button>
 
-      {/* Home screen widget card */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 p-4 sm:p-5 space-y-4 shadow-lg shadow-black/20">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
-            <LayoutGrid className="w-4 h-4 sm:w-5 sm:h-5" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">
-              Home screen widget
-            </h3>
-            <p className="text-xs text-slate-400">
-              Control your music from your home screen.
-            </p>
-          </div>
-        </div>
-
-        {/* Mini inline visual preview */}
-        <div className="rounded-2xl bg-gradient-to-br from-[#0b132b] via-[#091024] to-[#1a1033] border border-cyan-500/25 p-3.5 shadow-inner relative overflow-hidden">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500/30 to-purple-600/35 border border-cyan-400/30 flex items-center justify-center shrink-0">
-              <Music2 className="w-5 h-5 text-cyan-300" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-white truncate">JTEC MUSIC</span>
-                <Heart className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-              </div>
-              <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                Now Playing • Quick controls
-              </p>
-              <div className="mt-2 h-1 w-full rounded-full bg-white/10 overflow-hidden">
-                <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-cyan-400 to-purple-400" />
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
-                <SkipBack className="w-3.5 h-3.5" />
-              </div>
-              <div className="w-8 h-8 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center shadow-md shadow-cyan-500/30">
-                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-              </div>
-              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
-                <SkipForward className="w-3.5 h-3.5" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleRequestPinWidget}
-          disabled={isRequestingWidgetPin}
-          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] shadow-lg shadow-cyan-500/15 disabled:opacity-60"
-        >
-          <LayoutGrid className="w-4 h-4" />
-          <span>{isRequestingWidgetPin ? 'Opening prompt...' : 'Add widget to home screen'}</span>
-        </button>
-
-        {widgetPinFeedback === 'requested' && (
-          <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-[11px] text-cyan-200 leading-relaxed">
-            Follow your phone&apos;s prompt to place the JTEC MUSIC widget on your home screen.
-          </div>
-        )}
-
-        {widgetPinFeedback === 'unsupported' && (
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-white/10 text-[11px] text-slate-300 leading-relaxed">
-            Long-press your home screen, tap Widgets, find JTEC MUSIC and drag it onto the screen.
-          </div>
-        )}
-
-        <p className="text-[11px] text-slate-400 leading-relaxed">
-          If the app is closed completely, tap Play on the widget to open the app and continue.
-        </p>
-      </div>
-
       {/* =========================================================================
-          GROUP 1: PLAYBACK (Open by default)
-          Automatic Next, Sleep Timer, Remember Last Song, Neon Glow Aesthetics
+          CATEGORY 1: PLAYBACK & SOUND
+          Automatic Next Track, Sleep Timer, Remember Last Song, Sound Reset
       ========================================================================= */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+      <div className="rounded-2xl sm:rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
         <button
           type="button"
           onClick={() => toggleGroup('playback')}
           aria-expanded={openGroups.playback}
-          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+          className="w-full flex items-center justify-between p-3.5 sm:p-4 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
-              <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
+            <div className="w-9 h-9 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
+              <Play className="w-4 h-4 fill-current" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                Playback
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider truncate">
+                Playback &amp; Sound
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Automatic Next, Sleep Timer & playback controls
+              <p className="text-[11px] text-slate-400 truncate">
+                Automatic Next, Sleep Timer &amp; sound reset
               </p>
             </div>
           </div>
@@ -497,9 +422,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {openGroups.playback && (
-          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+          <div className="px-3.5 sm:px-4 pb-4 pt-2 space-y-3 border-t border-white/5 animate-in fade-in duration-150">
             {/* Automatic Next Track */}
-            <div className="p-4 rounded-2xl bg-slate-950/60 border border-cyan-500/25 flex items-center justify-between gap-4">
+            <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-cyan-500/25 flex items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-white text-sm">Automatic Next Track</span>
@@ -534,76 +459,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               onExtend={onExtendSleepTimer}
             />
 
-            {/* Additional Playback Preferences: Session state and Aesthetics */}
-            <div className="space-y-2 text-sm text-slate-300 pt-1">
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
-                <div>
-                  <div className="font-semibold text-white text-xs sm:text-sm">Remember Last Song</div>
-                  <div className="text-[11px] text-slate-400">Restore exact track and seek position when reopening player</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.rememberLastSong}
-                  onChange={(e) => onUpdateSettings({ ...settings, rememberLastSong: e.target.checked })}
-                  className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
-                />
-              </label>
-
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
-                <div>
-                  <div className="font-semibold text-white text-xs sm:text-sm">Neon Glow Aesthetics</div>
-                  <div className="text-[11px] text-slate-400">Atmospheric cover-reactive lighting in full player and cards</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.neonGlow}
-                  onChange={(e) => onUpdateSettings({ ...settings, neonGlow: e.target.checked })}
-                  className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
-                />
-              </label>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* =========================================================================
-          GROUP 2: PLAYER DISPLAY & AUDIO RESET
-      ========================================================================= */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
-        <button
-          type="button"
-          onClick={() => toggleGroup('visualizer')}
-          aria-expanded={openGroups.visualizer}
-          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center shrink-0">
-              <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                Player Display
-              </h3>
-              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Artwork backdrop performance & sound reset
-              </p>
-            </div>
-          </div>
-          <ChevronDown
-            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
-              openGroups.visualizer ? 'rotate-180' : 'rotate-0'
-            }`}
-          />
-        </button>
-
-        {openGroups.visualizer && (
-          <div className="px-4 sm:px-5 pb-5 pt-3 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
-            <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-white/5 text-xs text-slate-400 leading-relaxed">
-              Full player uses a lightweight static backdrop derived from song artwork colors for smooth battery-friendly Android performance, while keeping Slow + Reverb, EQ, and audio processing fully active.
-            </div>
+            {/* Remember Last Song */}
+            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
+              <div>
+                <div className="font-semibold text-white text-xs sm:text-sm">Remember Last Song</div>
+                <div className="text-[11px] text-slate-400">Restore exact track and seek position when reopening player</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.rememberLastSong}
+                onChange={(e) => onUpdateSettings({ ...settings, rememberLastSong: e.target.checked })}
+                className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
+              />
+            </label>
 
             {/* Reset sound and visual settings */}
-            <div className="flex justify-end">
+            <div className="flex justify-end pt-1">
               <button
                 type="button"
                 onClick={() => setShowResetSoundVisualConfirm(true)}
@@ -618,26 +489,79 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       </div>
 
       {/* =========================================================================
-          GROUP 3: DOWNLOADS AND STORAGE
+          CATEGORY 2: APPEARANCE
+          Neon Glow Aesthetics & Lightweight Static Artwork Backdrop Info
+      ========================================================================= */}
+      <div className="rounded-2xl sm:rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+        <button
+          type="button"
+          onClick={() => toggleGroup('appearance')}
+          aria-expanded={openGroups.appearance}
+          className="w-full flex items-center justify-between p-3.5 sm:p-4 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center shrink-0">
+              <Eye className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider truncate">
+                Appearance
+              </h3>
+              <p className="text-[11px] text-slate-400 truncate">
+                Glow aesthetics &amp; player backdrop display
+              </p>
+            </div>
+          </div>
+          <ChevronDown
+            className={`w-5 h-5 text-slate-400 transition-transform duration-200 shrink-0 ml-2 group-hover:text-white ${
+              openGroups.appearance ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </button>
+
+        {openGroups.appearance && (
+          <div className="px-3.5 sm:px-4 pb-4 pt-2 space-y-3 border-t border-white/5 animate-in fade-in duration-150">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer">
+              <div>
+                <div className="font-semibold text-white text-xs sm:text-sm">Neon Glow Aesthetics</div>
+                <div className="text-[11px] text-slate-400">Atmospheric cover-reactive lighting in full player and cards</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.neonGlow}
+                onChange={(e) => onUpdateSettings({ ...settings, neonGlow: e.target.checked })}
+                className="w-5 h-5 accent-cyan-400 rounded cursor-pointer"
+              />
+            </label>
+
+            <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-white/5 text-xs text-slate-400 leading-relaxed">
+              Full player uses a lightweight static backdrop derived from song artwork colors for smooth battery-friendly Android performance, while keeping Slow + Reverb, EQ, and audio processing fully active.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* =========================================================================
+          CATEGORY 3: DOWNLOADS & STORAGE
           Storage used, uninstall notice, Wi-Fi only, and dangerous clear library
       ========================================================================= */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+      <div className="rounded-2xl sm:rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
         <button
           type="button"
           onClick={() => toggleGroup('storage')}
           aria-expanded={openGroups.storage}
-          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+          className="w-full flex items-center justify-between p-3.5 sm:p-4 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center shrink-0">
-              <HardDrive className="w-4 h-4 sm:w-5 sm:h-5" />
+            <div className="w-9 h-9 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center shrink-0">
+              <HardDrive className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                Downloads and Storage
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider truncate">
+                Downloads &amp; Storage
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Local storage, offline files & download settings
+              <p className="text-[11px] text-slate-400 truncate">
+                Local storage, offline files &amp; download settings
               </p>
             </div>
           </div>
@@ -649,9 +573,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {openGroups.storage && (
-          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+          <div className="px-3.5 sm:px-4 pb-4 pt-2 space-y-3 border-t border-white/5 animate-in fade-in duration-150">
             {/* Storage Stats Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-center">
               <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
                 <span className="text-xs text-slate-400">Library Songs</span>
                 <div className="text-lg font-bold text-white font-mono">{storageStats.songCount}</div>
@@ -689,7 +613,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
 
             {/* Note: Required offline storage notice */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-xs text-slate-300">
+            <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/10 text-xs text-slate-300">
               <div className="flex items-start gap-2.5">
                 <ShieldCheck className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
                 <p className="leading-relaxed">
@@ -741,14 +665,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
 
             {/* Dangerous Actions: Clear Offline Music Library */}
-            <div className="pt-2">
-              <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-950/20 space-y-3">
+            <div className="pt-1">
+              <div className="p-3.5 rounded-2xl border border-rose-500/30 bg-rose-950/20 space-y-3">
                 <div className="flex items-center gap-2 text-rose-400">
                   <Trash2 className="w-4 h-4 shrink-0" />
                   <h4 className="text-xs font-bold uppercase tracking-wider">Dangerous Action</h4>
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Remove all downloaded songs, playlists, and cached audio files stored in your device's IndexedDB.
+                  Remove all downloaded songs, playlists, and cached audio files stored in your device&apos;s IndexedDB.
                 </p>
 
                 {showClearConfirm ? (
@@ -780,7 +704,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowClearConfirm(true)}
-                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold transition active:scale-98 cursor-pointer"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-bold transition active:scale-98 cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                     <span>Clear Offline Music Library</span>
@@ -793,26 +717,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       </div>
 
       {/* =========================================================================
-          GROUP 4: NOTIFICATIONS
-          Permission status and button to open phone's app settings if notifications off
+          CATEGORY 4: NOTIFICATIONS & DEVICE
+          Notification permission controls + Home screen widget
       ========================================================================= */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+      <div className="rounded-2xl sm:rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
         <button
           type="button"
           onClick={() => toggleGroup('notifications')}
           aria-expanded={openGroups.notifications}
-          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+          className="w-full flex items-center justify-between p-3.5 sm:p-4 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
-              <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
+            <div className="w-9 h-9 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                Notifications
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider truncate">
+                Notifications &amp; Device
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Notification permission & lock screen media controls
+              <p className="text-[11px] text-slate-400 truncate">
+                Notifications, lock screen controls &amp; home screen widget
               </p>
             </div>
           </div>
@@ -824,8 +748,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {openGroups.notifications && (
-          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
-            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
+          <div className="px-3.5 sm:px-4 pb-4 pt-2 space-y-3 border-t border-white/5 animate-in fade-in duration-150">
+            {/* Notification Permission Status */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   {notificationStatus === 'granted' ? (
@@ -876,31 +801,106 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </button>
               ) : null}
             </div>
+
+            {/* Home screen widget card */}
+            <div className="rounded-2xl bg-slate-950/60 border border-white/5 p-3.5 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
+                  <LayoutGrid className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs sm:text-sm font-bold text-white tracking-wide">
+                    Home screen widget
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Control your music from your home screen.
+                  </p>
+                </div>
+              </div>
+
+              {/* Mini inline visual preview */}
+              <div className="rounded-2xl bg-gradient-to-br from-[#0b132b] via-[#091024] to-[#1a1033] border border-cyan-500/25 p-3 shadow-inner relative overflow-hidden">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500/30 to-purple-600/35 border border-cyan-400/30 flex items-center justify-center shrink-0">
+                    <Music2 className="w-5 h-5 text-cyan-300" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-white truncate">JTEC MUSIC</span>
+                      <Heart className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      Now Playing • Quick controls
+                    </p>
+                    <div className="mt-2 h-1 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-cyan-400 to-purple-400" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
+                      <SkipBack className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center shadow-md shadow-cyan-500/30">
+                      <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                    </div>
+                    <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-300">
+                      <SkipForward className="w-3.5 h-3.5" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleRequestPinWidget}
+                disabled={isRequestingWidgetPin}
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] shadow-lg shadow-cyan-500/15 disabled:opacity-60"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span>{isRequestingWidgetPin ? 'Opening prompt...' : 'Add widget to home screen'}</span>
+              </button>
+
+              {widgetPinFeedback === 'requested' && (
+                <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-[11px] text-cyan-200 leading-relaxed">
+                  Follow your phone&apos;s prompt to place the JTEC MUSIC widget on your home screen.
+                </div>
+              )}
+
+              {widgetPinFeedback === 'unsupported' && (
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-white/10 text-[11px] text-slate-300 leading-relaxed">
+                  Long-press your home screen, tap Widgets, find JTEC MUSIC and drag it onto the screen.
+                </div>
+              )}
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                If the app is closed completely, tap Play on the widget to open the app and continue.
+              </p>
+            </div>
           </div>
         )}
       </div>
 
       {/* =========================================================================
-          GROUP 5: ABOUT AND SUPPORT (Always at the very bottom)
+          CATEGORY 5: ABOUT & INFORMATION (Always at the very bottom)
           Privacy Policy, How to Use JTEC MUSIC, Check for updates, version & build
       ========================================================================= */}
-      <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
+      <div className="rounded-2xl sm:rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
         <button
           type="button"
           onClick={() => toggleGroup('about')}
           aria-expanded={openGroups.about}
-          className="w-full flex items-center justify-between p-4 sm:p-5 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
+          className="w-full flex items-center justify-between p-3.5 sm:p-4 text-left cursor-pointer group select-none hover:bg-white/[0.02] transition"
         >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shrink-0">
-              <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
+            <div className="w-9 h-9 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shrink-0">
+              <Shield className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                About and Support
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider truncate">
+                About &amp; Information
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Guides, developer info, privacy & updates
+              <p className="text-[11px] text-slate-400 truncate">
+                Guides, developer info, privacy &amp; updates
               </p>
             </div>
           </div>
@@ -912,13 +912,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {openGroups.about && (
-          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="px-3.5 sm:px-4 pb-4 pt-2 space-y-3 border-t border-white/5 animate-in fade-in duration-150">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {/* About the Developer Card */}
               <button
                 type="button"
                 onClick={() => handleOpenSubView('developer')}
-                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -936,7 +936,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <button
                 type="button"
                 onClick={() => handleOpenSubView('install')}
-                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-emerald-500/40 text-left transition active:scale-98 group cursor-pointer"
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-emerald-500/40 text-left transition active:scale-98 group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -954,7 +954,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <button
                 type="button"
                 onClick={() => handleOpenSubView('update')}
-                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-amber-500/40 text-left transition active:scale-98 group cursor-pointer"
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-amber-500/40 text-left transition active:scale-98 group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -972,7 +972,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <button
                 type="button"
                 onClick={() => handleOpenSubView('guide')}
-                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-purple-500/40 text-left transition active:scale-98 group cursor-pointer"
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-purple-500/40 text-left transition active:scale-98 group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -990,7 +990,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <button
                 type="button"
                 onClick={() => handleOpenSubView('privacy')}
-                className="flex items-center justify-between p-4 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer sm:col-span-2"
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/40 text-left transition active:scale-98 group cursor-pointer sm:col-span-2"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
