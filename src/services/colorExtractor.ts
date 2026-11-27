@@ -108,24 +108,63 @@ interface ColorBucket {
   l: number;
 }
 
+const PALETTE_CACHE_MAX = 150;
+const paletteCache = new Map<string, ArtworkPalette>();
+const inFlightExtractions = new Map<string, Promise<ArtworkPalette>>();
+
+function cachePalette(key: string, value: ArtworkPalette) {
+  if (paletteCache.has(key)) {
+    paletteCache.delete(key);
+  } else if (paletteCache.size >= PALETTE_CACHE_MAX) {
+    const oldestKey = paletteCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      paletteCache.delete(oldestKey);
+    }
+  }
+  paletteCache.set(key, value);
+}
+
 /**
  * Extracts 3 vivid, glow-ready colors (main, secondary, accent) from an album cover.
- * 1. Draws image on a small 48x48 offscreen canvas.
- * 2. Filters out darks, whites, and grays.
- * 3. Boosts darkness if too dark, increases saturation if washed out.
- * 4. Yields vibrant, high-contrast colors that pop against a dark background.
+ * Uses bounded in-memory caching & deduplication to prevent redundant image decodes.
  */
 export async function extractPaletteFromImage(imageUrl?: string): Promise<ArtworkPalette> {
   if (!imageUrl) {
     return { ...DEFAULT_PALETTES[0], hasCover: false };
   }
 
-  return new Promise((resolve) => {
+  const cached = paletteCache.get(imageUrl);
+  if (cached) {
+    return cached;
+  }
+
+  const inFlight = inFlightExtractions.get(imageUrl);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const extractionPromise = new Promise<ArtworkPalette>((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (result: ArtworkPalette, shouldCache: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      inFlightExtractions.delete(imageUrl);
+      if (shouldCache) {
+        cachePalette(imageUrl, result);
+      }
+      resolve(result);
+    };
 
     const fallback = () => {
-      resolve({ ...DEFAULT_PALETTES[0], hasCover: false });
+      finish({ ...DEFAULT_PALETTES[0], hasCover: false }, false);
     };
 
     img.onload = () => {
@@ -196,15 +235,10 @@ export async function extractPaletteFromImage(imageUrl?: string): Promise<Artwor
         // Sort by popularity weighted with saturation
         bucketList.sort((a, b) => b.count * (1 + b.s) - a.count * (1 + a.s));
 
-        // Helper to adjust color so it glows brightly on dark backgrounds:
-        // - If too dark, brighten it.
-        // - If too washed out, increase its saturation.
         const makeVividGlow = (bucket: ColorBucket, targetL = 0.55, targetS = 0.85): [number, number, number] => {
-          let h = bucket.h;
-          // Saturation boost
+          const h = bucket.h;
           let s = Math.max(bucket.s, targetS);
           s = Math.min(1.0, Math.max(0.65, s));
-          // Lightness boost (never too dark so it glows)
           let l = Math.max(bucket.l, targetL);
           l = Math.min(0.75, Math.max(0.48, l));
 
@@ -228,18 +262,16 @@ export async function extractPaletteFromImage(imageUrl?: string): Promise<Artwor
           }
         }
 
-        // If monochromatic or no distinct secondary found, synthesize harmonic shift
         let sr: number, sg: number, sb: number;
         if (secBucket) {
           [sr, sg, sb] = makeVividGlow(secBucket, 0.48, 0.80);
         } else {
-          // Analogous harmonic shift (+38 degrees)
           const harmonicH = (mainBucket.h + 38) % 360;
           [sr, sg, sb] = hslToRgb(harmonicH, Math.min(1, mainBucket.s * 1.1 + 0.2), 0.50);
         }
         const secondaryHex = toHex(sr, sg, sb);
 
-        // 3. Pick Accent Color (sparkling high-contrast highlight)
+        // 3. Pick Accent Color (high-contrast highlight)
         let accBucket: ColorBucket | null = null;
         for (let i = 1; i < bucketList.length; i++) {
           const candidate = bucketList[i];
@@ -256,7 +288,6 @@ export async function extractPaletteFromImage(imageUrl?: string): Promise<Artwor
         if (accBucket) {
           [ar, ag, ab] = makeVividGlow(accBucket, 0.62, 0.95);
         } else {
-          // Triadic / complementary high-energy sparkle (+120 degrees or +180 degrees)
           const accentH = (mainBucket.h + 130) % 360;
           [ar, ag, ab] = hslToRgb(accentH, 0.95, 0.65);
         }
@@ -271,15 +302,18 @@ export async function extractPaletteFromImage(imageUrl?: string): Promise<Artwor
 
         const glow = `rgba(${mr}, ${mg}, ${mb}, 0.55)`;
 
-        resolve({
-          main: mainHex,
-          primary: mainHex,
-          secondary: secondaryHex,
-          accent: accentHex,
-          glow,
-          darkBg: darkBgHex,
-          hasCover: true,
-        });
+        finish(
+          {
+            main: mainHex,
+            primary: mainHex,
+            secondary: secondaryHex,
+            accent: accentHex,
+            glow,
+            darkBg: darkBgHex,
+            hasCover: true,
+          },
+          true
+        );
       } catch {
         fallback();
       }
@@ -288,7 +322,9 @@ export async function extractPaletteFromImage(imageUrl?: string): Promise<Artwor
     img.onerror = fallback;
     img.src = imageUrl;
 
-    // Safety timeout
-    setTimeout(fallback, 2000);
+    timeoutId = setTimeout(fallback, 2000);
   });
+
+  inFlightExtractions.set(imageUrl, extractionPromise);
+  return extractionPromise;
 }

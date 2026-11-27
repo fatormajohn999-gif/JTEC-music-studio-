@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Settings as SettingsIcon, Zap, Battery, Sliders, Eye, HardDrive, 
-  Trash2, ShieldCheck, Check, Sparkles, RefreshCw, Cloud,
+  Settings as SettingsIcon, Eye, HardDrive, 
+  Trash2, ShieldCheck, Check, RefreshCw, Cloud,
   BellOff, Bell, X, Shield, BookOpen, Wifi, CheckCircle2, AlertCircle, AlertTriangle,
   ChevronDown, ChevronRight, Play, Info, User, Download, Radio,
   LayoutGrid, SkipBack, SkipForward, Heart, Music2
@@ -11,7 +11,7 @@ import { getPartyBackend } from '../party/backend';
 import { NotificationPermissionManager, NotificationStatus } from '../services/notificationPermission';
 import { WidgetBridge } from '../services/widgetBridge';
 import { MediaSessionManager } from '../services/mediaSession';
-import { AppSettings, PerformanceMode, VisualizerMode, ReactionStrength, SleepTimerState, Song } from '../types/music';
+import { AppSettings, SleepTimerState, Song } from '../types/music';
 import { SleepTimerSection } from '../components/SleepTimerSection';
 import { CheckForUpdatesButton } from '../components/CheckForUpdatesButton';
 import { PrivacyPolicyView } from '../components/PrivacyPolicyView';
@@ -283,14 +283,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     return `${mb.toFixed(2)} MB`;
   };
 
-  const handlePerformanceChange = (mode: PerformanceMode) => {
-    onUpdateSettings({ ...settings, performanceMode: mode });
-  };
-
-  const handleVisualizerChange = (mode: VisualizerMode) => {
-    onUpdateSettings({ ...settings, visualizerMode: mode });
-  };
-
   return (
     <>
       <div
@@ -305,7 +297,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
         <div>
           <h2 className="text-xl font-bold text-white tracking-wide">Player Settings</h2>
-          <p className="text-xs text-slate-400">Audio DSP, Visualizer, Storage & Cloud Services</p>
+          <p className="text-xs text-slate-400">Audio DSP, Player Display, Storage & Cloud Services</p>
         </div>
       </div>
 
@@ -575,8 +567,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       </div>
 
       {/* =========================================================================
-          GROUP 2: VISUALIZER (Open by default)
-          Theme picker, Reaction Strength, Engine and Battery Profile
+          GROUP 2: PLAYER DISPLAY & AUDIO RESET
       ========================================================================= */}
       <div className="rounded-3xl bg-slate-900/60 border border-white/10 overflow-hidden transition-all shadow-lg shadow-black/20">
         <button
@@ -591,10 +582,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
             <div className="min-w-0">
               <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider truncate">
-                Visualizer
+                Player Display
               </h3>
               <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                Themes, reaction dynamics & engine battery profile
+                Artwork backdrop performance & sound reset
               </p>
             </div>
           </div>
@@ -606,126 +597,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {openGroups.visualizer && (
-          <div className="px-4 sm:px-5 pb-5 pt-1 space-y-5 border-t border-white/5 animate-in fade-in duration-150">
-            {/* Visualizer Theme Picker */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  Audio Visualizer Themes
-                </span>
-                <span className="text-[10px] text-cyan-300 font-mono">6 Scenes</span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Render real-time frequency data synced to Web Audio API analyser:
-              </p>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
-                {[
-                  { id: 'auto' as VisualizerMode, label: '✨ Auto Vibe' },
-                  { id: 'jt_night' as VisualizerMode, label: '🌙 JT Night' },
-                  { id: 'dark_spectrum' as VisualizerMode, label: '📊 Dark Spectrum' },
-                  { id: 'cyber_city' as VisualizerMode, label: '🏙️ Cyber City' },
-                  { id: 'fire_energy' as VisualizerMode, label: '🔥 Fire Energy' },
-                  { id: 'rainy_night' as VisualizerMode, label: '🌧️ Rainy Night' },
-                  { id: 'deep_ocean' as VisualizerMode, label: '🌊 Deep Ocean' },
-                ].map((v) => {
-                  const isSelected = settings.visualizerMode === v.id;
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => handleVisualizerChange(v.id)}
-                      className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-between gap-1.5 cursor-pointer ${
-                        isSelected
-                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
-                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:text-white hover:border-white/20'
-                      }`}
-                    >
-                      <span className="truncate">{v.label}</span>
-                      {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Reaction Strength */}
-            <div className="space-y-2 pt-2 border-t border-white/5">
-              <div className="flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-cyan-400" />
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  Reaction Strength
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Scale how dynamically visualizer effects react to audio frequencies, bass hits, and beats (0.6x, 1.0x, 1.5x):
-              </p>
-
-              <div className="grid grid-cols-3 gap-2.5 pt-1">
-                {[
-                  { id: 'low' as ReactionStrength, label: 'Low', desc: '0.6x reaction' },
-                  { id: 'medium' as ReactionStrength, label: 'Medium', desc: '1.0x (default)' },
-                  { id: 'high' as ReactionStrength, label: 'High', desc: '1.5x intense' },
-                ].map((item) => {
-                  const isSelected = (settings.reactionStrength || 'medium') === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onUpdateSettings({ ...settings, reactionStrength: item.id })}
-                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 cursor-pointer ${
-                        isSelected
-                          ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
-                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
-                      }`}
-                    >
-                      <span className="text-xs font-bold">{item.label}</span>
-                      <span className="text-[10px] text-slate-500 mt-0.5">{item.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Engine & Battery Profile */}
-            <div className="space-y-2 pt-2 border-t border-white/5">
-              <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-cyan-400" />
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  Engine & Battery Profile
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Optimize frame rates and canvas resolution for mobile battery longevity:
-              </p>
-
-              <div className="grid grid-cols-3 gap-2.5 pt-1">
-                {[
-                  { id: 'battery' as PerformanceMode, label: 'Battery Saver', desc: '30 FPS, lowest CPU', icon: Battery },
-                  { id: 'balanced' as PerformanceMode, label: 'Balanced', desc: '60 FPS, optimal', icon: Zap },
-                  { id: 'high' as PerformanceMode, label: 'High Quality', desc: 'Full dpr, peak glow', icon: Sparkles },
-                ].map((profile) => {
-                  const Icon = profile.icon;
-                  const isSelected = settings.performanceMode === profile.id;
-                  return (
-                    <button
-                      key={profile.id}
-                      onClick={() => handlePerformanceChange(profile.id)}
-                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition active:scale-95 cursor-pointer ${
-                        isSelected
-                          ? 'bg-gradient-to-b from-cyan-500/20 to-purple-500/20 border-cyan-400 text-white shadow-lg shadow-cyan-500/20'
-                          : 'bg-slate-950/40 border-white/5 text-slate-400 hover:border-white/20 hover:text-slate-200'
-                      }`}
-                    >
-                      <Icon className={`w-5 h-5 mb-1.5 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
-                      <span className="text-xs font-bold">{profile.label}</span>
-                      <span className="text-[10px] text-slate-500 mt-0.5">{profile.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="px-4 sm:px-5 pb-5 pt-3 space-y-4 border-t border-white/5 animate-in fade-in duration-150">
+            <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-white/5 text-xs text-slate-400 leading-relaxed">
+              Full player uses a lightweight static backdrop derived from song artwork colors for smooth battery-friendly Android performance, while keeping Slow + Reverb, EQ, and audio processing fully active.
             </div>
 
             {/* Reset sound and visual settings */}
-            <div className="pt-3 border-t border-white/5 flex justify-end">
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() => setShowResetSoundVisualConfirm(true)}

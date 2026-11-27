@@ -1,12 +1,35 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { 
-  ChevronDown, Heart, Shuffle, Repeat, Repeat1, SkipBack, SkipForward, 
-  Play, Pause, Sliders, ListMusic, Compass, MoreVertical, Radio
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import {
+  ChevronDown,
+  Heart,
+  Shuffle,
+  Repeat,
+  Repeat1,
+  SkipBack,
+  SkipForward,
+  Play,
+  Pause,
+  Sliders,
+  ListMusic,
+  MoreVertical,
+  Plus,
+  AlarmClock,
+  ImagePlus,
+  Music,
+  Radio,
+  X,
 } from 'lucide-react';
-import { 
-  Song, AudioEffectsConfig, CinematicScene, RepeatMode, PerformanceMode, ArtworkPalette, ReactionStrength 
+import {
+  Song,
+  AudioEffectsConfig,
+  CinematicScene,
+  RepeatMode,
+  PerformanceMode,
+  ArtworkPalette,
+  ReactionStrength,
+  SleepTimerState,
 } from '../types/music';
-import { CinematicVisualizer } from './CinematicVisualizer';
+import { SleepTimerSection } from './SleepTimerSection';
 
 interface FullPlayerProps {
   isOpen: boolean;
@@ -16,12 +39,14 @@ interface FullPlayerProps {
   currentTime?: number;
   duration?: number;
   effects: AudioEffectsConfig;
-  visualizerMode: CinematicScene;
-  performanceMode: PerformanceMode;
+  visualizerMode?: CinematicScene;
+  performanceMode?: PerformanceMode;
   reactionStrength?: ReactionStrength;
+  neonGlow?: boolean;
   repeatMode: RepeatMode;
   isShuffle: boolean;
   palette: ArtworkPalette;
+  sleepTimer?: SleepTimerState;
   onTogglePlay: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -29,24 +54,51 @@ interface FullPlayerProps {
   onToggleFavorite: (song: Song) => void;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
-  onSelectScene: (scene: CinematicScene) => void;
+  onSelectScene?: (scene: CinematicScene) => void;
   onOpenEffects: () => void;
   onOpenQueue: () => void;
   onOpenSongOptions: (song: Song) => void;
+  onAddToPlaylist?: (song: Song) => void;
+  onStartSleepTimer?: (minutes: number) => void;
+  onCancelSleepTimer?: () => void;
+  onExtendSleepTimer?: (minutes?: number) => void;
   autoplayNext?: boolean;
   onToggleAutoplayNext?: () => void;
   isPartyGuest?: boolean;
 }
 
-const SCENE_OPTIONS: { id: CinematicScene; label: string; icon: string }[] = [
-  { id: 'auto', label: 'Auto Vibe', icon: '✨' },
-  { id: 'jt_night', label: 'JT Night', icon: '🌙' },
-  { id: 'dark_spectrum', label: 'Dark Spectrum', icon: '📊' },
-  { id: 'cyber_city', label: 'Cyber City', icon: '🏙️' },
-  { id: 'fire_energy', label: 'Fire Energy', icon: '🔥' },
-  { id: 'rainy_night', label: 'Rainy Night', icon: '🌧️' },
-  { id: 'deep_ocean', label: 'Deep Ocean', icon: '🌊' },
-];
+const DEFAULT_FALLBACK_ARTWORK = './pwa-192x192.png';
+
+function formatPlayerTime(seconds: number): string {
+  if (!seconds || isNaN(seconds) || seconds < 0) return '00:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+function formatCompactTimer(totalSeconds: number): string {
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+function buildStaticAmbientBackground(palette: ArtworkPalette, useCoverGlow: boolean): string {
+  if (!useCoverGlow) {
+    return 'linear-gradient(180deg, #0b1020 0%, #070a14 55%, #05070e 100%)';
+  }
+
+  const primary = palette.hasCover ? palette.primary || palette.main || '#00f0ff' : '#00f0ff';
+  const secondary = palette.hasCover ? palette.secondary || '#a855f7' : '#a855f7';
+  const accent = palette.hasCover ? palette.accent || primary : '#38bdf8';
+
+  // Softly diffused multi-stop radial gradients (static, zero canvas/WebGL/animation loop)
+  return [
+    `radial-gradient(ellipse 95% 65% at 50% 48%, ${primary}40 0%, ${secondary}24 46%, transparent 78%)`,
+    `radial-gradient(ellipse 80% 50% at 20% 25%, ${secondary}38 0%, transparent 70%)`,
+    `radial-gradient(ellipse 75% 45% at 82% 72%, ${accent}2b 0%, transparent 72%)`,
+    `linear-gradient(180deg, ${palette.darkBg || '#080c18'} 0%, #060912 65%, #04060c 100%)`,
+  ].join(', ');
+}
 
 export const FullPlayer: React.FC<FullPlayerProps> = ({
   isOpen,
@@ -56,12 +108,11 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   currentTime = 0,
   duration = 0,
   effects,
-  visualizerMode,
-  performanceMode,
-  reactionStrength = 'medium',
+  neonGlow = true,
   repeatMode,
   isShuffle,
   palette,
+  sleepTimer,
   onTogglePlay,
   onPrevious,
   onNext,
@@ -69,55 +120,77 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   onToggleFavorite,
   onToggleShuffle,
   onCycleRepeat,
-  onSelectScene,
   onOpenEffects,
   onOpenQueue,
   onOpenSongOptions,
+  onAddToPlaylist,
+  onStartSleepTimer,
+  onCancelSleepTimer,
+  onExtendSleepTimer,
   isPartyGuest = false,
 }) => {
-  const [detectedAutoScene, setDetectedAutoScene] = useState<CinematicScene>('jt_night');
-  const [showSceneSelector, setShowSceneSelector] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekTime, setSeekTime] = useState<number | null>(null);
+  const [failedArtUrl, setFailedArtUrl] = useState<string | null>(null);
+  const [fallbackLogoFailed, setFallbackLogoFailed] = useState(false);
+  const [showSleepTimerSheet, setShowSleepTimerSheet] = useState(false);
+
+  // Lightweight two-layer crossfade state when artwork/palette changes
+  const nextBg = buildStaticAmbientBackground(palette, neonGlow);
+  const [bgLayers, setBgLayers] = useState<{ current: string; prev: string | null; fadeIn: boolean }>({
+    current: nextBg,
+    prev: null,
+    fadeIn: true,
+  });
+
+  useEffect(() => {
+    setBgLayers((state) => {
+      if (state.current === nextBg) return state;
+      return {
+        prev: state.current,
+        current: nextBg,
+        fadeIn: false,
+      };
+    });
+    const raf = requestAnimationFrame(() => {
+      setBgLayers((state) => (state.fadeIn ? state : { ...state, fadeIn: true }));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [nextBg]);
+
+  useEffect(() => {
+    setFailedArtUrl(null);
+  }, [currentSong?.id, currentSong?.artworkUrl]);
+
   const progressBarRef = useRef<HTMLDivElement | null>(null);
 
-  // Time format helper: "0:42", "2:52"
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  const totalDuration = duration > 0 ? duration : (currentSong?.duration || 0);
+  const totalDuration = duration > 0 ? duration : currentSong?.duration || 0;
   const effectiveCurrentTime = isSeeking && seekTime !== null ? seekTime : currentTime;
-  const timeRemaining = Math.max(0, totalDuration - effectiveCurrentTime);
   const progressPercent = totalDuration > 0 ? (effectiveCurrentTime / totalDuration) * 100 : 0;
   const clampedPercent = Math.min(100, Math.max(0, progressPercent));
 
-  // Determine progress bar fill color (cover's main color or theme main color)
-  const progressColor = palette.primary || palette.main || '#00f0ff';
+  const progressColor = palette.hasCover ? palette.primary || palette.main || '#f97316' : '#22d3ee';
 
-  // Pointer/Touch seeking handlers for smooth tap or drag
-  const calculateSeekTime = useCallback((clientX: number) => {
-    if (isPartyGuest || !progressBarRef.current || totalDuration <= 0) return 0;
-    const rect = progressBarRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * totalDuration;
-  }, [totalDuration, isPartyGuest]);
+  const calculateSeekTime = useCallback(
+    (clientX: number) => {
+      if (isPartyGuest || !progressBarRef.current || totalDuration <= 0) return 0;
+      const rect = progressBarRef.current.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * totalDuration;
+    },
+    [totalDuration, isPartyGuest]
+  );
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isPartyGuest) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     setIsSeeking(true);
-    const newTime = calculateSeekTime(e.clientX);
-    setSeekTime(newTime);
+    setSeekTime(calculateSeekTime(e.clientX));
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isPartyGuest || !isSeeking) return;
-    const newTime = calculateSeekTime(e.clientX);
-    setSeekTime(newTime);
+    setSeekTime(calculateSeekTime(e.clientX));
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -138,258 +211,392 @@ export const FullPlayer: React.FC<FullPlayerProps> = ({
   if (!isOpen || !currentSong) return null;
 
   const isEffectsActive = Boolean(
-    effects.isEnabled ?? (effects.presetName !== 'Normal' || effects.playbackRate !== 1.0 || effects.reverbWet > 0)
+    effects.isEnabled ??
+      (effects.presetName !== 'Normal' ||
+        effects.playbackRate !== 1.0 ||
+        effects.reverbWet > 0 ||
+        effects.echoWet > 0 ||
+        effects.bassGain !== 0 ||
+        effects.trebleGain !== 0)
   );
 
+  const hasCustomArtwork = Boolean(
+    currentSong.artworkUrl &&
+      currentSong.artworkUrl !== DEFAULT_FALLBACK_ARTWORK &&
+      failedArtUrl !== currentSong.artworkUrl
+  );
+
+  const handleSleepTimerAction = () => {
+    if (onStartSleepTimer && onCancelSleepTimer && onExtendSleepTimer && sleepTimer) {
+      setShowSleepTimerSheet(true);
+    } else {
+      onOpenEffects();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-40 bg-[#04060d] flex flex-col justify-between overflow-hidden animate-in slide-in-from-bottom duration-300">
-      {/* 1. CINEMATIC AUDIO-REACTIVE ENVIRONMENT (Canvas Layer Behind) */}
-      <div className="absolute inset-0 pointer-events-none">
-        {visualizerMode !== 'off' && (
-          <CinematicVisualizer
-            scene={visualizerMode}
-            performanceMode={performanceMode}
-            reactionStrength={reactionStrength}
-            palette={palette}
-            isActive={isPlaying}
-            className="w-full h-full"
-            onAutoSceneDetermined={(scene) => setDetectedAutoScene(scene)}
-            currentTime={currentTime}
-            isUiOverlayOpen={showSceneSelector}
+    <div className="fixed inset-0 z-40 bg-[#050811] flex flex-col justify-between overflow-hidden select-none animate-in fade-in duration-200">
+      {/* 1. STATIC SOFTLY DIFFUSED ARTWORK COLOR BACKDROP (ZERO ANIMATION LOOPS) */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        {bgLayers.prev && (
+          <div
+            className="absolute inset-0"
+            style={{ background: bgLayers.prev }}
           />
         )}
+        <div
+          className="absolute inset-0 transition-opacity duration-500 ease-out"
+          style={{
+            background: bgLayers.current,
+            opacity: bgLayers.fadeIn ? 1 : 0,
+          }}
+        />
+        {/* Contrast scrim ensuring controls remain crisp on bright covers */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(4,6,13,0.68) 0%, rgba(4,6,13,0.16) 40%, rgba(4,6,13,0.46) 74%, rgba(4,6,13,0.88) 100%)',
+          }}
+        />
       </div>
 
-      {/* 2. TOP CONTROLS & SCENE SELECTOR */}
-      <div className="relative z-20 flex items-center justify-between px-6 pt-5 pb-2">
+      {/* 2. TOP HEADER BAR */}
+      <div className="relative z-20 flex items-center justify-between px-4 sm:px-6 pt-safe pb-1 shrink-0">
         <button
+          type="button"
           onClick={onClose}
-          className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white active:scale-95 transition"
+          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/85 hover:text-white hover:bg-white/10 active:scale-95 transition cursor-pointer"
           title="Minimize player"
+          aria-label="Minimize player"
         >
-          <ChevronDown className="w-5 h-5" />
+          <ChevronDown className="w-6 h-6" />
         </button>
 
-        {/* Scene Dropdown Selector */}
-        <div className="relative">
+        <div className="flex items-center gap-1">
           <button
-            onClick={() => setShowSceneSelector(!showSceneSelector)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-cyan-500/30 text-xs font-semibold text-cyan-300 shadow-lg shadow-cyan-500/10 hover:border-cyan-400 transition"
+            type="button"
+            onClick={onToggleShuffle}
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition active:scale-95 cursor-pointer ${
+              isShuffle
+                ? 'text-cyan-300 bg-cyan-500/15'
+                : 'text-white/75 hover:text-white hover:bg-white/10'
+            }`}
+            title={`Shuffle: ${isShuffle ? 'On' : 'Off'}`}
+            aria-label={`Shuffle ${isShuffle ? 'On' : 'Off'}`}
           >
-            <Compass className="w-3.5 h-3.5" />
-            <span>
-              {visualizerMode === 'auto' 
-                ? `Auto: ${SCENE_OPTIONS.find(o => o.id === detectedAutoScene)?.label || detectedAutoScene}` 
-                : (SCENE_OPTIONS.find(o => o.id === visualizerMode)?.label || visualizerMode)}
-            </span>
-          </button>
-
-          {/* Dropdown for Cinematic Scenes */}
-          {showSceneSelector && (
-            <div className="absolute top-10 left-1/2 -translate-x-1/2 w-52 max-h-72 overflow-y-auto rounded-2xl bg-[#090d20]/95 backdrop-blur-xl border border-cyan-500/30 p-2 shadow-2xl z-30 space-y-1">
-              {SCENE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => {
-                    onSelectScene(opt.id);
-                    setShowSceneSelector(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition ${
-                    visualizerMode === opt.id
-                      ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border border-cyan-400/40'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span>{opt.icon}</span>
-                    <span>{opt.label}</span>
-                  </span>
-                  {visualizerMode === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onToggleFavorite(currentSong)}
-            className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 hover:border-pink-500/40 text-slate-300 active:scale-95 transition"
-            title={currentSong.isFavorite ? 'Remove Favorite' : 'Add Favorite'}
-          >
-            <Heart
-              className={`w-5 h-5 transition ${
-                currentSong.isFavorite
-                  ? 'fill-pink-500 text-pink-500 drop-shadow-[0_0_8px_rgba(236,72,153,0.7)]'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            />
+            <Shuffle className="w-5 h-5" />
           </button>
 
           <button
+            type="button"
             onClick={() => onOpenSongOptions(currentSong)}
-            className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/85 hover:text-white hover:bg-white/10 active:scale-95 transition cursor-pointer"
+            title="Song options"
+            aria-label="Song options"
           >
             <MoreVertical className="w-5 h-5" />
           </button>
         </div>
       </div>
 
-      {/* 3. CENTER: UNOBSTRUCTED CINEMATIC ANIMATION SPACE (Clean, purely visual effects) */}
-      <div className="relative z-10 flex-1 min-h-0 pointer-events-none" />
+      {/* 3. TRACK TITLE & ARTIST (CENTERED) */}
+      <div className="relative z-20 px-6 text-center shrink-0 max-w-md mx-auto w-full">
+        <h2 dir="auto" className="text-base sm:text-lg font-semibold text-white truncate leading-snug">
+          {currentSong.title}
+        </h2>
+        <p dir="auto" className="text-xs sm:text-sm text-white/60 truncate mt-0.5">
+          {currentSong.artist || '<unknown>'}
+        </p>
 
-      {/* 4. BOTTOM PLAYBACK CONTROLS */}
-      <div className="relative z-20 px-6 pb-7 pt-2 max-w-md mx-auto w-full space-y-3">
-        {/* Party Guest Controlled Banner */}
         {isPartyGuest && (
-          <div className="py-1 px-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-semibold text-center select-none flex items-center justify-center gap-1.5 animate-in fade-in">
-            <Radio className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
-            <span>In JTEC Party • Controlled by the host</span>
+          <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 text-[11px] font-medium">
+            <Radio className="w-3.5 h-3.5 text-cyan-400" />
+            <span>In JTEC Party · Controlled by host</span>
           </div>
         )}
+      </div>
 
-        {/* ONE Simple Progress Bar */}
-        <div className="w-full space-y-1.5 select-none">
+      {/* 4. PROMINENT CENTER ARTWORK WITH STATIC VINYL SILHOUETTE */}
+      <div className="relative z-10 flex-1 min-h-0 flex items-center justify-center px-6 py-4">
+        <div className="relative w-[68vw] max-w-[280px] sm:max-w-[330px] aspect-square flex items-center justify-center">
+          {/* Static vinyl disc edge peeking above album artwork (zero animation loop) */}
+          <div
+            aria-hidden="true"
+            className="absolute -top-7 left-1/2 -translate-x-1/2 w-[78%] aspect-square rounded-full pointer-events-none shadow-lg"
+            style={{
+              background:
+                'radial-gradient(circle, #181a20 0%, #181a20 26%, #0c0d11 27%, #171920 34%, #0b0c10 42%, #15171e 50%, #090a0e 60%, #14161c 70%, #07080b 84%, #1f222b 100%)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          />
+
+          {/* Foreground Artwork Card */}
+          <div className="relative z-10 w-full h-full rounded-2xl overflow-hidden bg-[#0c1224] border border-white/10 shadow-[0_22px_50px_rgba(0,0,0,0.65)] flex items-center justify-center">
+            {hasCustomArtwork ? (
+              <img
+                src={currentSong.artworkUrl}
+                alt={currentSong.title}
+                decoding="async"
+                loading="eager"
+                onError={() => setFailedArtUrl(currentSong.artworkUrl || null)}
+                className="w-full h-full object-cover transition-opacity duration-300"
+              />
+            ) : !fallbackLogoFailed ? (
+              <img
+                src={DEFAULT_FALLBACK_ARTWORK}
+                alt={currentSong.title}
+                decoding="async"
+                loading="eager"
+                onError={() => setFallbackLogoFailed(true)}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-[#131d3b] via-[#0b1024] to-[#1a1033] flex flex-col items-center justify-center gap-2 text-cyan-300">
+                <Music className="w-16 h-16 opacity-80" />
+                <span className="text-xs font-semibold tracking-wider text-white/60">JTEC MUSIC</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 5. BOTTOM CONTROLS STACK (ACTION ROW + PROGRESS + PLAYBACK) */}
+      <div className="relative z-20 px-6 pb-safe pb-6 pt-1 max-w-md mx-auto w-full space-y-5 shrink-0">
+        {/* 5-Icon Action Row Directly Beneath Artwork */}
+        <div className="flex items-center justify-between px-1">
+          {/* 1. Favourite */}
+          <button
+            type="button"
+            onClick={() => onToggleFavorite(currentSong)}
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition cursor-pointer"
+            title={currentSong.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+            aria-label={currentSong.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+          >
+            <Heart
+              className={`w-6 h-6 transition ${
+                currentSong.isFavorite
+                  ? 'fill-pink-500 text-pink-500'
+                  : 'text-white/85 hover:text-white'
+              }`}
+            />
+          </button>
+
+          {/* 2. Add to Playlist */}
+          <button
+            type="button"
+            onClick={() =>
+              onAddToPlaylist ? onAddToPlaylist(currentSong) : onOpenSongOptions(currentSong)
+            }
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/85 hover:text-white hover:bg-white/10 active:scale-90 transition cursor-pointer"
+            title="Add to Playlist"
+            aria-label="Add to Playlist"
+          >
+            <Plus className="w-6 h-6" />
+          </button>
+
+          {/* 3. Sleep Timer */}
+          <button
+            type="button"
+            onClick={handleSleepTimerAction}
+            className={`relative min-w-[44px] min-h-[44px] flex flex-col items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition cursor-pointer ${
+              sleepTimer?.isActive ? 'text-cyan-300' : 'text-white/85 hover:text-white'
+            }`}
+            title={
+              sleepTimer?.isActive
+                ? `Sleep Timer: ${formatCompactTimer(sleepTimer.remainingSeconds)}`
+                : 'Sleep Timer'
+            }
+            aria-label="Sleep Timer"
+          >
+            <AlarmClock className="w-6 h-6" />
+            {sleepTimer?.isActive && (
+              <span className="text-[9px] font-mono tabular-nums text-cyan-300 leading-none mt-0.5">
+                {formatCompactTimer(sleepTimer.remainingSeconds)}
+              </span>
+            )}
+          </button>
+
+          {/* 4. Slow + Reverb / Audio Effects */}
+          <button
+            type="button"
+            onClick={onOpenEffects}
+            className={`relative min-w-[44px] min-h-[44px] flex flex-col items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition cursor-pointer ${
+              isEffectsActive ? 'text-cyan-300' : 'text-white/85 hover:text-white'
+            }`}
+            title={`Slow + Reverb (${effects.presetName || 'Normal'})`}
+            aria-label="Slow + Reverb & Audio Effects"
+          >
+            <Sliders className="w-6 h-6" />
+            {isEffectsActive && (
+              <span className="text-[9px] font-medium text-cyan-300 leading-none mt-0.5 max-w-[54px] truncate">
+                {effects.presetName === 'Custom' ? `${effects.playbackRate.toFixed(2)}x` : effects.presetName}
+              </span>
+            )}
+          </button>
+
+          {/* 5. Artwork / Song Options */}
+          <button
+            type="button"
+            onClick={() => onOpenSongOptions(currentSong)}
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/85 hover:text-white hover:bg-white/10 active:scale-90 transition cursor-pointer"
+            title="Artwork & Song Options"
+            aria-label="Artwork & Song Options"
+          >
+            <ImagePlus className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Progress Bar & Timestamps */}
+        <div className="w-full space-y-1.5">
+          <div className="flex items-center justify-between text-xs font-medium text-white/65 tabular-nums px-0.5">
+            <span>{formatPlayerTime(effectiveCurrentTime)}</span>
+            <span>{formatPlayerTime(totalDuration)}</span>
+          </div>
+
           <div
             ref={progressBarRef}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-            className={`group relative h-5 flex items-center ${isPartyGuest ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} touch-none`}
+            className={`group relative h-7 flex items-center touch-none ${
+              isPartyGuest ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+            }`}
           >
-            {/* Background Track (faint white line) */}
-            <div className="relative w-full h-1 rounded-full bg-white/15 overflow-hidden">
-              {/* Filled Track (Cover's main color / theme main color) */}
+            <div className="relative w-full h-[3px] rounded-full bg-white/20 overflow-hidden">
               <div
-                className="h-full rounded-full transition-[width] duration-75"
+                className="h-full rounded-full"
                 style={{
                   width: `${clampedPercent}%`,
                   backgroundColor: progressColor,
-                  boxShadow: `0 0 10px ${palette.glow || progressColor}`,
                 }}
               />
             </div>
 
-            {/* Small Round Indicator Dot showing current position */}
             <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-md pointer-events-none transition-transform group-hover:scale-125"
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full pointer-events-none transition-transform group-hover:scale-125"
               style={{
                 left: `${clampedPercent}%`,
-                boxShadow: `0 0 8px ${progressColor}, 0 2px 4px rgba(0,0,0,0.5)`,
+                backgroundColor: progressColor,
+                boxShadow: '0 1px 4px rgba(0,0,0,0.55)',
               }}
             />
           </div>
-
-          {/* Time Displays: Elapsed on left ("0:42"), Remaining on right ("-2:52") */}
-          <div className="flex items-center justify-between text-[11px] font-medium text-white/50 px-0.5 tracking-wider">
-            <span>{formatTime(effectiveCurrentTime)}</span>
-            <span>-{formatTime(timeRemaining)}</span>
-          </div>
         </div>
 
-        {/* Main Controls Bar */}
-        <div className="flex items-center justify-between pt-0.5">
-          {/* Shuffle */}
+        {/* Primary Playback Controls Row (Repeat, Previous, Play/Pause, Next, Queue) */}
+        <div className="flex items-center justify-between pt-1">
+          {/* Repeat */}
           <button
-            onClick={onToggleShuffle}
-            title={`Shuffle: ${isShuffle ? 'On' : 'Off'}`}
-            className={`p-3 rounded-2xl transition active:scale-90 ${
-              isShuffle
-                ? 'text-cyan-300 bg-cyan-500/20'
-                : 'text-slate-400 hover:text-white'
+            type="button"
+            onClick={onCycleRepeat}
+            title={`Repeat: ${repeatMode}`}
+            aria-label={`Repeat: ${repeatMode}`}
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition active:scale-90 cursor-pointer ${
+              repeatMode !== 'off'
+                ? 'text-cyan-300 bg-white/10'
+                : 'text-white/80 hover:text-white hover:bg-white/10'
             }`}
           >
-            <Shuffle className="w-5 h-5" />
+            {repeatMode === 'one' ? (
+              <Repeat1 className="w-6 h-6" />
+            ) : (
+              <Repeat className="w-6 h-6" />
+            )}
           </button>
 
           {/* Previous */}
           <button
+            type="button"
             onClick={onPrevious}
-            className={`p-3 text-slate-300 hover:text-white active:scale-90 transition ${
+            title={isPartyGuest ? 'Controlled by the host' : 'Previous Track'}
+            aria-label="Previous Track"
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/90 hover:text-white active:scale-90 transition cursor-pointer ${
               isPartyGuest ? 'opacity-40 cursor-not-allowed' : ''
             }`}
-            title={isPartyGuest ? 'Controlled by the host' : 'Previous Track'}
           >
             <SkipBack className="w-7 h-7 fill-current" />
           </button>
 
-          {/* Center Play / Pause with Neon Glow */}
+          {/* Center Play / Pause (Clean circular ring matching screenshot) */}
           <button
+            type="button"
             onClick={onTogglePlay}
-            className={`w-18 h-18 rounded-full flex items-center justify-center text-white shadow-2xl transition-all duration-200 active:scale-95 hover:scale-105 ${
+            title={isPartyGuest ? 'Controlled by the host' : isPlaying ? 'Pause' : 'Play'}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            className={`w-16 h-16 rounded-full border-2 border-white/90 bg-white/10 hover:bg-white/15 flex items-center justify-center text-white transition-transform duration-150 active:scale-95 cursor-pointer ${
               isPartyGuest ? 'opacity-60 cursor-not-allowed' : ''
             }`}
-            style={{
-              background: `linear-gradient(135deg, ${palette.primary} 0%, ${palette.secondary} 50%, ${palette.accent} 100%)`,
-              boxShadow: `0 0 28px ${palette.glow}`,
-            }}
-            title={isPartyGuest ? 'Controlled by the host' : isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? (
-              <Pause className="w-8 h-8 fill-white" />
+              <Pause className="w-7 h-7 fill-current" />
             ) : (
-              <Play className="w-8 h-8 fill-white ml-1" />
+              <Play className="w-7 h-7 fill-current ml-0.5" />
             )}
           </button>
 
           {/* Next */}
           <button
+            type="button"
             onClick={onNext}
-            className={`p-3 text-slate-300 hover:text-white active:scale-90 transition ${
+            title={isPartyGuest ? 'Controlled by the host' : 'Next Track'}
+            aria-label="Next Track"
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/90 hover:text-white active:scale-90 transition cursor-pointer ${
               isPartyGuest ? 'opacity-40 cursor-not-allowed' : ''
             }`}
-            title={isPartyGuest ? 'Controlled by the host' : 'Next Track'}
           >
             <SkipForward className="w-7 h-7 fill-current" />
           </button>
 
-          {/* Repeat */}
+          {/* Queue */}
           <button
-            onClick={onCycleRepeat}
-            title={`Repeat: ${repeatMode}`}
-            className={`p-3 rounded-2xl transition active:scale-90 ${
-              repeatMode !== 'off'
-                ? 'text-purple-300 bg-purple-500/20'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {repeatMode === 'one' ? (
-              <Repeat1 className="w-5 h-5" />
-            ) : (
-              <Repeat className="w-5 h-5" />
-            )}
-          </button>
-        </div>
-
-        {/* Secondary Buttons: ONLY "Slow + Reverb" and "Queue" */}
-        <div className="flex items-center justify-between pt-2 border-t border-white/5 gap-3">
-          <button
-            onClick={onOpenEffects}
-            className={`flex items-center justify-center gap-2 flex-1 py-2.5 rounded-xl text-xs font-semibold backdrop-blur-md transition ${
-              isEffectsActive
-                ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200 shadow-sm shadow-purple-500/20'
-                : 'bg-slate-900/60 border border-white/10 text-slate-300 hover:text-white'
-            }`}
-          >
-            <Sliders className={`w-4 h-4 ${isEffectsActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-            <span>Slow + Reverb</span>
-            {isEffectsActive && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/30 text-cyan-300 font-semibold truncate max-w-[100px]">
-                {effects.presetName || 'Custom'}
-              </span>
-            )}
-          </button>
-
-          <button
+            type="button"
             onClick={onOpenQueue}
-            className="flex items-center justify-center gap-2 flex-1 py-2.5 rounded-xl bg-slate-900/60 backdrop-blur-md border border-white/10 text-xs font-semibold text-slate-300 hover:text-white hover:border-cyan-500/30 transition"
+            title="Playing Queue"
+            aria-label="Playing Queue"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 active:scale-90 transition cursor-pointer"
           >
-            <ListMusic className="w-4 h-4 text-pink-400" />
-            <span>Queue</span>
+            <ListMusic className="w-6 h-6" />
           </button>
         </div>
       </div>
+
+      {/* 6. LIGHTWEIGHT SLEEP TIMER SHEET (Opened from Sleep Timer Icon) */}
+      {showSleepTimerSheet &&
+        sleepTimer &&
+        onStartSleepTimer &&
+        onCancelSleepTimer &&
+        onExtendSleepTimer && (
+          <div
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-150"
+            onClick={() => setShowSleepTimerSheet(false)}
+          >
+            <div
+              className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[#090d1f] border border-white/10 p-5 pb-safe shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white">Sleep Timer</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowSleepTimerSheet(false)}
+                  className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                  aria-label="Close Sleep Timer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <SleepTimerSection
+                timerState={sleepTimer}
+                onStart={onStartSleepTimer}
+                onCancel={onCancelSleepTimer}
+                onExtend={onExtendSleepTimer}
+                compact={true}
+              />
+            </div>
+          </div>
+        )}
     </div>
   );
 };

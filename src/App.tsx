@@ -2231,12 +2231,11 @@ export default function App() {
         currentTime={currentTime}
         duration={duration}
         effects={effects}
-        visualizerMode={settings.visualizerMode}
-        performanceMode={settings.performanceMode}
-        reactionStrength={settings.reactionStrength}
+        neonGlow={settings.neonGlow}
         repeatMode={repeatMode}
         isShuffle={isShuffle}
         palette={currentPalette}
+        sleepTimer={sleepTimer}
         onSeek={handleSeek}
         onTogglePlay={handleTogglePlay}
         onPrevious={handlePreviousTrack}
@@ -2252,14 +2251,16 @@ export default function App() {
             return next;
           });
         }}
-        onSelectScene={(scene) => {
-          handleUpdateSettings({ ...settings, visualizerMode: scene });
-          settingsRef.current = { ...settings, visualizerMode: scene };
-          persistSessionNow();
-        }}
         onOpenEffects={() => setIsEffectsModalOpen(true)}
         onOpenQueue={() => setIsQueueOpen(true)}
         onOpenSongOptions={(song) => setOptionsMenuSong(song)}
+        onAddToPlaylist={(song) => {
+          setSongToAddPlaylist(song);
+          setIsPlaylistModalOpen(true);
+        }}
+        onStartSleepTimer={handleStartSleepTimer}
+        onCancelSleepTimer={handleCancelSleepTimer}
+        onExtendSleepTimer={handleExtendSleepTimer}
       />
 
       {/* SLOW + REVERB AUDIO EFFECTS MODAL */}

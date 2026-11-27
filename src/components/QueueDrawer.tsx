@@ -80,7 +80,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                 <div className="text-sm font-semibold text-white truncate">{currentSong.title}</div>
                 <div className="text-xs text-slate-400 truncate">{currentSong.artist}</div>
               </div>
-              <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+              <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
             </div>
           </div>
         )}

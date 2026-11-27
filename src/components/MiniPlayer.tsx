@@ -53,7 +53,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
           />
           {isPlaying && (
             <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-900 flex items-center justify-center">
-              <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
+              <span className="w-1.5 h-1.5 rounded-full bg-black" />
             </div>
           )}
         </div>
