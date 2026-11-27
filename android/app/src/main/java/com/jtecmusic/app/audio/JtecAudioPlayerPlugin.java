@@ -1,9 +1,13 @@
 package com.jtecmusic.app.audio;
 
 import android.content.Context;
+import android.media.audiofx.BassBoost;
+import android.media.audiofx.EnvironmentalReverb;
+import android.media.audiofx.Equalizer;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackParameters;
@@ -16,6 +20,9 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.File;
+import java.io.FileOutputStream;
+
 @CapacitorPlugin(name = "JtecAudioPlayer")
 public class JtecAudioPlayerPlugin extends Plugin {
     private ExoPlayer player;
@@ -23,12 +30,16 @@ public class JtecAudioPlayerPlugin extends Plugin {
     private Runnable progressRunnable;
     private boolean isPlaying = false;
 
+    private BassBoost bassBoost;
+    private EnvironmentalReverb reverb;
+    private Equalizer equalizer;
+
     @Override
     public void load() {
         super.load();
         Context ctx = getContext();
         if (ctx != null) {
-            player = new ExoPlayer.Builder(ctx).build();
+            player = JtecMediaService.getSharedPlayer(ctx);
             setupPlayerListeners();
             setupProgressTicker();
         }
@@ -88,11 +99,25 @@ public class JtecAudioPlayerPlugin extends Plugin {
         if (progressHandler != null && progressRunnable != null) {
             progressHandler.removeCallbacks(progressRunnable);
         }
-        if (player != null) {
-            player.release();
-            player = null;
-        }
+        releaseAudioEffects();
         super.handleOnDestroy();
+    }
+
+    private void releaseAudioEffects() {
+        try {
+            if (bassBoost != null) {
+                bassBoost.release();
+                bassBoost = null;
+            }
+            if (reverb != null) {
+                reverb.release();
+                reverb = null;
+            }
+            if (equalizer != null) {
+                equalizer.release();
+                equalizer = null;
+            }
+        } catch (Exception ignored) {}
     }
 
     @PluginMethod
@@ -114,6 +139,41 @@ public class JtecAudioPlayerPlugin extends Plugin {
             }
         } catch (Exception e) {
             call.reject("Failed to load audio: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void loadBase64Audio(PluginCall call) {
+        String base64Data = call.getString("data");
+        if (base64Data == null || base64Data.isEmpty()) {
+            call.reject("Base64 data is required");
+            return;
+        }
+        try {
+            Context ctx = getContext();
+            if (ctx == null || player == null) {
+                call.reject("Context or player not available");
+                return;
+            }
+
+            int commaIdx = base64Data.indexOf(',');
+            if (commaIdx >= 0) {
+                base64Data = base64Data.substring(commaIdx + 1);
+            }
+
+            byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
+            File tempFile = new File(ctx.getCacheDir(), "jtec_native_playback_" + System.currentTimeMillis() + ".mp3");
+            FileOutputStream fos = new FileOutputStream(tempFile);
+            fos.write(decodedBytes);
+            fos.close();
+
+            player.stop();
+            MediaItem mediaItem = MediaItem.fromUri(Uri.fromFile(tempFile));
+            player.setMediaItem(mediaItem);
+            player.prepare();
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Failed to load base64 audio: " + e.getMessage());
         }
     }
 
@@ -180,11 +240,60 @@ public class JtecAudioPlayerPlugin extends Plugin {
     public void setEffects(PluginCall call) {
         Double rate = call.getDouble("playbackRate", 1.0);
         Boolean preservesPitch = call.getBoolean("preservesPitch", true);
+        Double reverbWet = call.getDouble("reverbWet", 0.0);
+        Double bassGain = call.getDouble("bassGain", 0.0);
+        Double trebleGain = call.getDouble("trebleGain", 0.0);
+
         try {
             if (player != null) {
-                float speed = Math.max(0.5f, Math.min(1.5f, rate.floatValue()));
-                float pitch = preservesPitch ? 1.0f : speed;
+                float speed = Math.max(0.5f, Math.min(1.5f, rate != null ? rate.floatValue() : 1.0f));
+                float pitch = (preservesPitch != null && preservesPitch) ? 1.0f : speed;
                 player.setPlaybackParameters(new PlaybackParameters(speed, pitch));
+
+                int audioSessionId = player.getAudioSessionId();
+                if (audioSessionId != 0) {
+                    try {
+                        if (bassBoost == null) {
+                            bassBoost = new BassBoost(0, audioSessionId);
+                        }
+                        bassBoost.setEnabled(true);
+                        float bassVal = bassGain != null ? bassGain.floatValue() : 0.0f;
+                        short strength = (short) Math.max(0, Math.min(1000, (bassVal / 35.0f) * 1000.0f));
+                        bassBoost.setStrength(strength);
+                    } catch (Exception ignored) {}
+
+                    try {
+                        if (reverb == null) {
+                            reverb = new EnvironmentalReverb(0, audioSessionId);
+                        }
+                        float revVal = reverbWet != null ? reverbWet.floatValue() : 0.0f;
+                        if (revVal > 0.01f) {
+                            reverb.setEnabled(true);
+                            short roomLevel = (short) (-3000 + (revVal * 3000.0f));
+                            reverb.setRoomLevel(roomLevel);
+                            reverb.setDecayTime((int) (1000 + revVal * 3000.0f));
+                        } else {
+                            reverb.setEnabled(false);
+                        }
+                    } catch (Exception ignored) {}
+
+                    try {
+                        if (equalizer == null) {
+                            equalizer = new Equalizer(0, audioSessionId);
+                        }
+                        equalizer.setEnabled(true);
+                        short numBands = equalizer.getNumberOfBands();
+                        if (numBands >= 2) {
+                            float bassV = bassGain != null ? bassGain.floatValue() : 0.0f;
+                            float trebleV = trebleGain != null ? trebleGain.floatValue() : 0.0f;
+                            short bassMillibels = (short) (bassV * 120);
+                            short trebleMillibels = (short) (trebleV * 120);
+                            equalizer.setBandLevel((short) 0, bassMillibels);
+                            equalizer.setBandLevel((short) (numBands - 1), trebleMillibels);
+                        }
+                    } catch (Exception ignored) {}
+                }
+
                 call.resolve();
             } else {
                 call.reject("Player not initialized");

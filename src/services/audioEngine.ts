@@ -5,11 +5,19 @@ import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core
 
 interface JtecAudioPlayerPluginInterface {
   loadSource(options: { url: string }): Promise<void>;
+  loadBase64Audio(options: { data: string }): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   seek(options: { time: number }): Promise<void>;
   setVolume(options: { volume: number }): Promise<void>;
-  setEffects(options: { playbackRate: number; preservesPitch: boolean }): Promise<void>;
+  setEffects(options: {
+    playbackRate: number;
+    preservesPitch: boolean;
+    reverbWet?: number;
+    echoWet?: number;
+    bassGain?: number;
+    trebleGain?: number;
+  }): Promise<void>;
   addListener(eventName: string, listenerFunc: (data: any) => void): Promise<PluginListenerHandle>;
 }
 
@@ -143,6 +151,10 @@ class AudioEngine {
       JtecAudioPlayerNative.setEffects({
         playbackRate: speed,
         preservesPitch: this.isPartyModeActive ? true : preservesPitch,
+        reverbWet: this.currentEffectsConfig.reverbWet || 0,
+        echoWet: this.currentEffectsConfig.echoWet || 0,
+        bassGain: this.currentEffectsConfig.bassGain || 0,
+        trebleGain: this.currentEffectsConfig.trebleGain || 0,
       }).catch(() => {});
       return;
     }
@@ -403,13 +415,35 @@ class AudioEngine {
     this.currentSource = blobOrUrl;
 
     if (this.isNativeAndroid()) {
-      let urlStr = '';
+      let base64Data = '';
       if (blobOrUrl instanceof Blob) {
-        urlStr = URL.createObjectURL(blobOrUrl);
-      } else {
-        urlStr = blobOrUrl;
+        base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blobOrUrl);
+        });
+      } else if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('blob:')) {
+        try {
+          const res = await fetch(blobOrUrl);
+          const blob = await res.blob();
+          base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn('Failed to fetch blob url for native android:', e);
+        }
       }
-      await JtecAudioPlayerNative.loadSource({ url: urlStr });
+
+      if (base64Data) {
+        await JtecAudioPlayerNative.loadBase64Audio({ data: base64Data });
+      } else {
+        await JtecAudioPlayerNative.loadSource({ url: blobOrUrl as string });
+      }
+
       if (typeof initialPosition === 'number' && initialPosition > 0) {
         await JtecAudioPlayerNative.seek({ time: initialPosition });
       }
@@ -594,6 +628,10 @@ class AudioEngine {
       JtecAudioPlayerNative.setEffects({
         playbackRate: this.isPartyModeActive ? this.partyDriftSpeed : speed,
         preservesPitch: this.isPartyModeActive ? true : preservesPitch,
+        reverbWet: config.reverbWet || 0,
+        echoWet: config.echoWet || 0,
+        bassGain: config.bassGain || 0,
+        trebleGain: config.trebleGain || 0,
       }).catch(() => {});
       JtecAudioPlayerNative.setVolume({
         volume: Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0)) * this.fadeMultiplier,
@@ -696,7 +734,7 @@ class AudioEngine {
 
     if (this.isNativeAndroid()) {
       if (enabled) {
-        JtecAudioPlayerNative.setEffects({ playbackRate: 1.0, preservesPitch: true }).catch(() => {});
+        JtecAudioPlayerNative.setEffects({ playbackRate: 1.0, preservesPitch: true, reverbWet: 0, echoWet: 0, bassGain: 0, trebleGain: 0 }).catch(() => {});
       } else {
         this.applyEffects(this.currentEffectsConfig);
       }
@@ -734,7 +772,14 @@ class AudioEngine {
     if (!this.isPartyModeActive) return;
     this.partyDriftSpeed = Math.max(0.95, Math.min(1.05, rate));
     if (this.isNativeAndroid()) {
-      JtecAudioPlayerNative.setEffects({ playbackRate: this.partyDriftSpeed, preservesPitch: true }).catch(() => {});
+      JtecAudioPlayerNative.setEffects({
+        playbackRate: this.partyDriftSpeed,
+        preservesPitch: true,
+        reverbWet: 0,
+        echoWet: 0,
+        bassGain: 0,
+        trebleGain: 0,
+      }).catch(() => {});
       return;
     }
     if (this.audioElement) {

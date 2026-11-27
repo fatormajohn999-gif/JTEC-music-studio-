@@ -49,6 +49,15 @@
         <receiver
             android:name="com.jtecmusic.app.widget.JtecWidgetActionReceiver"
             android:exported="false" />
+
+        <service
+            android:name="com.jtecmusic.app.audio.JtecMediaService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 
     <!-- Permissions -->
