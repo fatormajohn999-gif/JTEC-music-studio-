@@ -1,6 +1,19 @@
 import { AudioEffectsConfig, AudioBands } from '../types/music';
 import { PersistentSettingsService } from './persistentSettings';
 import { AppLogger } from './appLogger';
+import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
+
+interface JtecAudioPlayerPluginInterface {
+  loadSource(options: { url: string }): Promise<void>;
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  seek(options: { time: number }): Promise<void>;
+  setVolume(options: { volume: number }): Promise<void>;
+  setEffects(options: { playbackRate: number; preservesPitch: boolean }): Promise<void>;
+  addListener(eventName: string, listenerFunc: (data: any) => void): Promise<PluginListenerHandle>;
+}
+
+const JtecAudioPlayerNative = registerPlugin<JtecAudioPlayerPluginInterface>('JtecAudioPlayer');
 
 class AudioEngine {
   private audioCtx: AudioContext | null = null;
@@ -50,17 +63,63 @@ class AudioEngine {
   private playStateCallbacks: Set<(isPlaying: boolean) => void> = new Set();
   private endedCallbacks: Set<() => void> = new Set();
   private errorCallbacks: Set<(error: string) => void> = new Set();
+  private nativeListenersRegistered = false;
 
   constructor() {
-    // Initialized lazily on first user interaction
+    this.initNativeListenersIfNeeded();
+  }
+
+  private initNativeListenersIfNeeded() {
+    if (this.nativeListenersRegistered) return;
+    if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+      try {
+        JtecAudioPlayerNative.addListener('timeUpdate', (data: { currentTime?: number; duration?: number }) => {
+          if (typeof data.currentTime === 'number') this.currentTime = data.currentTime;
+          if (typeof data.duration === 'number') this.duration = data.duration;
+          this.timeUpdateCallbacks.forEach((cb) => cb(this.currentTime, this.duration));
+        });
+
+        JtecAudioPlayerNative.addListener('playStateChange', (data: { isPlaying?: boolean }) => {
+          if (typeof data.isPlaying === 'boolean') {
+            this.isPlaying = data.isPlaying;
+            this.playStateCallbacks.forEach((cb) => cb(this.isPlaying));
+          }
+        });
+
+        JtecAudioPlayerNative.addListener('ended', () => {
+          this.isPlaying = false;
+          this.playStateCallbacks.forEach((cb) => cb(false));
+          this.endedCallbacks.forEach((cb) => cb());
+        });
+
+        JtecAudioPlayerNative.addListener('error', (data: { message?: string }) => {
+          this.isPlaying = false;
+          this.playStateCallbacks.forEach((cb) => cb(false));
+          const err = data.message || "JTEC MUSIC couldn't play this track on native Android.";
+          this.errorCallbacks.forEach((cb) => cb(err));
+        });
+
+        this.nativeListenersRegistered = true;
+      } catch (e) {
+        console.warn('Failed to initialize native Android audio plugin listeners:', e);
+      }
+    }
+  }
+
+  private isNativeAndroid(): boolean {
+    return typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   }
 
   public hasSource(): boolean {
+    if (this.isNativeAndroid()) {
+      return Boolean(this.currentSource);
+    }
     if (!this.audioElement) return false;
     const src = this.audioElement.currentSrc || this.audioElement.src;
+    const locHref = typeof window !== 'undefined' && window.location ? window.location.href : '';
     return Boolean(
       src &&
-      src !== window.location.href &&
+      src !== locHref &&
       src !== 'about:blank' &&
       !src.endsWith('/') &&
       !src.endsWith('#')
@@ -68,6 +127,26 @@ class AudioEngine {
   }
 
   public enforcePlaybackRateAndPitch = () => {
+    if (this.isNativeAndroid()) {
+      const speed = Math.max(0.5, Math.min(1.5, this.isPartyModeActive ? this.partyDriftSpeed : (this.currentEffectsConfig.playbackRate || 1.0)));
+      const isSlowAesthetic =
+        this.currentEffectsConfig.presetName === 'Slow + Reverb' ||
+        this.currentEffectsConfig.presetName === 'Slow' ||
+        this.currentEffectsConfig.presetName === 'Dreamy' ||
+        this.currentEffectsConfig.presetName === 'Night' ||
+        this.currentEffectsConfig.presetName === 'Cinematic' ||
+        (speed < 0.98 && this.currentEffectsConfig.presetName !== 'Normal');
+      const preservesPitch = typeof this.currentEffectsConfig.preservesPitch === 'boolean'
+        ? this.currentEffectsConfig.preservesPitch
+        : !isSlowAesthetic;
+
+      JtecAudioPlayerNative.setEffects({
+        playbackRate: speed,
+        preservesPitch: this.isPartyModeActive ? true : preservesPitch,
+      }).catch(() => {});
+      return;
+    }
+
     if (!this.audioElement) return;
 
     if (this.isPartyModeActive) {
@@ -101,18 +180,20 @@ class AudioEngine {
       (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = preservesPitch;
       (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = preservesPitch;
       (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = preservesPitch;
-    } catch {
-      // browser pitch preservation fallback
-    }
+    } catch {}
   };
 
   public init() {
+    this.initNativeListenersIfNeeded();
+    if (this.isNativeAndroid()) {
+      this.isInitialized = true;
+      return;
+    }
     if (this.isInitialized) return;
 
     this.audioElement = new Audio();
     this.audioElement.preload = 'auto';
 
-    // Hook audio element events once
     const notifyTimeAndDuration = () => {
       if (this.audioElement) {
         this.currentTime = this.audioElement.currentTime || 0;
@@ -122,7 +203,6 @@ class AudioEngine {
       }
     };
 
-    // Re-apply speed and pitch on every browser source lifecycle event
     this.audioElement.addEventListener('loadstart', this.enforcePlaybackRateAndPitch);
     this.audioElement.addEventListener('loadedmetadata', () => {
       this.enforcePlaybackRateAndPitch();
@@ -153,18 +233,9 @@ class AudioEngine {
 
     this.audioElement.addEventListener('error', () => {
       const mediaError = this.audioElement?.error;
+      if (mediaError?.code === 1) return;
+      if (!this.hasSource()) return;
 
-      // 1. Ignore user-aborted loads (code 1 = MEDIA_ERR_ABORTED) when switching tracks or pausing
-      if (mediaError?.code === 1) {
-        return;
-      }
-
-      // 2. Ignore empty / unset source
-      if (!this.hasSource()) {
-        return;
-      }
-
-      // 3. Fallback for CORS restriction on external stream URLs: retry once without crossOrigin
       if (
         this.audioElement?.crossOrigin &&
         typeof this.currentSource === 'string' &&
@@ -198,75 +269,40 @@ class AudioEngine {
     this.isInitialized = true;
   }
 
-  /**
-   * Builds the single, persistent Web Audio API routing graph.
-   * MediaElementAudioSourceNode is created EXACTLY ONCE and reused.
-   *
-   * Signal Flow:
-   *
-   *                  ┌──> [AnalyserNode] (Isolated tap for visualizer only)
-   *                  │
-   * [AudioElement] -> [SourceNode] -> [InputGain] -> [BassFilter] -> [TrebleFilter]
-   *                                                                        │
-   *    ┌───────────────────────────────────────────────────────────────────┼────────────────────────┐
-   *    │                                                                   │                        │
-   *    ▼                                                                   ▼                        ▼
-   * [DryGain]                                                      [ReverbInputGain]         [EchoInputGain]
-   *    │                                                                   │                        │
-   *    │                                                                   ▼                        ▼
-   *    │                                                              [Convolver]              [DelayNode] <-> [Feedback]
-   *    │                                                                   │                        │
-   *    │                                                                   ▼                        ▼
-   *    │                                                           [ReverbWetGain]            [EchoWetGain]
-   *    │                                                                   │                        │
-   *    └───────────────────────────────────┬───────────────────────────────┘────────────────────────┘
-   *                                        ▼
-   *                                  [MasterGain]
-   *                                        │
-   *                                        ▼
-   *                            [audioCtx.destination]
-   */
   private setupWebAudioNodes() {
+    if (this.isNativeAndroid()) return;
     if (!this.audioElement) return;
     if (this.audioCtx && this.sourceNode) return;
 
     try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const win = typeof window !== 'undefined' ? window : ({} as any);
+      const AudioContextClass = win.AudioContext || win.webkitAudioContext;
+      if (!AudioContextClass) return;
       this.audioCtx = new AudioContextClass();
 
-      // Create MediaElementSourceNode ONCE
       this.sourceNode = this.audioCtx.createMediaElementSource(this.audioElement);
-
-      // Input unity gain
       this.inputGain = this.audioCtx.createGain();
       this.inputGain.gain.value = 1.0;
 
-      // Analyser Node (Tapped directly for visualizer without modifying audio or routing to destination)
       this.analyserNode = this.audioCtx.createAnalyser();
       this.analyserNode.fftSize = 256;
       this.analyserNode.smoothingTimeConstant = 0.8;
       this.timeDataBuffer = new Uint8Array(this.analyserNode.fftSize);
       this.freqDataBuffer = new Uint8Array(this.analyserNode.frequencyBinCount);
 
-      // Bass EQ (Low Shelf around 120Hz, Q 0.707)
       this.bassFilter = this.audioCtx.createBiquadFilter();
       this.bassFilter.type = 'lowshelf';
       this.bassFilter.frequency.value = 120;
       this.bassFilter.gain.value = 0;
 
-      // Treble EQ (High Shelf around 4500Hz, Q 0.707)
       this.trebleFilter = this.audioCtx.createBiquadFilter();
       this.trebleFilter.type = 'highshelf';
       this.trebleFilter.frequency.value = 4500;
       this.trebleFilter.gain.value = 0;
 
-      // Dry path gain
       this.dryGain = this.audioCtx.createGain();
       this.dryGain.gain.value = 1.0;
 
-      // Reverb path: ReverbInputGain -> Convolver -> ReverbWetGain
       this.reverbInputGain = this.audioCtx.createGain();
       this.reverbInputGain.gain.value = 0.0;
       this.convolver = this.audioCtx.createConvolver();
@@ -274,7 +310,6 @@ class AudioEngine {
       this.reverbWetGain = this.audioCtx.createGain();
       this.reverbWetGain.gain.value = 0.0;
 
-      // Echo path: EchoInputGain -> DelayNode -> EchoWetGain (with controlled feedback loop)
       this.echoInputGain = this.audioCtx.createGain();
       this.echoInputGain.gain.value = 0.0;
       this.delayNode = this.audioCtx.createDelay(1.5);
@@ -284,30 +319,22 @@ class AudioEngine {
       this.echoWetGain = this.audioCtx.createGain();
       this.echoWetGain.gain.value = 0.0;
 
-      // Master Gain
       this.masterGain = this.audioCtx.createGain();
       this.masterGain.gain.value = 1.0;
 
-      // Connect visualizer tap (pure analysis, never outputs to speakers)
       this.sourceNode.connect(this.analyserNode);
-
-      // Connect main audio path:
-      // Source -> InputGain -> BassFilter -> TrebleFilter
       this.sourceNode.connect(this.inputGain);
       this.inputGain.connect(this.bassFilter);
       this.bassFilter.connect(this.trebleFilter);
 
-      // 1. Dry path: TrebleFilter -> DryGain -> MasterGain
       this.trebleFilter.connect(this.dryGain);
       this.dryGain.connect(this.masterGain);
 
-      // 2. Reverb path: TrebleFilter -> ReverbInputGain -> Convolver -> ReverbWetGain -> MasterGain
       this.trebleFilter.connect(this.reverbInputGain);
       this.reverbInputGain.connect(this.convolver);
       this.convolver.connect(this.reverbWetGain);
       this.reverbWetGain.connect(this.masterGain);
 
-      // 3. Echo path: TrebleFilter -> EchoInputGain -> DelayNode -> EchoWetGain -> MasterGain
       this.trebleFilter.connect(this.echoInputGain);
       this.echoInputGain.connect(this.delayNode);
       this.delayNode.connect(this.delayFeedback);
@@ -315,7 +342,6 @@ class AudioEngine {
       this.delayNode.connect(this.echoWetGain);
       this.echoWetGain.connect(this.masterGain);
 
-      // Single output: MasterGain -> AudioContext Destination
       this.masterGain.connect(this.audioCtx.destination);
     } catch (e) {
       console.warn('Web Audio API setup warning:', e);
@@ -325,10 +351,6 @@ class AudioEngine {
     }
   }
 
-  /**
-   * Generates a warm, natural acoustic room impulse response with high-frequency
-   * absorption and stereo decorrelation. Eliminates metallic white-noise comb-filter artifacts.
-   */
   private createWarmImpulseResponse(ctx: AudioContext, duration: number, decay: number): AudioBuffer {
     const sampleRate = ctx.sampleRate;
     const length = Math.floor(sampleRate * duration);
@@ -336,7 +358,6 @@ class AudioEngine {
     const left = impulse.getChannelData(0);
     const right = impulse.getChannelData(1);
 
-    // 1-pole lowpass filter simulation for natural room acoustic damping
     let leftFilter = 0;
     let rightFilter = 0;
     const filterCoef = 0.16;
@@ -344,12 +365,9 @@ class AudioEngine {
     for (let i = 0; i < length; i++) {
       const progress = i / length;
       const envelope = Math.exp(-decay * progress);
-
-      // Random reflections
       const noiseL = (Math.random() * 2 - 1) * envelope;
       const noiseR = (Math.random() * 2 - 1) * envelope;
 
-      // Filter high frequencies smoothly over time
       leftFilter += filterCoef * (noiseL - leftFilter);
       rightFilter += filterCoef * (noiseR - rightFilter);
 
@@ -361,6 +379,7 @@ class AudioEngine {
   }
 
   public async resumeContext() {
+    if (this.isNativeAndroid()) return;
     if (this.audioCtx && (this.audioCtx.state === 'suspended' || (this.audioCtx.state as string) === 'interrupted')) {
       try {
         await this.audioCtx.resume();
@@ -370,10 +389,6 @@ class AudioEngine {
     }
   }
 
-  /**
-   * Loads an audio track cleanly without destroying or recreating
-   * the persistent MediaElementAudioSourceNode or AudioContext.
-   */
   public async loadAudio(blobOrUrl: Blob | string, initialPosition?: number): Promise<void> {
     if (!blobOrUrl) return;
     if (blobOrUrl instanceof Blob && blobOrUrl.size === 0) {
@@ -385,26 +400,41 @@ class AudioEngine {
     }
 
     this.init();
+    this.currentSource = blobOrUrl;
+
+    if (this.isNativeAndroid()) {
+      let urlStr = '';
+      if (blobOrUrl instanceof Blob) {
+        urlStr = URL.createObjectURL(blobOrUrl);
+      } else {
+        urlStr = blobOrUrl;
+      }
+      await JtecAudioPlayerNative.loadSource({ url: urlStr });
+      if (typeof initialPosition === 'number' && initialPosition > 0) {
+        await JtecAudioPlayerNative.seek({ time: initialPosition });
+      }
+      this.enforcePlaybackRateAndPitch();
+      this.applyEffects(this.currentEffectsConfig);
+      return;
+    }
+
     this.setupWebAudioNodes();
     await this.resumeContext();
 
     if (!this.audioElement) return;
-
-    this.currentSource = blobOrUrl;
     this.hasRetriedWithoutCors = false;
 
     const oldUrl = this.currentObjectUrl;
 
     if (blobOrUrl instanceof Blob) {
       this.currentObjectUrl = URL.createObjectURL(blobOrUrl);
-      // Local blobs should NOT have crossOrigin attribute set
       this.audioElement.crossOrigin = null;
       this.audioElement.removeAttribute('crossorigin');
       this.audioElement.src = this.currentObjectUrl;
     } else {
       this.currentObjectUrl = null;
-      // Only set crossOrigin if loading from an external http(s) origin
-      if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('http') && !blobOrUrl.startsWith(window.location.origin)) {
+      const origin = typeof window !== 'undefined' && window.location ? window.location.origin : '';
+      if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('http') && (!origin || !blobOrUrl.startsWith(origin))) {
         this.audioElement.crossOrigin = 'anonymous';
       } else {
         this.audioElement.crossOrigin = null;
@@ -416,15 +446,12 @@ class AudioEngine {
     if (oldUrl) {
       try {
         URL.revokeObjectURL(oldUrl);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
     this.enforcePlaybackRateAndPitch();
     this.audioElement.load();
     this.enforcePlaybackRateAndPitch();
-    // Ensure the current active effects are applied cleanly to the new audio source
     this.applyEffects(this.currentEffectsConfig);
 
     if (typeof initialPosition === 'number' && initialPosition > 0) {
@@ -440,6 +467,13 @@ class AudioEngine {
 
   public async play(): Promise<void> {
     this.init();
+    if (this.isNativeAndroid()) {
+      await JtecAudioPlayerNative.play();
+      this.isPlaying = true;
+      this.playStateCallbacks.forEach((cb) => cb(true));
+      return;
+    }
+
     this.setupWebAudioNodes();
     await this.resumeContext();
 
@@ -455,7 +489,6 @@ class AudioEngine {
         this.enforcePlaybackRateAndPitch();
         this.isPlaying = true;
       } catch (e: unknown) {
-        // If play request was interrupted by quick skip or pause, ignore gracefully
         if (e instanceof DOMException && e.name === 'AbortError') {
           return;
         }
@@ -468,6 +501,13 @@ class AudioEngine {
   }
 
   public pause(): void {
+    if (this.isNativeAndroid()) {
+      JtecAudioPlayerNative.pause().catch(() => {});
+      this.isPlaying = false;
+      this.playStateCallbacks.forEach((cb) => cb(false));
+      return;
+    }
+
     if (this.audioElement) {
       this.audioElement.pause();
       this.isPlaying = false;
@@ -475,6 +515,11 @@ class AudioEngine {
   }
 
   public seek(seconds: number): void {
+    if (this.isNativeAndroid()) {
+      JtecAudioPlayerNative.seek({ time: seconds }).catch(() => {});
+      return;
+    }
+
     if (this.audioElement && isFinite(seconds)) {
       const dur = isFinite(this.audioElement.duration) && this.audioElement.duration > 0
         ? this.audioElement.duration
@@ -488,6 +533,8 @@ class AudioEngine {
   public setFadeMultiplier(multiplier: number): void {
     const clamped = Math.max(0, Math.min(1, multiplier));
     this.fadeMultiplier = clamped;
+    if (this.isNativeAndroid()) return;
+
     if (this.masterGain && this.audioCtx) {
       const now = this.audioCtx.currentTime;
       const baseVol = typeof this.currentEffectsConfig.volume === 'number' ? this.currentEffectsConfig.volume : 1.0;
@@ -504,6 +551,11 @@ class AudioEngine {
   public setVolume(val: number): void {
     const clamped = Math.max(0, Math.min(1, val));
     this.currentEffectsConfig.volume = clamped;
+    if (this.isNativeAndroid()) {
+      JtecAudioPlayerNative.setVolume({ volume: clamped * this.fadeMultiplier }).catch(() => {});
+      return;
+    }
+
     if (this.masterGain && this.audioCtx) {
       const now = this.audioCtx.currentTime;
       this.masterGain.gain.cancelScheduledValues(now);
@@ -511,11 +563,6 @@ class AudioEngine {
     }
   }
 
-  /**
-   * Applies real-time DSP effects.
-   * When preset is Normal (or speed=1.0x, reverb=0%, echo=0%, bass=0, treble=0):
-   * The audio graph is guaranteed to be 100% neutral and transparent.
-   */
   public applyEffects(config: AudioEffectsConfig): void {
     const speed = Math.max(0.5, Math.min(1.5, config.playbackRate || 1.0));
     const isSlowAesthetic =
@@ -541,10 +588,19 @@ class AudioEngine {
       isEnabled,
     };
 
-    // Persist immediately across session and native preferences
     PersistentSettingsService.saveAudioEffects(this.currentEffectsConfig);
 
-    // If JTEC Party is currently active, maintain neutral effects graph at runtime
+    if (this.isNativeAndroid()) {
+      JtecAudioPlayerNative.setEffects({
+        playbackRate: this.isPartyModeActive ? this.partyDriftSpeed : speed,
+        preservesPitch: this.isPartyModeActive ? true : preservesPitch,
+      }).catch(() => {});
+      JtecAudioPlayerNative.setVolume({
+        volume: Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0)) * this.fadeMultiplier,
+      }).catch(() => {});
+      return;
+    }
+
     if (this.isPartyModeActive) {
       if (this.audioElement) {
         this.audioElement.defaultPlaybackRate = 1.0;
@@ -560,7 +616,6 @@ class AudioEngine {
 
     if (!this.audioElement) return;
 
-    // 1. Playback Speed and Pitch
     this.audioElement.defaultPlaybackRate = speed;
     this.audioElement.playbackRate = speed;
 
@@ -568,25 +623,21 @@ class AudioEngine {
       (this.audioElement as unknown as { preservesPitch?: boolean }).preservesPitch = preservesPitch;
       (this.audioElement as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = preservesPitch;
       (this.audioElement as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = preservesPitch;
-    } catch {
-      // browser pitch preservation fallback
-    }
+    } catch {}
 
     if (!this.audioCtx) return;
     const now = this.audioCtx.currentTime;
 
-    // 2. Bass EQ: neutral (0 dB) when bassGain === 0
     if (this.bassFilter) {
       this.bassFilter.gain.cancelScheduledValues(now);
       if (Math.abs(config.bassGain) < 0.1) {
         this.bassFilter.gain.setValueAtTime(0, now);
       } else {
-        const bassDb = (config.bassGain / 50) * 12; // Musical range (+-12dB), no clipping
+        const bassDb = (config.bassGain / 50) * 12;
         this.bassFilter.gain.setTargetAtTime(bassDb, now, 0.02);
       }
     }
 
-    // 3. Treble EQ: neutral (0 dB) when trebleGain === 0
     if (this.trebleFilter) {
       this.trebleFilter.gain.cancelScheduledValues(now);
       if (Math.abs(config.trebleGain) < 0.1) {
@@ -597,7 +648,6 @@ class AudioEngine {
       }
     }
 
-    // 4. Reverb Wet/Dry Mix
     const reverbWet = Math.max(0, Math.min(1, config.reverbWet || 0));
     if (this.reverbInputGain && this.reverbWetGain && this.dryGain) {
       this.reverbInputGain.gain.cancelScheduledValues(now);
@@ -605,12 +655,10 @@ class AudioEngine {
       this.dryGain.gain.cancelScheduledValues(now);
 
       if (reverbWet <= 0.001) {
-        // 100% Dry pass-through, completely isolate the convolver
         this.reverbInputGain.gain.setValueAtTime(0.0, now);
         this.reverbWetGain.gain.setValueAtTime(0.0, now);
         this.dryGain.gain.setValueAtTime(1.0, now);
       } else {
-        // Smooth wet mix with proportionate dry level
         const dryLevel = Math.max(0.4, 1.0 - reverbWet * 0.35);
         this.reverbInputGain.gain.setValueAtTime(1.0, now);
         this.reverbWetGain.gain.setTargetAtTime(reverbWet * 0.75, now, 0.02);
@@ -618,7 +666,6 @@ class AudioEngine {
       }
     }
 
-    // 5. Echo Wet Mix & Controlled Feedback
     const echoWet = Math.max(0, Math.min(1, config.echoWet || 0));
     if (this.echoInputGain && this.echoWetGain && this.delayFeedback) {
       this.echoInputGain.gain.cancelScheduledValues(now);
@@ -626,19 +673,16 @@ class AudioEngine {
       this.delayFeedback.gain.cancelScheduledValues(now);
 
       if (echoWet <= 0.001) {
-        // 100% Mute echo path and stop feedback loop
         this.echoInputGain.gain.setValueAtTime(0.0, now);
         this.echoWetGain.gain.setValueAtTime(0.0, now);
         this.delayFeedback.gain.setValueAtTime(0.0, now);
       } else {
-        // Controlled feedback prevents runaway resonance and clipping
         this.echoInputGain.gain.setValueAtTime(1.0, now);
         this.echoWetGain.gain.setTargetAtTime(echoWet * 0.55, now, 0.02);
         this.delayFeedback.gain.setTargetAtTime(0.35, now, 0.02);
       }
     }
 
-    // 6. Master Volume
     if (this.masterGain) {
       const vol = Math.max(0, Math.min(1, typeof config.volume === 'number' ? config.volume : 1.0));
       this.masterGain.gain.cancelScheduledValues(now);
@@ -646,14 +690,18 @@ class AudioEngine {
     }
   }
 
-  /**
-   * Temporary runtime override for JTEC Party:
-   * Sets Slow + Reverb, EQ, and pitch effects into neutral state (rate 1.0, normal pitch)
-   * without modifying persistent user settings. Restored when exiting party.
-   */
   public setPartyNeutralOverride(enabled: boolean): void {
     this.isPartyModeActive = enabled;
     this.partyDriftSpeed = 1.0;
+
+    if (this.isNativeAndroid()) {
+      if (enabled) {
+        JtecAudioPlayerNative.setEffects({ playbackRate: 1.0, preservesPitch: true }).catch(() => {});
+      } else {
+        this.applyEffects(this.currentEffectsConfig);
+      }
+      return;
+    }
 
     if (enabled) {
       if (this.audioElement) {
@@ -678,23 +726,22 @@ class AudioEngine {
         if (this.delayFeedback) this.delayFeedback.gain.setValueAtTime(0.0, now);
       }
     } else {
-      // Restore user's persisted audio effects
       this.applyEffects(this.currentEffectsConfig);
     }
   }
 
-  /**
-   * Micro drift speed adjustment (e.g. 0.98 or 1.02) during JTEC Party.
-   */
   public setPartyDriftSpeed(rate: number): void {
     if (!this.isPartyModeActive) return;
     this.partyDriftSpeed = Math.max(0.95, Math.min(1.05, rate));
+    if (this.isNativeAndroid()) {
+      JtecAudioPlayerNative.setEffects({ playbackRate: this.partyDriftSpeed, preservesPitch: true }).catch(() => {});
+      return;
+    }
     if (this.audioElement) {
       this.audioElement.playbackRate = this.partyDriftSpeed;
     }
   }
 
-  // Visualizer Analyser Accessors
   public getAnalyserNode(): AnalyserNode | null {
     return this.analyserNode;
   }
@@ -720,30 +767,25 @@ class AudioEngine {
     const time = this.timeDataBuffer;
     const len = freq.length;
 
-    // Bass: bin 1 to ~8 (20Hz - ~160Hz)
     let bassSum = 0;
     const bassEnd = Math.min(8, len);
     for (let i = 1; i < bassEnd; i++) bassSum += freq[i];
     const bass = bassSum / (Math.max(1, bassEnd - 1) * 255);
 
-    // Low: bin 8 to ~24 (160Hz - ~500Hz)
     let lowSum = 0;
     const lowEnd = Math.min(24, len);
     for (let i = bassEnd; i < lowEnd; i++) lowSum += freq[i];
     const low = lowSum / (Math.max(1, lowEnd - bassEnd) * 255);
 
-    // Mid: bin 24 to ~64 (500Hz - ~2000Hz)
     let midSum = 0;
     const midEnd = Math.min(64, len);
     for (let i = lowEnd; i < midEnd; i++) midSum += freq[i];
     const mid = midSum / (Math.max(1, midEnd - lowEnd) * 255);
 
-    // High: bin 64 to len (2000Hz - 16000Hz)
     let highSum = 0;
     for (let i = midEnd; i < len; i++) highSum += freq[i];
     const high = highSum / (Math.max(1, len - midEnd) * 255);
 
-    // RMS volume
     let sumSquares = 0;
     for (let i = 0; i < time.length; i++) {
       const norm = (time[i] - 128) / 128;
@@ -766,7 +808,6 @@ class AudioEngine {
     return { ...this.currentEffectsConfig };
   }
 
-  // Event Subscriptions
   public onTimeUpdate(cb: (current: number, duration: number) => void): () => void {
     this.timeUpdateCallbacks.add(cb);
     return () => this.timeUpdateCallbacks.delete(cb);
