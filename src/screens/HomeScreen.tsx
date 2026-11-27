@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Upload,
   Play,
-  Pause,
   Heart,
   Disc,
   Clock,
@@ -14,8 +13,6 @@ import {
   CheckCircle2,
   RefreshCw,
   Cloud,
-  Radio,
-  ChevronRight,
   Headphones,
 } from 'lucide-react';
 import { Song, Playlist } from '../types/music';
@@ -64,17 +61,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   currentSong,
   isPlaying,
   onPlaySong,
-  onTogglePlay,
-  onOpenFullPlayer,
   onOpenImport,
   onOpenPlaylists,
   onSelectPlaylist,
   onOpenSongOptions,
   onToggleFavorite,
   onOpenCloud,
-  onOpenParty,
-  partyRoomCode,
-  partyMemberCount = 0,
 
   nativeUpdateInfo,
   isDownloadingUpdate = false,
@@ -92,9 +84,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const recentlyAdded = [...songs]
     .sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
     .slice(0, 6);
-
-  const featuredSong = currentSong || recentlyAdded[0] || null;
-  const isFeaturedCurrentlyActive = Boolean(currentSong && featuredSong?.id === currentSong.id);
 
   const hasNativeUpdate = isNativeAndroid() && Boolean(nativeUpdateInfo?.hasUpdate);
   const showWebUpdateBanner = !isNativeAndroid() && Boolean(isPWAUpdateAvailable);
@@ -261,17 +250,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
 
               <div className="pt-3 border-t border-white/10 flex flex-wrap items-center gap-2.5">
-                {onOpenCloud && (
-                  <button
-                    type="button"
-                    onClick={onOpenCloud}
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.11] border border-cyan-500/30 text-cyan-300 font-semibold text-xs transition flex items-center gap-2 cursor-pointer"
-                  >
-                    <Cloud className="w-4 h-4" />
-                    <span>JTEC Cloud</span>
-                  </button>
-                )}
-
                 <button
                   type="button"
                   onClick={onOpenImport}
@@ -283,26 +261,33 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
             </div>
           ) : (
-            /* WELCOME HEADER */
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
-              <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
-                  <Headphones className="w-3.5 h-3.5" />
-                  <span>JTEC MUSIC</span>
-                </div>
+            /* WELCOME HEADER / PROMOTIONAL CARD */
+            <div className="flex flex-col items-center text-center space-y-4 py-2">
+              <div className="space-y-2 max-w-lg">
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                  Your Sound, <span className="text-gradient-cyan-purple">Offline &amp; Live</span>
+                  Bring Your Vibe <span className="text-gradient-cyan-purple">Offline</span>
                 </h2>
-                <p className="text-xs sm:text-sm text-slate-300 max-w-md leading-relaxed">
-                  High-fidelity local playback, Slow + Reverb audio DSP, curated cloud catalogs, and synchronized listening.
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  High-fidelity local playback, Slow + Reverb audio DSP, curated cloud catalogs, and offline enjoyment.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+              <div className="w-full max-w-xs space-y-2.5 pt-1">
+                {onOpenCloud && (
+                  <button
+                    type="button"
+                    onClick={onOpenCloud}
+                    className="w-full min-h-[46px] px-5 py-3 rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] border border-cyan-500/35 text-cyan-300 font-bold text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-cyan-500/10"
+                  >
+                    <Cloud className="w-4 h-4" />
+                    <span>JTEC Cloud</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={onOpenImport}
-                  className="min-h-[46px] px-5 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 hover:brightness-110 text-white font-bold text-sm shadow-lg shadow-cyan-500/20 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full min-h-[46px] px-5 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 hover:brightness-110 text-white font-bold text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Upload className="w-4 h-4" />
                   <span>Import Music</span>
@@ -313,154 +298,49 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </section>
 
-      {/* 2. Featured or Currently Playing Music */}
-      {featuredSong && (
-        <section className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <Music2 className="w-4 h-4 text-cyan-400" />
-              <span>{isFeaturedCurrentlyActive ? 'Currently Playing' : 'Featured Track'}</span>
-            </h3>
-            {isFeaturedCurrentlyActive && onOpenFullPlayer && (
-              <button
-                type="button"
-                onClick={onOpenFullPlayer}
-                className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 transition cursor-pointer"
-              >
-                Open Player →
-              </button>
-            )}
-          </div>
+      {/* 2. Quick Playlists */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <Disc className="w-4 h-4 text-cyan-400" />
+            <span>Quick Playlists</span>
+          </h3>
+          <button
+            type="button"
+            onClick={onOpenPlaylists}
+            className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 transition cursor-pointer"
+          >
+            See all ({playlists.length})
+          </button>
+        </div>
 
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-[#142338] via-[#171B30] to-[#241636] border border-cyan-400/35 shadow-xl flex items-center gap-3.5 sm:gap-4">
+        <div className="grid grid-cols-1 min-[360px]:grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {playlists.slice(0, 4).map((pl) => (
             <button
+              key={pl.id}
               type="button"
-              onClick={() => {
-                if (isFeaturedCurrentlyActive && onOpenFullPlayer) {
-                  onOpenFullPlayer();
-                } else {
-                  onPlaySong(featuredSong, songs);
-                }
-              }}
-              className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-[#090D16] border border-white/15 shrink-0 cursor-pointer relative group"
-              aria-label={`Open ${featuredSong.title}`}
+              onClick={() => onSelectPlaylist(pl)}
+              className="group cursor-pointer p-3 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 hover:border-cyan-400/45 transition active:scale-[0.98] flex items-center gap-3 text-left min-h-[64px]"
             >
-              <img
-                src={featuredSong.artworkUrl || './pwa-192x192.png'}
-                alt={featuredSong.title}
-                className="w-full h-full object-cover"
-              />
-            </button>
-
-            <div
-              onClick={() => {
-                if (isFeaturedCurrentlyActive && onOpenFullPlayer) {
-                  onOpenFullPlayer();
-                } else {
-                  onPlaySong(featuredSong, songs);
-                }
-              }}
-              className="flex-1 min-w-0 cursor-pointer space-y-1"
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 block">
-                {isFeaturedCurrentlyActive ? (isPlaying ? 'Playing Now' : 'Paused') : 'Ready to Play'}
-              </span>
-              <h4 className="text-sm sm:text-base font-extrabold text-white truncate">
-                {featuredSong.title}
-              </h4>
-              <p className="text-xs text-slate-300 truncate">
-                {featuredSong.artist || 'Unknown Artist'}
-                {featuredSong.album ? ` · ${featuredSong.album}` : ''}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isFeaturedCurrentlyActive && onTogglePlay) {
-                    onTogglePlay();
-                  } else {
-                    onPlaySong(featuredSong, songs);
-                  }
-                }}
-                aria-label={isFeaturedCurrentlyActive && isPlaying ? 'Pause' : 'Play'}
-                className="w-11 h-11 rounded-full bg-gradient-to-br from-cyan-400 to-purple-600 text-slate-950 flex items-center justify-center shadow-lg shadow-cyan-500/25 active:scale-95 transition cursor-pointer"
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${
+                  pl.coverGradient || 'from-cyan-500 to-purple-600'
+                } flex items-center justify-center text-white shadow-md shrink-0`}
               >
-                {isFeaturedCurrentlyActive && isPlaying ? (
-                  <Pause className="w-5 h-5 fill-current" />
-                ) : (
-                  <Play className="w-5 h-5 fill-current ml-0.5" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onOpenSongOptions(featuredSong)}
-                aria-label="Track options"
-                className="w-10 h-10 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-slate-300 hover:text-white flex items-center justify-center transition cursor-pointer"
-              >
-                <MoreVertical className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* 3. JTEC Cloud & JTEC Party Quick Access Cards */}
-      {(onOpenCloud || onOpenParty) && (
-        <section className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3">
-          {onOpenCloud && (
-            <button
-              type="button"
-              onClick={onOpenCloud}
-              className="group p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 hover:border-cyan-400/45 text-left shadow-lg active:scale-[0.98] transition cursor-pointer min-h-[110px] flex flex-col justify-between gap-3"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="w-10 h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-center">
-                  <Cloud className="w-5 h-5" />
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-cyan-300 transition" />
+                <Disc className="w-5 h-5" />
               </div>
-              <div className="space-y-0.5 min-w-0">
-                <h3 className="text-sm sm:text-base font-extrabold text-white">JTEC Cloud</h3>
-                <p className="text-[11px] text-slate-400 truncate">
-                  Curated tracks, Nasheed &amp; Jamendo
-                </p>
+              <div className="min-w-0 flex-1">
+                <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300 transition">
+                  {pl.name}
+                </h4>
+                <p className="text-[10px] text-slate-400 font-mono">{pl.songIds.length} tracks</p>
               </div>
             </button>
-          )}
+          ))}
+        </div>
+      </section>
 
-          {onOpenParty && (
-            <button
-              type="button"
-              onClick={onOpenParty}
-              className="group p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#19182B] to-[#111220] border border-white/10 hover:border-purple-400/45 text-left shadow-lg active:scale-[0.98] transition cursor-pointer min-h-[110px] flex flex-col justify-between gap-3"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="w-10 h-10 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-300 flex items-center justify-center">
-                  <Radio className="w-5 h-5" />
-                </div>
-                {partyRoomCode ? (
-                  <span className="font-mono text-[10px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 rounded-lg">
-                    {partyRoomCode} · {partyMemberCount}
-                  </span>
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-purple-300 transition" />
-                )}
-              </div>
-              <div className="space-y-0.5 min-w-0">
-                <h3 className="text-sm sm:text-base font-extrabold text-white">JTEC Party</h3>
-                <p className="text-[11px] text-slate-400 truncate">
-                  {partyRoomCode ? 'Return to active listening room' : 'Listen together in sync'}
-                </p>
-              </div>
-            </button>
-          )}
-        </section>
-      )}
-
-      {/* 4. Recently Played */}
+      {/* 3. Recently Played */}
       {recentlyPlayed.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
@@ -508,7 +388,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </section>
       )}
 
-      {/* 5. Recently Added */}
+      {/* 4. Recently Added */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
@@ -526,7 +406,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <div className="space-y-1">
               <h4 className="text-sm font-bold text-white">Your Library is Empty</h4>
               <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-                Import audio files from your device or download tracks from JTEC Cloud to listen offline.
+                Import audio files from your device or download tracks from the Cloud tab to listen offline.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
@@ -538,16 +418,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <Upload className="w-3.5 h-3.5" />
                 <span>Import Music</span>
               </button>
-              {onOpenCloud && (
-                <button
-                  type="button"
-                  onClick={onOpenCloud}
-                  className="min-h-[42px] px-4 py-2 rounded-xl bg-white/[0.06] text-slate-200 border border-white/10 font-bold text-xs hover:bg-white/[0.11] transition inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Browse Cloud</span>
-                </button>
-              )}
             </div>
           </div>
         ) : (
@@ -611,49 +481,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         )}
       </section>
 
-      {/* 6. Your Playlists */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <Disc className="w-4 h-4 text-cyan-400" />
-            <span>Your Playlists</span>
-          </h3>
-          <button
-            type="button"
-            onClick={onOpenPlaylists}
-            className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 transition cursor-pointer"
-          >
-            See all ({playlists.length})
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 min-[360px]:grid-cols-2 sm:grid-cols-4 gap-2.5">
-          {playlists.slice(0, 4).map((pl) => (
-            <button
-              key={pl.id}
-              type="button"
-              onClick={() => onSelectPlaylist(pl)}
-              className="group cursor-pointer p-3 rounded-2xl bg-gradient-to-br from-[#151B2B] to-[#101420] border border-white/10 hover:border-cyan-400/45 transition active:scale-[0.98] flex items-center gap-3 text-left min-h-[64px]"
-            >
-              <div
-                className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${
-                  pl.coverGradient || 'from-cyan-500 to-purple-600'
-                } flex items-center justify-center text-white shadow-md shrink-0`}
-              >
-                <Disc className="w-5 h-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300 transition">
-                  {pl.name}
-                </h4>
-                <p className="text-[10px] text-slate-400 font-mono">{pl.songIds.length} tracks</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* 7. Favorites */}
+      {/* 5. Favorites Showcase */}
       {favoriteSongs.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
