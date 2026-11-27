@@ -9,6 +9,7 @@ import {
   ArrowDown,
   SkipForward,
   Lock,
+  Unlock,
 } from 'lucide-react';
 import { PartyState } from '../types';
 import { PartyService } from '../PartyService';
@@ -145,10 +146,24 @@ export const PartyRoomQueueTab: React.FC<PartyRoomQueueTabProps> = ({
               </h3>
             </div>
 
-            {partyState.allowGuestQueue && (
-              <span className="text-[11px] font-medium text-cyan-300/90">
-                Members can add music
-              </span>
+            {isHost && (
+              <button
+                type="button"
+                onClick={() => PartyService.hostSetGuestQueueAllowed(!partyState.allowGuestQueue)}
+                className={`min-h-[36px] px-3 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  partyState.allowGuestQueue
+                    ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-200'
+                    : 'bg-[#161B2A] border-white/10 text-slate-300 hover:text-white'
+                }`}
+                title="Allow room members to add songs to the queue"
+              >
+                {partyState.allowGuestQueue ? (
+                  <Unlock className="w-3.5 h-3.5 text-cyan-400" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                )}
+                <span>Guests {partyState.allowGuestQueue ? 'Can Add' : 'View Only'}</span>
+              </button>
             )}
           </div>
         </div>
@@ -157,7 +172,7 @@ export const PartyRoomQueueTab: React.FC<PartyRoomQueueTabProps> = ({
       {/* Scrollable Upcoming Tracks List */}
       <div
         className={`flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-3 ${
-          !canAddMusic ? 'pb-5' : ''
+          !canAddMusic ? 'pb-[max(1rem,env(safe-area-inset-bottom,0px))]' : ''
         }`}
       >
         <div className="max-w-3xl mx-auto w-full h-full flex flex-col space-y-2.5">
@@ -267,12 +282,12 @@ export const PartyRoomQueueTab: React.FC<PartyRoomQueueTabProps> = ({
 
       {/* Prominent Bottom Add Music Action Bar */}
       {canAddMusic && (
-        <div className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-4 sm:px-6 py-2.5">
+        <div className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-4 sm:px-6 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
           <div className="max-w-3xl mx-auto w-full">
             <button
               type="button"
               onClick={onOpenAddMusic}
-              className="w-full h-11 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition cursor-pointer"
+              className="w-full h-12 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:brightness-110 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 active:scale-[0.99] transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Add Music</span>

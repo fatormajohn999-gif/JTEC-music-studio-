@@ -64,7 +64,7 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({ onBack }) => {
           <div className="mt-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2 text-[11px] text-amber-200">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <span>
-              <strong>Note on Cloud Uploads:</strong> Public users cannot upload audio files from their devices to JTEC Cloud. All tracks you import remain private and stored locally on your device.
+              <strong>Note on Cloud Uploads:</strong> JTEC MUSIC does not support uploading music files to the cloud. All imported tracks stay private and local on your device.
             </span>
           </div>
         </div>

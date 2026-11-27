@@ -14,6 +14,7 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  LayoutGrid,
 } from 'lucide-react';
 import { PartyState, PARTY_REACTION_EMOJIS } from '../types';
 import { PartyService, PartyServiceDiagnostics, triggerHapticFeedback } from '../PartyService';
@@ -23,6 +24,8 @@ interface PartyRoomListenTabProps {
   partyState: PartyState;
   diagnostics: PartyServiceDiagnostics;
   currentPlaybackSec: number;
+  unreadChatCount: number;
+  onOpenDashboard: () => void;
   onOpenPeople: () => void;
   onOpenAddMusic: () => void;
 }
@@ -38,6 +41,8 @@ export const PartyRoomListenTab: React.FC<PartyRoomListenTabProps> = ({
   partyState,
   diagnostics,
   currentPlaybackSec,
+  unreadChatCount,
+  onOpenDashboard,
   onOpenPeople,
   onOpenAddMusic,
 }) => {
@@ -132,7 +137,7 @@ export const PartyRoomListenTab: React.FC<PartyRoomListenTabProps> = ({
   };
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-0 h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain bg-gradient-to-b from-[#131A2C] via-[#0B0E17] to-[#07090F] px-4 sm:px-6 pt-3 pb-3 animate-in fade-in duration-150">
+    <div className="relative flex flex-col flex-1 min-h-0 h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain bg-gradient-to-b from-[#131A2C] via-[#0B0E17] to-[#07090F] px-4 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] animate-in fade-in duration-200">
       {/* Ambient Radial Accent Glow */}
       <div
         className={`pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full blur-3xl transition-opacity duration-700 ${
@@ -351,7 +356,7 @@ export const PartyRoomListenTab: React.FC<PartyRoomListenTabProps> = ({
           )}
         </div>
 
-        {/* Bottom Interactive Dock: Listeners & Reactions */}
+        {/* Bottom Interactive Dock: Listeners, Reactions, Room Menu */}
         <div className="space-y-2 shrink-0 pt-1">
           {/* Friends Profile Pictures & Listening Status */}
           <button
@@ -436,6 +441,37 @@ export const PartyRoomListenTab: React.FC<PartyRoomListenTabProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Prominent Room Menu Button */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHapticFeedback();
+              onOpenDashboard();
+            }}
+            className="w-full min-h-[50px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#132236] via-[#191B32] to-[#281538] hover:brightness-110 border border-cyan-400/40 text-white font-extrabold text-sm shadow-xl shadow-cyan-500/10 flex items-center justify-between gap-3 active:scale-[0.98] transition cursor-pointer"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-400 to-purple-600 text-slate-950 flex items-center justify-center shrink-0">
+                <LayoutGrid className="w-4 h-4" />
+              </div>
+              <div className="text-left min-w-0">
+                <span className="block text-sm font-extrabold text-white leading-tight">Room Menu</span>
+                <span className="block text-[11px] font-medium text-slate-300 truncate leading-tight">
+                  People · Invite · Chat · Queue ({partyState.queue.length})
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {unreadChatCount > 0 && (
+                <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center">
+                  {unreadChatCount > 99 ? '99+' : unreadChatCount}
+                </span>
+              )}
+              <span className="text-xs font-bold text-cyan-300">Open</span>
+            </div>
+          </button>
         </div>
       </div>
     </div>

@@ -19,14 +19,8 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState, 
   const isChatConnected = diagnostics.isBotDemoRoom || partyState.isConnected;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [partyState.chatMessages.length]);
-
-  const handleComposerFocus = () => {
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, 120);
-  };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,18 +228,16 @@ export const PartyRoomChatTab: React.FC<PartyRoomChatTabProps> = ({ partyState, 
         </div>
       </div>
 
-      {/* Fixed Bottom Composer (Positioned directly above Active Party Bottom Nav) */}
+      {/* Fixed Bottom Composer */}
       <form
         onSubmit={handleSend}
-        className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-3 sm:px-6 py-2.5"
+        className="shrink-0 border-t border-white/10 bg-[#0D111C]/95 backdrop-blur-md px-3 sm:px-6 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom,0px))]"
       >
         <div className="max-w-3xl mx-auto w-full flex items-center gap-2">
           <input
             type="text"
             maxLength={400}
-            enterKeyHint="send"
             value={messageText}
-            onFocus={handleComposerFocus}
             onChange={(e) => {
               setMessageText(e.target.value);
               if (sendError) setSendError(null);
