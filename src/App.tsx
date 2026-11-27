@@ -2089,7 +2089,6 @@ export default function App() {
         <div style={{ display: isSettingsView ? 'block' : 'none' }}>
           <SettingsScreen
             settings={settings}
-            effects={effects}
             storageStats={storageStats}
             songs={songs}
             onDeleteSong={handleDeleteDownloadedSong}
@@ -2101,7 +2100,6 @@ export default function App() {
             onStartSleepTimer={handleStartSleepTimer}
             onCancelSleepTimer={handleCancelSleepTimer}
             onExtendSleepTimer={handleExtendSleepTimer}
-            onOpenEffects={() => setIsEffectsModalOpen(true)}
             onNavigateToCloud={() => handleSelectTab('cloud')}
             initialSubView={settingsSubView}
             onSubViewChange={setSettingsSubView}

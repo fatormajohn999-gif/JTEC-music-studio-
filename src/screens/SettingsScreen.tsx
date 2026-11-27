@@ -57,6 +57,7 @@ interface SettingsScreenProps {
   onResetSoundAndVisual?: () => Promise<void> | void;
   onNavigateToCloud?: () => void;
   initialSubView?: SettingsSubView;
+  onSubViewChange?: (subView: SettingsSubView) => void;
 }
 
 type SettingsGroup = 'playback' | 'appearance' | 'storage' | 'notifications' | 'about';
@@ -76,9 +77,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onResetSoundAndVisual,
   onNavigateToCloud,
   initialSubView,
+  onSubViewChange,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef<number>(0);
+  const onSubViewChangeRef = useRef(onSubViewChange);
+  onSubViewChangeRef.current = onSubViewChange;
 
   const [activeSubView, setActiveSubView] = useState<SettingsSubView>(initialSubView || 'main');
 
@@ -258,11 +262,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const scrollParent = containerRef.current?.closest('main');
     saveScrollPosition('settings:main', scrollParent ? scrollParent.scrollTop : 0);
     setActiveSubView(view);
+    onSubViewChangeRef.current?.(view);
     restoreScroll(scrollParent, 0);
   };
 
   const handleBackToMain = () => {
     setActiveSubView('main');
+    onSubViewChangeRef.current?.('main');
     const scrollParent = containerRef.current?.closest('main');
     const target = getSavedScrollPosition('settings:main');
     restoreScroll(scrollParent, target);
